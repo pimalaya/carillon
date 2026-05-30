@@ -6,7 +6,7 @@
 pimalaya.mkDefault (
   {
     src = ./.;
-    version = "2.0.0-rc";
+    version = "0.1.0";
     mkPackage = (
       {
         lib,

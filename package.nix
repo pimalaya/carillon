@@ -18,21 +18,36 @@
 }:
 
 let
+  inherit (stdenv.hostPlatform)
+    isLinux
+    isWindows
+    isAarch64
+    ;
+
   emulator = stdenv.hostPlatform.emulator buildPackages;
   exe = stdenv.hostPlatform.extensions.executable;
 
+  dbus' = dbus.overrideAttrs (old: {
+    env = (old.env or { }) // {
+      NIX_CFLAGS_COMPILE =
+        (old.env.NIX_CFLAGS_COMPILE or "")
+        # required for D-Bus on Linux AArch64
+        + lib.optionalString (isLinux && isAarch64) " -mno-outline-atomics";
+    };
+  });
+
 in
 rustPlatform.buildRustPackage {
-  inherit buildNoDefaultFeatures buildFeatures;
+  inherit buildNoDefaultFeatures;
 
   pname = "mirador";
-  version = "2.0.0-rc";
+  version = "0.1.0";
   cargoHash = "";
 
   src = fetchFromGitHub {
     owner = "pimalaya";
     repo = "mirador";
-    rev = "v2.0.0-rc";
+    rev = "v0.1.0";
     hash = "";
   };
 
@@ -44,9 +59,11 @@ rustPlatform.buildRustPackage {
   ];
 
   buildInputs = [
-    dbus
+    dbus'
   ]
   ++ lib.optional (builtins.elem "native-tls" buildFeatures) openssl;
+
+  buildFeatures = buildFeatures ++ lib.optional isWindows "vendored";
 
   # most of the tests are lib side
   doCheck = false;
@@ -76,7 +93,7 @@ rustPlatform.buildRustPackage {
     description = "CLI to watch mailbox changes";
     mainProgram = "mirador";
     homepage = "https://github.com/pimalaya/mirador";
-    changelog = "https://github.com/pimalaya/mirador/blob/v2.0.0-rc/CHANGELOG.md";
+    changelog = "https://github.com/pimalaya/mirador/blob/master/CHANGELOG.md";
     license = lib.licenses.agpl3Only;
     maintainers = with lib.maintainers; [ soywod ];
   };

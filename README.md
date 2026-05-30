@@ -5,7 +5,7 @@ CLI to watch mailbox changes, written in Rust
 ![screenshot](./screenshot.jpeg)
 
 > [!CAUTION]
-> Mirador v2 is a full rewrite on top of the Pimalaya `io-*` stack. The `v2.0.0-rc` series is being smoke-tested against real accounts; expect breaking changes between release candidates. See [MIGRATION.md](./MIGRATION.md) when coming from v1.
+> Mirador is in active development and currently shipped as `v0.1.x`. Expect breaking changes between releases until stabilization. See [MIGRATION.md](./MIGRATION.md) if you ran a pre-v0.1.0 build.
 
 ## Table of contents
 
@@ -47,7 +47,7 @@ CLI to watch mailbox changes, written in Rust
 
 ### Pre-built binary
 
-Mirador `v2` is not yet released; the only way to get a pre-built binary today is to check out the [releases](https://github.com/pimalaya/mirador/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section.
+Mirador is not yet released; the only way to get a pre-built binary today is to check out the [releases](https://github.com/pimalaya/mirador/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section.
 
 > [!NOTE]
 > Such binaries are built with the default cargo features. If you need specific features, please use another installation method.
@@ -101,7 +101,7 @@ A persistent configuration is loaded from the first valid path among:
 These are the same paths the [himalaya](https://github.com/pimalaya/himalaya) CLI and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) look at: one TOML file backs all three binaries, **starting from himalaya CLI v2**. Each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`), declared as flat dotted entries under `[accounts.<name>]`. Mirador-only fields (`mailbox`, the four `on-*` hook tables) coexist with the shared keys and are silently ignored by the other binaries.
 
 > [!WARNING]
-> A mirador `v1` configuration file is **not** compatible with `v2`: the schema differs. See [MIGRATION.md](./MIGRATION.md) (or rewrite the file using [config.sample.toml](./config.sample.toml) as a template) before pointing `v2` at it.
+> A pre-v0.1.0 mirador configuration file is **not** compatible with `v0.1.0`: the schema differs. See [MIGRATION.md](./MIGRATION.md) (or rewrite the file using [config.sample.toml](./config.sample.toml) as a template) before pointing `v0.1.0` at it.
 
 Override the path with `-c <PATH>` or `MIRADOR_CONFIG=<PATH>`; multiple paths can be passed at once, separated by `:`. The first one is the base and the rest are deep-merged on top.
 
@@ -146,7 +146,7 @@ The watch loop runs until `Ctrl+C`; the IMAP / JMAP / Maildir driver winds down 
 
 ## Migration
 
-Coming from `v1.x`? Read [MIGRATION.md](./MIGRATION.md). The v2 configuration schema is incompatible with v1: the `[accounts.<name>.backend]` table is gone, replaced by parallel `imap.*` / `jmap.*` / `maildir.*` dotted keys aligned with himalaya CLI v2.
+Coming from a pre-v0.1.0 (draft) mirador build? Read [MIGRATION.md](./MIGRATION.md). The `v0.1.0` configuration schema is incompatible with the earlier `[accounts.<name>.backend]` shape, which is now replaced by parallel `imap.*` / `jmap.*` / `maildir.*` dotted keys aligned with himalaya CLI v2.
 
 ## Interfaces
 
