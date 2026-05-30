@@ -21,6 +21,7 @@ CLI to watch mailbox changes, written in Rust
 - [Usage](#usage)
 - [Migration](#migration)
 - [Interfaces](#interfaces)
+- [AI disclosure](#ai-disclosure)
 - [Social](#social)
 - [Sponsoring](#sponsoring)
 
@@ -33,8 +34,11 @@ CLI to watch mailbox changes, written in Rust
 - Shell-style placeholders (`$name` / `${name}`) in hook strings: `id`, `mailbox`, `subject`, `sender`, `sender_name`, `sender_address`, `recipient`, `recipient_name`, `recipient_address`, `flag`, `flags`. Shell-command hooks receive them as environment variables, so the shell's own expansion does the substitution: write `"$subject"` (quoted) for safe whitespace handling.
 - **Simple auth** support for IMAP: anonymous, login, plain, oauthbearer, xoauth2, scram-sha-256
 - **HTTP auth** support for JMAP: basic, bearer
-- **TLS** support: [Rustls](https://crates.io/crates/rustls) with ring crypto (default), [Rustls](https://crates.io/crates/rustls) with aws crypto (`rustls-aws` feature), [Native TLS](https://crates.io/crates/native-tls) (`native-tls` feature)
-- **Shared configuration file path** with the rest of the Pimalaya ecosystem
+- **TLS** support:
+  - [Rustls](https://crates.io/crates/rustls) with ring crypto
+  - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
+  - [Native TLS](https://crates.io/crates/native-tls) (requires `native-tls` feature)
+- **Shared configuration file** with `himalaya` and `himalaya-tui`: the same `[accounts.<name>]` block loads on all three binaries (see [Configuration](#configuration))
 
 > [!TIP]
 > Mirador is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
@@ -88,15 +92,18 @@ nix run
 
 Copy [config.sample.toml](./config.sample.toml) to `$XDG_CONFIG_HOME/mirador/config.toml` and edit it. Mirador does not ship an interactive wizard; the sample documents every backend block and hook with inline comments.
 
-The configuration is loaded from the first valid path among:
+A persistent configuration is loaded from the first valid path among:
 
 - `$XDG_CONFIG_HOME/mirador/config.toml`
 - `$HOME/.config/mirador/config.toml`
 - `$HOME/.miradorrc`
 
-Override the path with `-c <PATH>` or `MIRADOR_CONFIG=<PATH>`; multiple paths can be passed at once, separated by `:`. The first one is the base and the rest are deep-merged on top.
+These are the same paths the [himalaya](https://github.com/pimalaya/himalaya) CLI and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) look at: one TOML file backs all three binaries, **starting from himalaya CLI v2**. Each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`), declared as flat dotted entries under `[accounts.<name>]`. Mirador-only fields (`folder`, the four `on-*` hook tables) coexist with the shared keys and are silently ignored by the other binaries.
 
-The `[accounts.<name>]` block uses the same schema as [himalaya CLI](https://github.com/pimalaya/himalaya) v2 and [himalaya TUI](https://github.com/pimalaya/himalaya-tui): each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`), declared as flat dotted entries. Mirador-only fields (`folder`, the four `on-*` hook tables) coexist with the shared keys and are silently ignored by the other binaries. See [config.sample.toml](./config.sample.toml) for the full schema.
+> [!WARNING]
+> A mirador `v1` configuration file is **not** compatible with `v2`: the schema differs. See [MIGRATION.md](./MIGRATION.md) (or rewrite the file using [config.sample.toml](./config.sample.toml) as a template) before pointing `v2` at it.
+
+Override the path with `-c <PATH>` or `MIRADOR_CONFIG=<PATH>`; multiple paths can be passed at once, separated by `:`. The first one is the base and the rest are deep-merged on top.
 
 ### Backend selection
 
@@ -143,7 +150,23 @@ Coming from `v1.x`? Read [MIGRATION.md](./MIGRATION.md). The v2 configuration sc
 
 ## Interfaces
 
-Mirador is one of several front-ends to the Pimalaya libraries. See [pimalaya/himalaya#interfaces](https://github.com/pimalaya/himalaya#interfaces) for the full list.
+Mirador is one of several front-ends to the Pimalaya libraries. See [pimalaya/himalaya#interfaces](https://github.com/pimalaya/himalaya#interfaces) for the full list (CLI, TUI, Vim, Emacs, Raycast).
+
+## AI disclosure
+
+This project is developed with AI assistance. This section documents how, so users and downstream packagers can make informed decisions.
+
+- **Tools**: Claude Code (Anthropic), Opus 4.7, invoked locally with a persistent project-scoped memory and a small set of repo-specific rules.
+
+- **Used for**: Refactors, mechanical multi-file edits, boilerplate (feature gates, error enums, derive macros, trait impls), test scaffolding, doc polish, exploratory design conversations.
+
+- **Not used for**: Engineering, critical code, git manipulation (commit, merge, rebase…), real-world tests.
+
+- **Verification**: Every AI-assisted change is read, compiled, tested, and formatted before commit (`nix develop --command cargo check / cargo test / cargo fmt`). Behavioural correctness is verified against the relevant RFC or upstream spec, not assumed from the model output. Tests are never adjusted to fit AI-generated code; the code is adjusted to fit correct behaviour.
+
+- **Limitations**: AI models occasionally produce code that compiles and passes tests but is subtly wrong: off-by-one errors, missed edge cases, plausible but nonexistent APIs, stale RFC references. The verification workflow catches most of this; it does not catch all of it. Bug reports are welcome and taken seriously.
+
+- **Last reviewed**: 30/05/2026
 
 ## Social
 

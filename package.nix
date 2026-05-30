@@ -55,17 +55,17 @@ rustPlatform.buildRustPackage {
     + ''
       mkdir -p $out/share/{completions,man,services}
       cp assets/mirador@.service "$out"/share/services/
-      ${emulator} "$out"/bin/mml${exe} manuals "$out"/share/man
-      ${emulator} "$out"/bin/mml${exe} completions -d "$out"/share/completions bash elvish fish powershell zsh
+      ${emulator} "$out"/bin/mirador${exe} manuals "$out"/share/man
+      ${emulator} "$out"/bin/mirador${exe} completions -d "$out"/share/completions bash elvish fish powershell zsh
     ''
     + lib.optionalString installManPages ''
       installManPage "$out"/share/man/*
     ''
     + lib.optionalString installShellCompletions ''
-      installShellCompletion --cmd mml \
-        --bash "$out"/share/completions/mml.bash \
-        --fish "$out"/share/completions/mml.fish \
-        --zsh "$out"/share/completions/_mml
+      installShellCompletion --cmd mirador \
+        --bash "$out"/share/completions/mirador.bash \
+        --fish "$out"/share/completions/mirador.fish \
+        --zsh "$out"/share/completions/_mirador
     '';
 
   meta = {
