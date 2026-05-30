@@ -75,7 +75,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Watch a folder and fire hooks on every change until Ctrl+C.
+    /// Watch a mailbox and fire hooks on every change until Ctrl+C.
     Watch(WatchCommand),
     /// Validate the account configuration against each allowed backend.
     Check(CheckCommand),

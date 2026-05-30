@@ -16,7 +16,7 @@
 #
 # The `[accounts.<name>]` block uses the same schema as `himalaya` CLI v2 and
 # `himalaya-tui`. One TOML file can back all three binaries; mirador-only
-# fields (`folder`, the four `on-*` hook tables) coexist with the shared keys
+# fields (`mailbox`, the four `on-*` hook tables) coexist with the shared keys
 # without errors.
 # ================================================================================
 
@@ -31,13 +31,13 @@
 # Use this account when `-a/--account` is not passed.
 default = true
 
-# Folder watched by `mirador watch` when `-f/--folder` is omitted. Defaults to
-# `"INBOX"` for IMAP/JMAP and to the mailbox name for Maildir. For JMAP, set
-# this to the Mailbox **id** (not the display name); look it up once via
+# Mailbox watched by `mirador watch` when `-m/--mailbox` is omitted. Defaults
+# to `"INBOX"` for IMAP/JMAP and to the mailbox name for Maildir. For JMAP,
+# set this to the Mailbox **id** (not the display name); look it up once via
 # `himalaya jmap mailbox query` or the provider's admin console. For Maildir,
 # the value resolves relative to the backend `root` (use `"."` for the root
 # mailbox).
-folder = "INBOX"
+mailbox = "INBOX"
 
 # --------------------------------------------------------------------------------
 # Backend config
@@ -136,7 +136,7 @@ imap.sasl.plain.passwd.raw = "REPLACE_ME"
 # Hooks
 #
 # Mirador fires zero or more hooks per watch event kind:
-#   - `on-message-added`   -> a new message landed in the watched folder
+#   - `on-message-added`   -> a new message landed in the watched mailbox
 #   - `on-message-removed` -> a message was expunged
 #   - `on-flags-added`     -> one or more flags were set on an existing message
 #   - `on-flags-removed`   -> one or more flags were unset on an existing message

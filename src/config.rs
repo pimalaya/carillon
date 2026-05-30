@@ -21,7 +21,7 @@
 //! [himalaya CLI v2] and [himalaya TUI]: each backend lives under its
 //! own protocol key (`imap`, `jmap`, `maildir`); declaring more than
 //! one is allowed and the runtime picks the active one via
-//! `-b/--backend`. Mirador-only fields (`folder`, the four `on-*`
+//! `-b/--backend`. Mirador-only fields (`mailbox`, the four `on-*`
 //! hook blocks) coexist with the shared keys and are silently ignored
 //! by the other binaries.
 //!
@@ -92,7 +92,7 @@ impl Config {
 /// `deny_unknown_fields` is intentionally omitted so the same TOML file
 /// can be shared with `himalaya` CLI v2 and `himalaya-tui`. Their
 /// extra fields (`smtp`, `m2dir`, `display-name`, `signature`, …)
-/// coexist silently with the mirador-only ones (`folder`, the four
+/// coexist silently with the mirador-only ones (`mailbox`, the four
 /// `on-*` hook tables).
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -100,12 +100,12 @@ pub struct AccountConfig {
     #[serde(default)]
     pub default: bool,
 
-    /// Folder watched by `mirador watch` when `-f/--folder` is omitted.
-    /// Defaults to `"INBOX"` for IMAP/JMAP and to the mailbox name for
-    /// Maildir. For Maildir, the value resolves relative to the
-    /// backend `root` (use `"."` to watch the root mailbox).
+    /// Mailbox watched by `mirador watch` when `-m/--mailbox` is
+    /// omitted. Defaults to `"INBOX"` for IMAP/JMAP and to the mailbox
+    /// name for Maildir. For Maildir, the value resolves relative to
+    /// the backend `root` (use `"."` to watch the root mailbox).
     #[serde(default)]
-    pub folder: Option<String>,
+    pub mailbox: Option<String>,
 
     #[cfg(feature = "imap")]
     #[serde(default)]

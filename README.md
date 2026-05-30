@@ -98,7 +98,7 @@ A persistent configuration is loaded from the first valid path among:
 - `$HOME/.config/mirador/config.toml`
 - `$HOME/.miradorrc`
 
-These are the same paths the [himalaya](https://github.com/pimalaya/himalaya) CLI and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) look at: one TOML file backs all three binaries, **starting from himalaya CLI v2**. Each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`), declared as flat dotted entries under `[accounts.<name>]`. Mirador-only fields (`folder`, the four `on-*` hook tables) coexist with the shared keys and are silently ignored by the other binaries.
+These are the same paths the [himalaya](https://github.com/pimalaya/himalaya) CLI and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) look at: one TOML file backs all three binaries, **starting from himalaya CLI v2**. Each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`), declared as flat dotted entries under `[accounts.<name>]`. Mirador-only fields (`mailbox`, the four `on-*` hook tables) coexist with the shared keys and are silently ignored by the other binaries.
 
 > [!WARNING]
 > A mirador `v1` configuration file is **not** compatible with `v2`: the schema differs. See [MIGRATION.md](./MIGRATION.md) (or rewrite the file using [config.sample.toml](./config.sample.toml) as a template) before pointing `v2` at it.
@@ -133,9 +133,9 @@ Notifications use [notify-rust](https://crates.io/crates/notify-rust) (D-Bus / `
 ## Usage
 
 ```
-mirador watch                  # watch the default account's folder
+mirador watch                  # watch the default account's mailbox
 mirador -a work watch          # watch the `work` account
-mirador watch -f Drafts        # watch a specific folder
+mirador watch -m Drafts        # watch a specific mailbox
 mirador -b jmap watch          # force JMAP when several backends are configured
 mirador check                  # validate the account against each configured backend
 mirador completions bash ./out # generate shell completions

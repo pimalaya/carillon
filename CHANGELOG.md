@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Moved `-a/--account` to a global flag (placed before the subcommand: `mirador -a work watch`), matching himalaya CLI v2. Per-subcommand `-a` flags were removed.
 
+- Renamed the `--folder/-f` flag and the `folder` account-config key to `--mailbox/-m` and `mailbox` respectively. The `mailbox` terminology is consistent with the JMAP / IMAP / Maildir vocabulary and matches the `[accounts.<name>]` schema shared with `himalaya` and `himalaya-tui`.
+
 ### Removed
 
 - Removed the `configure` command. Edit [config.sample.toml](./config.sample.toml) by hand and place the result at one of the loaded paths; mirador no longer ships a bootstrap step.

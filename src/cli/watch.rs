@@ -15,8 +15,8 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! `mirador watch` command: opens the configured backend, watches the
-//! chosen folder via the new
+//! `mirador watch` command: opens the configured backend, watches
+//! the chosen mailbox via the new
 //! [`io_email::client::EmailClientStd::watch_mailbox`] shared API,
 //! and fires per-event hooks until Ctrl+C.
 //!
@@ -58,10 +58,10 @@ const POLL_TICK: Duration = Duration::from_millis(500);
 /// Watch a mailbox and execute hooks on every change.
 #[derive(Debug, Parser)]
 pub struct WatchCommand {
-    /// Folder to watch. Falls back to the account's `folder` setting,
-    /// then to `INBOX` when neither is provided.
-    #[arg(long, short = 'f')]
-    pub folder: Option<String>,
+    /// Mailbox to watch. Overrides the account's `mailbox` setting;
+    /// falls back to `INBOX` when neither is provided.
+    #[arg(long, short)]
+    pub mailbox: Option<String>,
 }
 
 impl WatchCommand {
@@ -78,14 +78,14 @@ impl WatchCommand {
             bail!("Cannot find account");
         };
 
-        let folder = self
-            .folder
-            .or(account.folder.clone())
+        let mailbox = self
+            .mailbox
+            .or(account.mailbox.clone())
             .unwrap_or_else(|| "INBOX".into());
 
         let hooks = account.hooks.clone();
 
-        info!("watching folder `{folder}` on account `{name}`");
+        info!("watching mailbox `{mailbox}` on account `{name}`");
 
         let mut client = client::open(account, backend)?;
 
@@ -100,14 +100,14 @@ impl WatchCommand {
 
         // NOTE: spawn the blocking watch_mailbox on its own thread;
         // main thread consumes events through `rx`.
-        let folder_for_worker = folder.clone();
+        let mailbox_for_worker = mailbox.clone();
         let shutdown_for_worker = shutdown.clone();
         let worker = thread::spawn(move || -> Result<()> {
-            client.watch_mailbox(&folder_for_worker, shutdown_for_worker, tx)?;
+            client.watch_mailbox(&mailbox_for_worker, shutdown_for_worker, tx)?;
             Ok(())
         });
 
-        println!("Watching `{folder}` on account `{name}` (press Ctrl+C to exit)");
+        println!("Watching `{mailbox}` on account `{name}` (press Ctrl+C to exit)");
 
         loop {
             if shutdown.load(Ordering::SeqCst) {

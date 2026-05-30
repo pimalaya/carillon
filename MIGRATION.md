@@ -39,7 +39,7 @@ New in v2: `--log-file <PATH>` writes logs straight to a file, inherited from `p
 
 | v1 | v2 |
 |---|---|
-| `watch [ACCOUNT] [FOLDER]` (positional) | `watch [-f/--folder NAME]` (account is the global `-a` flag) |
+| `watch [ACCOUNT] [FOLDER]` (positional) | `watch [-m/--mailbox NAME]` (account is the global `-a` flag; `folder` → `mailbox`) |
 | `doctor [ACCOUNT]` (aliases `check-up`, `checkup`, `check`) | `check` (validates the account against each configured backend; no aliases) |
 | `configure [ACCOUNT] [--reset/-r]` | (removed; hand-edit [config.sample.toml](./config.sample.toml)) |
 | `manual <SHELL>` (aliases `manuals`, `mans`) | `manuals <DIR>` (writes one man page per command) |
