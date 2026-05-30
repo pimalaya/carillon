@@ -6,20 +6,23 @@
 pimalaya.mkDefault (
   {
     src = ./.;
-    version = "1.0.0";
+    version = "2.0.0-rc";
     mkPackage = (
       {
         lib,
         pkgs,
         rustPlatform,
+        defaultFeatures,
+        features,
         buildPackages,
-        ...
       }:
 
       pkgs.callPackage ./package.nix {
         inherit lib rustPlatform buildPackages;
         installShellCompletions = false;
         installManPages = false;
+        buildNoDefaultFeatures = !defaultFeatures;
+        buildFeatures = lib.splitString "," features;
       }
     );
   }

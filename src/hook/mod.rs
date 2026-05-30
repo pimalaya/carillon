@@ -15,32 +15,5 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Binary entry point: parses the CLI, configures logging and dispatches
-//! the requested subcommand.
-
-mod backend;
-mod cli;
-mod client;
-mod config;
-mod hook;
-
-use anyhow::Result;
-use clap::Parser;
-use pimalaya_cli::{error::ErrorReport, log::Logger, printer::StdoutPrinter};
-
-use crate::cli::main::Cli;
-
-fn main() {
-    let cli = Cli::parse();
-    let mut printer = StdoutPrinter::new(&cli.json);
-    let result = execute(&mut printer, cli);
-    ErrorReport::eval(&mut printer, result);
-}
-
-fn execute(printer: &mut StdoutPrinter, cli: Cli) -> Result<()> {
-    Logger::try_init(&cli.log)?;
-    let config_paths = cli.config_paths.as_ref();
-    let account_name = cli.account.name.as_deref();
-    cli.command
-        .execute(printer, config_paths, account_name, cli.backend)
-}
+pub mod config;
+pub mod run;

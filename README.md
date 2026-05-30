@@ -1,397 +1,166 @@
-# 🔭 Mirador [![GitHub release](https://img.shields.io/github/v/release/soywod/mirador?color=success)](https://github.com/soywod/mirador/releases/latest) [![Matrix](https://img.shields.io/matrix/pimalaya:matrix.org?color=success&label=chat)](https://matrix.to/#/#pimalaya:matrix.org)
+# 🔭 Mirador [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya)
 
-CLI to watch mailbox changes, based on [`email-lib`](https://crates.io/crates/email-lib)
+CLI to watch mailbox changes, written in Rust
 
 ![screenshot](./screenshot.jpeg)
 
+> [!CAUTION]
+> Mirador v2 is a full rewrite on top of the Pimalaya `io-*` stack. The `v2.0.0-rc` series is being smoke-tested against real accounts; expect breaking changes between release candidates. See [MIGRATION.md](./MIGRATION.md) when coming from v1.
+
+## Table of contents
+
+- [Features](#features)
+- [Installation](#installation)
+  - [Pre-built binary](#pre-built-binary)
+  - [Cargo](#cargo)
+  - [Nix](#nix)
+  - [Sources](#sources)
+- [Configuration](#configuration)
+  - [Backend selection](#backend-selection)
+  - [Hooks](#hooks)
+- [Usage](#usage)
+- [Migration](#migration)
+- [Interfaces](#interfaces)
+- [Social](#social)
+- [Sponsoring](#sponsoring)
+
 ## Features
 
-- Watches and executes actions on mailbox changes
-- Interactive configuration via **wizard** (requires `wizard` feature)
-- Supported events: **on message added**.
-- Supported actions: **send system notification**, **execute shell command**.
-- Supports **IMAP** mailboxes (requires `imap` feature)
-- Supports **Maildir** folders (requires `maildir` feature)
-- Supports global system **keyring** to manage secrets (requires `keyring` feature)
-- Supports **OAuth 2.0** (requires `oauth2` feature)
+- Remote backends: **IMAP** via [RFC 2177 IDLE](https://datatracker.ietf.org/doc/html/rfc2177), **JMAP** via [RFC 8620 §7.2 EventSource](https://datatracker.ietf.org/doc/html/rfc8620#section-7.2) push
+- Local backend: **Maildir** <sup>[specs](https://cr.yp.to/proto/maildir.html)</sup> via filesystem notifications
+- Watch events: **`on-message-added`**, **`on-message-removed`**, **`on-flags-added`**, **`on-flags-removed`** (flag hooks accept an optional `flags = [...]` filter)
+- Hook actions: **system notification** via [notify-rust](https://crates.io/crates/notify-rust) and **shell command** via `sh -c`
+- Shell-style placeholders (`$name` / `${name}`) in hook strings: `id`, `mailbox`, `subject`, `sender`, `sender_name`, `sender_address`, `recipient`, `recipient_name`, `recipient_address`, `flag`, `flags`. Shell-command hooks receive them as environment variables, so the shell's own expansion does the substitution: write `"$subject"` (quoted) for safe whitespace handling.
+- **Simple auth** support for IMAP: anonymous, login, plain, oauthbearer, xoauth2, scram-sha-256
+- **HTTP auth** support for JMAP: basic, bearer
+- **TLS** support: [Rustls](https://crates.io/crates/rustls) with ring crypto (default), [Rustls](https://crates.io/crates/rustls) with aws crypto (`rustls-aws` feature), [Native TLS](https://crates.io/crates/native-tls) (`native-tls` feature)
+- **Shared configuration file path** with the rest of the Pimalaya ecosystem
 
-*Mirador CLI is written in [Rust](https://www.rust-lang.org/), and relies on [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to enable or disable functionalities. Default features can be found in the `features` section of the [`Cargo.toml`](https://github.com/pimalaya/mirador/blob/master/Cargo.toml#L18).*
+> [!TIP]
+> Mirador is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
 
 ## Installation
 
-*The `v1.0.0` is currently being tested on the `master` branch, and is the prefered version to use. Previous versions (including GitHub beta releases and repositories published versions) are not recommended.*
-
 ### Pre-built binary
 
-Mirador CLI `v1.0.0` can be installed with a pre-built binary. Find the latest [`pre-release`](https://github.com/pimalaya/mirador/actions/workflows/pre-release.yml) GitHub workflow and look for the *Artifacts* section. You should find a pre-built binary matching your OS.
+Mirador `v2` is not yet released; the only way to get a pre-built binary today is to check out the [releases](https://github.com/pimalaya/mirador/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section.
 
-### Cargo (git)
+> [!NOTE]
+> Such binaries are built with the default cargo features. If you need specific features, please use another installation method.
 
-Mirador CLI `v1.0.0` can also be installed with [cargo](https://doc.rust-lang.org/cargo/):
+### Cargo
 
-```bash
-$ cargo install --frozen --force --git https://github.com/pimalaya/mirador.git
+```
+cargo install --locked --git https://github.com/pimalaya/mirador.git
 ```
 
-Mirador CLI can be installed with a prebuilt binary:
+With only IMAP support:
 
-```bash
-# As root:
-$ curl -sSL https://raw.githubusercontent.com/pimalaya/mirador/master/install.sh | sudo sh
-
-# As a regular user:
-$ curl -sSL https://raw.githubusercontent.com/pimalaya/mirador/master/install.sh | PREFIX=~/.local sh
+```
+cargo install --locked --git https://github.com/pimalaya/mirador.git \
+  --no-default-features \
+  --features imap,rustls-ring
 ```
 
-These commands install the latest binary from the GitHub [releases](https://github.com/pimalaya/mirador/releases) section.
+### Nix
 
-*Binaries are built with [default](https://github.com/pimalaya/mirador/blob/master/Cargo.toml#L18) cargo features. If you want to enable or disable a feature, please use another installation method.*
+If you have the [Flakes](https://nixos.wiki/wiki/Flakes) feature enabled:
 
-<details>
-  <summary>Pre-built binary</summary>
+```
+nix profile install github:pimalaya/mirador
+```
 
-  Mirador CLI can be installed with a prebuilt binary:
+Or run without installing:
 
-  ```bash
-  # As root:
-  $ curl -sSL https://raw.githubusercontent.com/pimalaya/mirador/master/install.sh | sudo sh
+```
+nix run github:pimalaya/mirador
+```
 
-  # As a regular user:
-  $ curl -sSL https://raw.githubusercontent.com/pimalaya/mirador/master/install.sh | PREFIX=~/.local sh
-  ```
+### Sources
 
-  These commands install the latest binary from the GitHub [releases](https://github.com/pimalaya/mirador/releases) section.
-
-  *Binaries are built with [default](https://github.com/pimalaya/mirador/blob/master/Cargo.toml#L18) cargo features. If you want to enable or disable a feature, please use another installation method.*
-
-  <summary>Cargo</summary>
-
-  Mirador CLI can be installed with [cargo](https://doc.rust-lang.org/cargo/):
-
-  ```bash
-  $ cargo install mirador
-
-  # With only IMAP support:
-  $ cargo install mirador --no-default-features --features imap
-  ```
-
-  You can also use the git repository for a more up-to-date (but less stable) version:
-
-  ```bash
-  $ cargo install --git https://github.com/pimalaya/mirador.git mirador
-  ```
-</details>
-
-<details>
-  <summary>Nix</summary>
-
-  Mirador CLI can be installed with [Nix](https://serokell.io/blog/what-is-nix):
-
-  ```bash
-  $ nix-env -i mirador
-  ```
-
-  You can also use the git repository for a more up-to-date (but less stable) version:
-
-  ```bash
-  $ nix-env -if https://github.com/pimalaya/mirador/archive/master.tar.gz
-
-  # or, from within the source tree checkout
-  $ nix-env -if .
-  ```
-
-  If you have the [Flakes](https://nixos.wiki/wiki/Flakes) feature enabled:
-
-  ```bash
-  $ nix profile install mirador
-
-  # or, from within the source tree checkout
-  $ nix profile install
-
-  # you can also run Mirador directly without installing it:
-  $ nix run mirador
-  ```
-</details>
-
-<details>
-  <summary>Sources</summary>
-
-  Mirador CLI can be installed from sources.
-
-  First you need to install the Rust development environment (see the [rust installation documentation](https://doc.rust-lang.org/cargo/getting-started/installation.html)):
-
-  ```bash
-  $ curl https://sh.rustup.rs -sSf | sh
-  ```
-
-  Then, you need to clone the repository and install dependencies:
-
-  ```bash
-  $ git clone https://github.com/pimalaya/mirador.git
-  $ cd mirador
-  $ cargo check
-  ```
-
-  Now, you can build Mirador:
-
-  ```bash
-  $ cargo build --release
-  ```
-
-  *Binaries are available under the `target/release` folder.*
-</details>
+```
+git clone https://github.com/pimalaya/mirador
+cd mirador
+nix run
+```
 
 ## Configuration
 
-Just run `mirador`, the wizard will help you to configure your default account.
+Copy [config.sample.toml](./config.sample.toml) to `$XDG_CONFIG_HOME/mirador/config.toml` and edit it. Mirador does not ship an interactive wizard; the sample documents every backend block and hook with inline comments.
 
-You can also manually edit your own configuration, from scratch:
+The configuration is loaded from the first valid path among:
 
-- Copy the content of the documented [`./config.sample.toml`](./config.sample.toml)
-- Paste it in a new file `~/.config/mirador/config.toml`
-- Edit, then comment or uncomment the options you want
+- `$XDG_CONFIG_HOME/mirador/config.toml`
+- `$HOME/.config/mirador/config.toml`
+- `$HOME/.miradorrc`
 
-<details>
-  <summary>Proton Mail (Bridge)</summary>
+Override the path with `-c <PATH>` or `MIRADOR_CONFIG=<PATH>`; multiple paths can be passed at once, separated by `:`. The first one is the base and the rest are deep-merged on top.
 
-  When using Proton Bridge, emails are synchronized locally and exposed via a local IMAP/SMTP server. This implies 2 things:
+The `[accounts.<name>]` block uses the same schema as [himalaya CLI](https://github.com/pimalaya/himalaya) v2 and [himalaya TUI](https://github.com/pimalaya/himalaya-tui): each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`), declared as flat dotted entries. Mirador-only fields (`folder`, the four `on-*` hook tables) coexist with the shared keys and are silently ignored by the other binaries. See [config.sample.toml](./config.sample.toml) for the full schema.
 
-  - Id order may be reversed or shuffled, but envelopes will still be sorted by date.
-  - SSL/TLS needs to be deactivated manually.
-  - The password to use is the one generated by Proton Bridge, not the one from your Proton Mail account.
+### Backend selection
 
-  ```toml
-  [accounts.proton]
-  default = true
-  folder = "INBOX"
+An account may declare more than one of the `imap`, `jmap`, `maildir` blocks (so the same TOML file can drive `mirador` and `himalaya` against different backends). Mirador opens exactly one connection per `watch`, so the active backend is picked at startup:
 
-  backend.type = "imap"
-  backend.host = "127.0.0.1"
-  backend.port = 1143
-  backend.encryption = false
-  backend.login = "example@proton.me"
-  backend.auth.type = "password"
-  backend.auth.raw = "<proton-bridge-generated-password>"
+- `-b/--backend imap | jmap | maildir` pins the active backend; the command bails when the account has no matching block.
+- `-b auto` (default) picks the first configured block in this order: IMAP, then JMAP, then Maildir.
 
-  on-message-added.notify.summary = "Proton: new message from {sender}"
-  on-message-added.notify.body = "{subject}"
-  ```
+### Hooks
 
-  Keeping your password inside the configuration file is good for testing purpose, but it is not safe. You have 2 better alternatives:
+Mirador fires zero or more hooks per [watch event kind](#features). Each hook config can declare a system notification, a shell command, or both:
 
-  - Save your password in any password manager that can be queried via the CLI:
+```toml
+[accounts.example.on-message-added]
+notify = { summary = "New mail from $sender", body = "$subject" }
+cmd = "mbsync example"
 
-    ```toml
-    backend.auth.type = "password"
-    backend.auth.cmd = "pass show proton"
-    ```
+# Flag hooks may filter on the IANA flag name (case-insensitive, with or
+# without the leading "\" / "$"):
+[accounts.example.on-flags-added]
+flags = ["Seen"]
+cmd = 'echo "$id marked read" >> ~/.local/state/mirador.log'
+```
 
-  - Use the global keyring of your system (requires the `keyring` cargo feature):
+Notifications use [notify-rust](https://crates.io/crates/notify-rust) (D-Bus / `NSUserNotification` / Windows toast). Shell commands run via `sh -c`; failures are logged at `warn` so a broken script never crashes the watcher.
 
-    ```toml
-    backend.auth.type = "password"
-    backend.auth.keyring = "proton-example"
-    ```
+## Usage
 
-    Running `mirador configure -a proton` will ask for your IMAP password, just paste the one generated previously.
-</details>
+```
+mirador watch                  # watch the default account's folder
+mirador -a work watch          # watch the `work` account
+mirador watch -f Drafts        # watch a specific folder
+mirador -b jmap watch          # force JMAP when several backends are configured
+mirador check                  # validate the account against each configured backend
+mirador completions bash ./out # generate shell completions
+mirador manuals ./out          # generate man pages
+```
 
-<details>
-  <summary>Gmail</summary>
+The watch loop runs until `Ctrl+C`; the IMAP / JMAP / Maildir driver winds down cleanly (sends `IDLE DONE`, closes the SSE socket, drops the notify watcher) before the binary exits.
 
-  Google passwords cannot be used directly. There is two ways to authenticate yourself:
+## Migration
 
-  ### Using [App Passwords](https://support.google.com/mail/answer/185833)
+Coming from `v1.x`? Read [MIGRATION.md](./MIGRATION.md). The v2 configuration schema is incompatible with v1: the `[accounts.<name>.backend]` table is gone, replaced by parallel `imap.*` / `jmap.*` / `maildir.*` dotted keys aligned with himalaya CLI v2.
 
-  This option is the simplest and the fastest. First, be sure that:
+## Interfaces
 
-  - IMAP is enabled
-  - Two-step authentication is enabled
-  - Less secure app access is enabled
+Mirador is one of several front-ends to the Pimalaya libraries. See [pimalaya/himalaya#interfaces](https://github.com/pimalaya/himalaya#interfaces) for the full list.
 
-  First create a [dedicated password](https://myaccount.google.com/apppasswords) for Mirador.
+## Social
 
-  ```toml
-  [accounts.gmail]
-  default = true
-  folder = "INBOX"
+- Chat on [Matrix](https://matrix.to/#/#pimalaya:matrix.org)
+- News on [Mastodon](https://fosstodon.org/@pimalaya) or [RSS](https://fosstodon.org/@pimalaya.rss)
+- Mail at [pimalaya.org@posteo.net](mailto:pimalaya.org@posteo.net)
 
-  backend.type = "imap"
-  backend.host = "imap.gmail.com"
-  backend.port = 993
-  backend.encryption = "tls"
-  backend.login = "example@gmail.com"
-  backend.auth.type = "password"
-  backend.auth.raw = "<generated-password>"
-
-  on-message-added.notify.summary = "Gmail: new message from {sender}"
-  on-message-added.notify.body = "{subject}"
-  ```
-
-  Keeping your password inside the configuration file is good for testing purpose, but it is not safe. You have 2 better alternatives:
-
-  - Save your password in any password manager that can be queried via the CLI:
-
-    ```toml
-    backend.auth.type = "password"
-    backend.auth.cmd = "pass show gmail"
-    ```
-
-  - Use the global keyring of your system (requires the `keyring` cargo feature):
-
-    ```toml
-    backend.auth.type = "password"
-    backend.auth.keyring = "gmail-example"
-    ```
-
-    Running `mirador configure -a gmail` will ask for your IMAP password, just paste the one generated previously.
-
-  ### Using OAuth 2.0
-
-  This option is the most secure but the hardest to configure. It requires the `oauth2` and `keyring` cargo features.
-
-  First, you need to get your OAuth 2.0 credentials by following [this guide](https://developers.google.com/identity/protocols/oauth2#1.-obtain-oauth-2.0-credentials-from-the-dynamic_data.setvar.console_name-.). Once you get your client id and your client secret, you can configure your Mirador account this way:
-
-  ```toml
-  [accounts.gmail]
-  default = true
-  folder = "INBOX"
-
-  backend.type = "imap"
-  backend.host = "imap.gmail.com"
-  backend.port = 993
-  backend.login = "example@gmail.com"
-  backend.auth.type = "oauth2"
-  backend.auth.client-id = "<client-id>"
-  backend.auth.auth-url = "https://accounts.google.com/o/oauth2/v2/auth"
-  backend.auth.token-url = "https://www.googleapis.com/oauth2/v3/token"
-  backend.auth.pkce = true
-  backend.auth.scope = "https://mail.google.com/"
-
-  on-message-added.notify.summary = "Gmail: new message from {sender}"
-  on-message-added.notify.body = "{subject}"
-  ```
-
-  Running `mirador configure -a gmail` will complete your OAuth 2.0 setup and ask for your client secret.
-</details>
-
-<details>
-  <summary>Outlook</summary>
-
-  ```toml
-  [accounts.outlook]
-  default = true
-  folder = "INBOX"
-
-  backend.type = "imap"
-  backend.host = "outlook.office365.com"
-  backend.port = 993
-  backend.encryption = "tls"
-  backend.login = "example@outlook.com"
-  backend.auth.type = "password"
-  backend.auth.cmd = "pass show outlook"
-
-  on-message-added.notify.summary = "Outlook: new message from {sender}"
-  on-message-added.notify.body = "{subject}"
-  ```
-
-  ### Using OAuth 2.0
-
-  This option is the most secure but the hardest to configure. First, you need to get your OAuth 2.0 credentials by following [this guide](https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth). Once you get your client id and your client secret, you can configure your Mirador account this way:
-
-  ```toml
-  [accounts.outlook]
-  default = true
-  folder = "INBOX"
-
-  backend.type = "imap"
-  backend.host = "outlook.office365.com"
-  backend.port = 993
-  backend.login = "example@outlook.com"
-  backend.auth.type = "oauth2"
-  backend.auth.client-id = "<client-id>"
-  backend.auth.auth-url = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
-  backend.auth.token-url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-  backend.auth.pkce = true
-  backend.auth.scopes = ["https://outlook.office.com/IMAP.AccessAsUser.All"]
-
-  on-message-added.notify.summary = "Outlook: new message from {sender}"
-  on-message-added.notify.body = "{subject}"
-  ```
-
-  Running `mirador configure -a outlook` will complete your OAuth 2.0 setup and ask for your client secret.
-</details>
-
-<details>
-  <summary>iCloud Mail</summary>
-
-  From the [iCloud Mail](https://support.apple.com/en-us/HT202304) support page:
-
-  - IMAP port = `993`.
-  - IMAP login = name of your iCloud Mail email address (for example, `johnappleseed`, not `johnappleseed@icloud.com`)
-  - SMTP port = `587` with `STARTTLS`
-  - SMTP login = full iCloud Mail email address (for example, `johnappleseed@icloud.com`, not `johnappleseed`)
-
-  ```toml
-  [accounts.icloud]
-  default = true
-  folder = "INBOX"
-
-  backend.type = "imap"
-  backend.host = "imap.mail.me.com"
-  backend.port = 993
-  backend.encryption = "tls"
-  backend.login = "johnappleseed"
-  backend.auth.type = "password"
-  backend.auth.cmd = "security find-internet-password -s 'johnappleseed'"
-
-  on-message-added.notify.summary = "iCloud: new message from {sender}"
-  on-message-added.notify.body = "{subject}"
-  ```
-</details>
-
-## FAQ
-
-<details>
-  <summary>How to debug Mirador CLI?</summary>
-
-  The simplest way is to use `--debug` and `--trace` arguments.
-
-  The advanced way is based on environment variables:
-
-  - `RUST_LOG=<level>`: determines the log level filter, can be one of `off`, `error`, `warn`, `info`, `debug` and `trace`.
-  - `RUST_SPANTRACE=1`: enables the spantrace (a span represent periods of time in which a program was executing in a particular context).
-  - `RUST_BACKTRACE=1`: enables the error backtrace.
-  - `RUST_BACKTRACE=full`: enables the full error backtrace, which include source lines where the error originated from.
-
-  Logs are written to the `stderr`, which means that you can redirect them easily to a file:
-
-  ```
-  RUST_LOG=debug mirador watch 2>/tmp/mirador.log
-  ```
-</details>
-
-<details>
-  <summary>How the wizard discovers IMAP configs?</summary>
-
-  All the lookup mechanisms use the email address domain as base for the lookup. It is heavily inspired from the Thunderbird [Autoconfiguration](https://udn.realityripple.com/docs/Mozilla/Thunderbird/Autoconfiguration) protocol. For example, for the email address `test@example.com`, the lookup is performed as (in this order):
-
-  1. check for `autoconfig.example.com`
-  2. look up of `example.com` in the ISPDB (the Thunderbird central database)
-  3. look up `MX example.com` in DNS, and for `mx1.mail.hoster.com`, look up `hoster.com` in the ISPDB
-  4. look up `SRV example.com` in DNS
-  5. try to guess (`imap.example.com`, `smtp.example.com`…)
-</details>
-	
 ## Sponsoring
 
 [![nlnet](https://nlnet.nl/logo/banner-160x60.png)](https://nlnet.nl/)
 
-Special thanks to the [NLnet foundation](https://nlnet.nl/) and the [European Commission](https://www.ngi.eu/) that helped the project to receive financial support from various programs:
+Special thanks to the [NLnet foundation](https://nlnet.nl/) and the [European Commission](https://www.ngi.eu/) that have been financially supporting the project for years:
 
-- [NGI Assure](https://nlnet.nl/project/Himalaya/) in 2022
-- [NGI Zero Entrust](https://nlnet.nl/project/Pimalaya/) in 2023
-- [NGI Zero Core](https://nlnet.nl/project/Pimalaya-PIM/) in 2024 *(still ongoing)*
+- 2022 → 2023: [NGI Assure](https://nlnet.nl/project/Himalaya/)
+- 2023 → 2024: [NGI Zero Entrust](https://nlnet.nl/project/Pimalaya/)
+- 2024 → 2026: [NGI Zero Core](https://nlnet.nl/project/Pimalaya-PIM/)
+- *2027 in preparation…*
 
 If you appreciate the project, feel free to donate using one of the following providers:
 

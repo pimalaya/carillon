@@ -1,170 +1,167 @@
-################################################################################
-#### Account configuration #####################################################
-################################################################################
+# ================================================================================
+# `mirador` configuration file.
+#
+# Loaded from the first valid path among:
+#   - $XDG_CONFIG_HOME/mirador/config.toml
+#   - $HOME/.config/mirador/config.toml
+#   - $HOME/.miradorrc
+#
+# Override with `mirador -c <PATH>` or `MIRADOR_CONFIG=<PATH>`. Multiple paths
+# can be passed at once, separated by `:`; the first one is the base and the
+# rest are deep-merged on top of it.
+#
+# Run `mirador watch` once with no config file on disk to bootstrap this
+# template at the first path, then edit the resulting file (set up at least
+# one backend and a hook) and re-run `mirador watch`.
+#
+# The `[accounts.<name>]` block uses the same schema as `himalaya` CLI v2 and
+# `himalaya-tui`. One TOML file can back all three binaries; mirador-only
+# fields (`folder`, the four `on-*` hook tables) coexist with the shared keys
+# without errors.
+# ================================================================================
 
+# --------------------------------------------------------------------------------
+# Account config
+# --------------------------------------------------------------------------------
+
+# Declare one section per account. Pick one with `-a/--account <NAME>` or let
+# mirador use the entry flagged `default = true`.
 [accounts.example]
 
-# Defaultness of the account. The current account will be used by
-# default in all commands.
-#
+# Use this account when `-a/--account` is not passed.
 default = true
 
-# Mailbox/folder to watch changes for.
-#
+# Folder watched by `mirador watch` when `-f/--folder` is omitted. Defaults to
+# `"INBOX"` for IMAP/JMAP and to the mailbox name for Maildir. For JMAP, set
+# this to the Mailbox **id** (not the display name); look it up once via
+# `himalaya jmap mailbox query` or the provider's admin console. For Maildir,
+# the value resolves relative to the backend `root` (use `"."` for the root
+# mailbox).
 folder = "INBOX"
 
-# Map an action to a watch event. The action can be a shell command, a
-# system notification, or a combination of both.
+# --------------------------------------------------------------------------------
+# Backend config
 #
-# Available placeholders: {id}, {subject}, {sender}, {sender.name},
-# {sender.address}, {recipient}, {recipient.name},
-# {recipient.address}.
-#
-# on-message-added.cmd = "mbsync example"
-# on-message-added.cmd = "neverest sync -a example"
-on-message-added.notify.summary = "📫 New message from {sender}"
-on-message-added.notify.body = "{subject}"
+# Declare one or more of the `imap`, `jmap`, `maildir` blocks below. When more
+# than one is configured, `-b/--backend {imap,jmap,maildir}` selects the active
+# one; with `-b auto` (default) the priority order is IMAP, then JMAP, then
+# Maildir, and the first configured block wins.
+# --------------------------------------------------------------------------------
 
-########################################
-#### IMAP configuration ################
-########################################
+# ---- IMAP backend (RFC 2177 IDLE) ----------------------------------------------
 
-# Defines the IMAP backend as the default one for all features.
-#
-backend.type = "imap"
+# IMAP server address. Either a bare authority (`imap.example.org[:port]`,
+# treated as `imaps://<authority>` by default), or a full URL with `imap://`
+# (cleartext, optionally upgraded via STARTTLS) or `imaps://` (implicit TLS)
+# scheme used verbatim.
+imap.server = "imaps://imap.example.org"
+#imap.server = "imap.example.org"
+#imap.server = "imap://example.org:143"
 
-# IMAP server host name.
-#
-backend.host = "localhost"
+# Enable STARTTLS (only valid when the server resolves to `imap://`).
+#imap.starttls = false
 
-# IMAP server port.
-#
-#backend.port = 143
-backend.port = 993
+# TLS provider, defaults to the first available at runtime.
+#imap.tls.provider = "rustls"
+#imap.tls.provider = "native-tls"
+#imap.tls.rustls.crypto = "ring"
+#imap.tls.rustls.crypto = "aws"
+#imap.tls.cert = "/path/to/custom/cert.pem"
 
-# IMAP server encryption.
-#
-#backend.encryption.type = "none"
-#backend.encryption.type = "start-tls"
-backend.encryption.type = "tls"
+# Pick exactly one SASL mechanism among `anonymous`, `login`, `plain`,
+# `oauthbearer`, `xoauth2`, `scram-sha-256`. Omit the whole `imap.sasl` table
+# to skip authentication entirely (no `AUTHENTICATE` command sent).
 
-# IMAP server login.
-#
-backend.login = "example@localhost"
+# SASL PLAIN (https://www.iana.org/go/rfc4616)
+imap.sasl.plain.authcid = "user@example.org"
+imap.sasl.plain.passwd.raw = "REPLACE_ME"
+#imap.sasl.plain.authzid = "user@example.org"  # optional authorization identity
+#imap.sasl.plain.passwd.command = "pass show mirador/example"
+#imap.sasl.plain.passwd.command = ["secret-tool", "lookup", "service", "mirador-example"]
 
-# IMAP server password authentication configuration.
-#
-backend.auth.type = "password"
-#
-# Password can be inlined (not recommended).
-#
-#backend.auth.raw = "p@assw0rd"
-#
-# Password can be stored inside your system global keyring (requires
-# the keyring cargo feature). You must run at least once `himalaya
-# account configure` to set up the password.
-#
-#backend.auth.keyring = "example-imap"
-#
-# Password can be retrieved from a shell command.
-#
-backend.auth.cmd = "pass show example-imap"
+# SASL LOGIN (https://datatracker.ietf.org/doc/html/draft-murchison-sasl-login-00)
+#imap.sasl.login.username = "user@example.org"
+#imap.sasl.login.password.raw = "***"
 
-# IMAP server OAuth 2.0 authorization configuration.
-#
-#backend.auth.type = "oauth2"
-#
-# Client identifier issued to the client during the registration
-# process described in RFC6749.
-# See <https://datatracker.ietf.org/doc/html/rfc6749#section-2.2>.
-#
-#backend.auth.client-id = "client-id"
-#
-# Client password issued to the client during the registration process
-# described in RFC6749.
-#
-# Defaults to keyring "<account-name>-imap-client-secret".
-# See <https://datatracker.ietf.org/doc/html/rfc6749#section-2.2>.
-#
-#backend.auth.client-secret.raw = "<raw-client-secret>"
-#backend.auth.client-secret.keyring = "example-imap-client-secret"
-#backend.auth.client-secret.cmd = "pass show example-imap-client-secret"
-#
-# Method for presenting an OAuth 2.0 bearer token to a service for
-# authentication.
-#
-#backend.auth.method = "oauthbearer"
-#backend.auth.method = "xoauth2"
-#
-# URL of the authorization server's authorization endpoint.
-#
-#backend.auth.auth-url = "https://accounts.google.com/o/oauth2/v2/auth"
-#
-# URL of the authorization server's token endpoint.
-#
-#backend.auth.token-url = "https://www.googleapis.com/oauth2/v3/token"
-#
-# Access token returned by the token endpoint and used to access
-# protected resources. It is recommended to use the keyring variant,
-# as it will refresh automatically.
-#
-# Defaults to keyring "<account-name>-imap-access-token".
-#
-#backend.auth.access-token.raw = "<raw-access-token>"
-#backend.auth.access-token.keyring = "example-imap-access-token"
-#backend.auth.access-token.cmd = "pass show example-imap-access-token"
-#
-# Refresh token used to obtain a new access token (if supported by the
-# authorization server). It is recommended to use the keyring variant,
-# as it will refresh automatically.
-#
-# Defaults to keyring "<account-name>-imap-refresh-token".
-#
-#backend.auth.refresh-token.raw = "<raw-refresh-token>"
-#backend.auth.refresh-token.keyring = "example-imap-refresh-token"
-#backend.auth.refresh-token.cmd = "pass show example-imap-refresh-token"
-#
-# Enable the protection, as defined in RFC7636.
-#
-# See <https://datatracker.ietf.org/doc/html/rfc7636>.
-#
-#backend.auth.pkce = true
-#
-# Access token scope(s), as defined by the authorization server.
-#
-#backend.auth.scope = "unique scope"
-#backend.auth.scopes = ["multiple", "scopes"]
-#
-# URL scheme of the redirect server.
-# Defaults to http.
-#
-#backend.auth.redirect-scheme = "http"
-#
-# Host name of the redirect server.
-# Defaults to localhost.
-#
-#backend.auth.redirect-host = "localhost"
-#
-# Port of the redirect server.
-# Defaults to the first available one.
-#
-#backend.auth.redirect-port = 9999
+# SASL ANONYMOUS (https://www.iana.org/go/rfc4505)
+#imap.sasl.anonymous.message = "mirador"
 
-########################################
-#### Maildir configuration #############
-########################################
+# SASL OAUTHBEARER (https://www.iana.org/go/rfc7628). Host/port are echoed
+# verbatim in the GS2 header; usually mirror the server you connect to.
+#imap.sasl.oauthbearer.username = "user@example.org"
+#imap.sasl.oauthbearer.host = "imap.example.org"
+#imap.sasl.oauthbearer.port = 993
+#imap.sasl.oauthbearer.token.command = ["ortie", "token", "read", "example"]
 
-# Defines the Maildir backend
-#
-#backend.type = "maildir"
+# SASL XOAUTH2 (Google's pre-standard OAuth 2.0 SASL).
+#imap.sasl.xoauth2.username = "user@example.org"
+#imap.sasl.xoauth2.token.command = "ortie token read gmail"
 
-# The Maildir root directory. The path should point to the root level
-# of the Maildir directory.
-#
-#backend.root-dir = "~/.Mail/example"
+# SASL SCRAM-SHA-256 (https://www.iana.org/go/rfc7677)
+#imap.sasl.scram-sha-256.username = "user@example.org"
+#imap.sasl.scram-sha-256.password.raw = "***"
 
-# Does the Maildir folder follows the Maildir++ standard?
+# ---- JMAP backend (RFC 8620 §7.2 EventSource push) -----------------------------
+
+# JMAP server address. Either a bare authority (auto-discovered via
+# `GET /.well-known/jmap`) or a full URL pointing directly at the session
+# endpoint.
+#jmap.server = "fastmail.com"
+#jmap.server = "https://api.fastmail.com/jmap/session"
+
+# TLS knobs mirror the imap.tls block above.
+#jmap.tls.provider = "rustls"
+#jmap.tls.rustls.crypto = "ring"
+#jmap.tls.cert = "/path/to/custom/cert.pem"
+
+# Pick exactly one of `header`, `bearer`, `basic`.
+
+# Raw `Authorization` header value, used verbatim.
+#jmap.auth.header.raw = "Bearer eyJhbGciOiJ..."
+#jmap.auth.header.command = "pass show mirador/fastmail-token"
+
+# OAuth 2.0 / API token bearer.
+#jmap.auth.bearer.token.command = ["ortie", "token", "read", "fastmail"]
+
+# HTTP Basic.
+#jmap.auth.basic.username = "user@example.org"
+#jmap.auth.basic.password.command = "pass show mirador/example"
+
+# ---- Maildir backend (filesystem notifications) -------------------------------
+
+# Root directory containing one subdirectory per mailbox (Maildir++ layout).
+#maildir.root = "~/Mail/example"
+
+# --------------------------------------------------------------------------------
+# Hooks
 #
-# See <https://en.wikipedia.org/wiki/Maildir#Maildir++>.
+# Mirador fires zero or more hooks per watch event kind:
+#   - `on-message-added`   -> a new message landed in the watched folder
+#   - `on-message-removed` -> a message was expunged
+#   - `on-flags-added`     -> one or more flags were set on an existing message
+#   - `on-flags-removed`   -> one or more flags were unset on an existing message
 #
-#backend.maildirpp = false
+# Each hook can declare a system notification (`notify`), a shell command
+# (`cmd`) or both. Placeholders use shell-style $name / ${name} syntax:
+# id, mailbox, subject, sender, sender_name, sender_address, recipient,
+# recipient_name, recipient_address, flag, flags. Sender / recipient /
+# subject only resolve on `on-message-added`. Shell-command hooks
+# receive the placeholders as environment variables, so the shell's
+# own expansion does the substitution: quote references as "$subject"
+# for safe whitespace handling.
+# --------------------------------------------------------------------------------
+
+on-message-added.notify.summary = "New mail from $sender"
+on-message-added.notify.body = "$subject"
+#on-message-added.cmd = "mbsync example"
+
+#on-message-removed.cmd = 'echo "$id expunged" >> ~/.local/state/mirador.log'
+
+# Flag hooks accept an optional `flags = [...]` filter (case-insensitive IANA
+# flag name, with or without the leading `\` / `$`). When set, the hook fires
+# only if at least one of the listed flags is in the delta.
+#on-flags-added.flags = ["Seen"]
+#on-flags-added.cmd = 'echo "$id marked read"'
+
+#on-flags-removed.flags = ["Flagged"]
+#on-flags-removed.cmd = 'echo "$id unflagged"'
