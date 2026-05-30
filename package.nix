@@ -5,6 +5,7 @@
   buildFeatures ? [ ],
   buildNoDefaultFeatures ? false,
   buildPackages,
+  dbus,
   fetchFromGitHub,
   installManPages ? stdenv.buildPlatform.canExecute stdenv.hostPlatform,
   installShellCompletions ? stdenv.buildPlatform.canExecute stdenv.hostPlatform,
@@ -42,7 +43,10 @@ rustPlatform.buildRustPackage {
     installShellFiles
   ];
 
-  buildInputs = lib.optional (builtins.elem "native-tls" buildFeatures) openssl;
+  buildInputs = [
+    dbus
+  ]
+  ++ lib.optional (builtins.elem "native-tls" buildFeatures) openssl;
 
   # most of the tests are lib side
   doCheck = false;

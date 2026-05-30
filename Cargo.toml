@@ -24,7 +24,7 @@ maildir = ["dep:io-maildir", "io-email/maildir", "io-maildir/client"]
 native-tls = ["pimalaya-stream/native-tls", "io-email/native-tls", "io-imap?/native-tls", "io-jmap?/native-tls"]
 rustls-aws = ["pimalaya-stream/rustls-aws", "io-email/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws"]
 rustls-ring = ["pimalaya-stream/rustls-ring", "io-email/rustls-ring", "io-imap?/rustls-ring", "io-jmap?/rustls-ring"]
-vendored = ["pimalaya-stream/vendored"]
+vendored = ["pimalaya-stream/vendored", "notify-rust/d_vendored"]
 
 [profile.release]
 lto = "fat"
@@ -46,7 +46,7 @@ io-imap = { version = "0.0.1", default-features = false, optional = true }
 io-jmap = { version = "0.0.1", default-features = false, optional = true }
 io-maildir = { version = "0.0.1", default-features = false, optional = true }
 log = "0.4"
-notify-rust = "4"
+notify-rust = { version = "4", default-features = false, features = ["d"] }
 percent-encoding = "2"
 pimalaya-cli = { version = "0.0.1", default-features = false, features = ["terminal", "prompt", "spinner"] }
 pimalaya-config = { version = "0.0.1", default-features = false, features = ["toml", "secret"] }
