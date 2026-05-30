@@ -19,16 +19,18 @@
 //! the requested subcommand.
 
 mod backend;
+mod check;
 mod cli;
 mod client;
 mod config;
 mod hook;
+mod watch;
 
 use anyhow::Result;
 use clap::Parser;
 use pimalaya_cli::{error::ErrorReport, log::Logger, printer::StdoutPrinter};
 
-use crate::cli::main::Cli;
+use crate::cli::Cli;
 
 fn main() {
     let cli = Cli::parse();

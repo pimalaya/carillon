@@ -31,10 +31,7 @@ use pimalaya_cli::{
     printer::Printer,
 };
 
-use crate::{
-    backend::Backend,
-    cli::{check::CheckCommand, watch::WatchCommand},
-};
+use crate::{backend::Backend, check::CheckCommand, watch::WatchCommand};
 
 /// Top-level CLI: global flags and subcommand dispatch.
 #[derive(Parser, Debug)]
