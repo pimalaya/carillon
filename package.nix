@@ -58,10 +58,9 @@ rustPlatform.buildRustPackage {
     installShellFiles
   ];
 
-  buildInputs = [
-    dbus'
-  ]
-  ++ lib.optional (builtins.elem "native-tls" buildFeatures) openssl;
+  buildInputs =
+    # D-Bus is provided by vendors on Windows
+    lib.optional (!isWindows) dbus' ++ lib.optional (builtins.elem "native-tls" buildFeatures) openssl;
 
   buildFeatures = buildFeatures ++ lib.optional isWindows "vendored";
 
