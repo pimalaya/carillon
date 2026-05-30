@@ -12,13 +12,15 @@ First public release of mirador. The CLI is synchronous (`std::net` end to end) 
 
 - Initiated the project from [Himalaya CLI](https://github.com/pimalaya/himalaya) and [Neverest CLI](https://github.com/pimalaya/neverest).
 - Added the JMAP backend, driven by [RFC 8620 §7.2 EventSource](https://datatracker.ietf.org/doc/html/rfc8620#section-7.2) push (requires the `jmap` cargo feature).
-- Added four watch event hooks: `on-message-added`, `on-message-removed`, `on-flags-added`, `on-flags-removed`. Flag hooks accept an optional `flags = [...]` filter that narrows firing to a specific IANA-classified flag (case-insensitive, with or without the leading `\` / `$`).
+- Added four watch event hooks under the `hooks.` TOML namespace: `hooks.on-message-added`, `hooks.on-message-removed`, `hooks.on-flags-added`, `hooks.on-flags-removed`. Flag hooks accept an optional `flags = [...]` filter that narrows firing to a specific IANA-classified flag (case-insensitive, with or without the leading `\` / `$`).
 - Added per-protocol TLS feature flags: `rustls-ring` (default), `rustls-aws`, `native-tls`, `vendored`.
 - Added a global `-b/--backend {auto,imap,jmap,maildir}` flag that pins which backend block is opened on accounts declaring more than one.
 
 ### Changed
 
-- Switched hook placeholder syntax to shell-style `$name` / `${name}`. Notification summary/body are expanded with [subst](https://crates.io/crates/subst); shell-command hooks receive the placeholders as environment variables and let the shell itself expand them (quote as `"$subject"` for safe whitespace handling). Sender / recipient sub-fields are exposed as `sender_name` / `sender_address` / `recipient_name` / `recipient_address` so they form valid environment-variable names.
+- Switched hook placeholder syntax to shell-style `$name` / `${name}`. Notification summary/body are expanded with [subst](https://crates.io/crates/subst). Sender / recipient sub-fields are exposed as `sender_name` / `sender_address` / `recipient_name` / `recipient_address` so they form valid environment-variable names.
+
+- Hook `cmd` is decoded by [`pimalaya_config::command`](https://github.com/pimalaya/config) and accepts both TOML shapes: a string handed to the platform shell (`/bin/sh -c` on Unix, `cmd /C` on Windows; quote placeholders as `"$subject"` so the shell expands them) or a `[program, args…]` list spawned directly with no shell. Template vars are exported as environment variables on the spawned process in both shapes.
 - Switched to license AGPL-3.0-only with a per-file header (was MIT in early prototypes).
 - Switched to Rust edition 2024 (MSRV 1.88).
 - Rewrote the CLI on top of [pimalaya-cli](https://github.com/pimalaya/cli), [pimalaya-config](https://github.com/pimalaya/config) and the [io-*](https://github.com/pimalaya/) coroutine crates. Replaced `tokio` with `std::thread`, `color-eyre` with `anyhow` + `pimalaya_cli::error::ErrorReport`, `tracing` with `log` + `pimalaya_cli::log::Logger`, hand-rolled `clap_complete` / `clap_mangen` with `pimalaya-cli/build`.

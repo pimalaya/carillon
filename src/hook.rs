@@ -16,21 +16,22 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 //! Hook runner: dispatches to `notify-rust` for system notifications
-//! and to `sh -c` for shell commands. Notification summary/body
-//! strings are expanded with [`subst`] (shell-style `$name` /
-//! `${name}`); shell commands receive the same placeholders as
-//! environment variables, so the shell itself does the expansion
-//! (`"$subject"`). Failures are logged but never panic the watch
-//! loop.
+//! and spawns the configured child process for shell commands.
+//! Notification summary/body strings are expanded with [`subst`]
+//! (shell-style `$name` / `${name}`). Hook commands are deserialized
+//! through [`pimalaya_config::command`] (string → platform shell, list
+//! → direct exec); template vars are exported as environment
+//! variables on the spawned process in both shapes. Failures are
+//! logged but never panic the watch loop.
 
-use std::{collections::BTreeMap, process::Command};
+use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
 use io_email::{envelope::Envelope, flag::Flag};
 use log::{trace, warn};
 use notify_rust::Notification;
 
-use crate::hook::config::{FlagsHook, MessageHook, NotifyConfig};
+use crate::config::{FlagsHook, HookCmd, MessageHook, NotifyConfig};
 
 /// Runs an envelope-level hook. Failures are logged at `warn` so a
 /// broken script never crashes the watcher.
@@ -157,20 +158,19 @@ fn fire_notification(config: &NotifyConfig, vars: &BTreeMap<&'static str, String
     Ok(())
 }
 
-/// Spawns `sh -c <cmd>` with the template vars exported as
-/// environment variables; the shell's own parameter expansion does
-/// the substitution (`"$subject"` etc.). POSIX guarantees the
-/// expansion is single-pass and not re-parsed as shell syntax, so
-/// values containing `$id`, `;`, backticks, etc. are safe as long
-/// as the user quotes the reference.
-fn run_command(cmd: &str, vars: &BTreeMap<&'static str, String>) -> Result<()> {
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
+/// Spawns the [`HookCmd`] with the template vars exported as
+/// environment variables. The two TOML shapes (string handed to the
+/// platform shell; list spawned directly) are flattened into a single
+/// [`std::process::Command`] by [`pimalaya_config::command`] at
+/// deserialization time, so the runtime path is uniform here.
+fn run_command(cmd: &HookCmd, vars: &BTreeMap<&'static str, String>) -> Result<()> {
+    let status = cmd
+        .clone()
+        .0
         .envs(vars.iter().map(|(k, v)| (*k, v.as_str())))
         .status()?;
     if !status.success() {
-        warn!("cmd `{cmd}` exited with {status}");
+        warn!("cmd hook exited with {status}");
     }
     Ok(())
 }

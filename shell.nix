@@ -26,6 +26,7 @@ let
 in
 shell.overrideAttrs (prev: {
   LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+    dbus
     openssl
   ];
 

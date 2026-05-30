@@ -67,12 +67,14 @@ The IMAP SASL config carries the mechanism name as the *key* under `sasl` (`imap
 
 | draft | v0.1.0 |
 |---|---|
-| `on-message-added.notify.summary` / `.body` | unchanged |
-| `on-message-added.cmd` | unchanged |
-| (no other event) | `on-message-removed.*`, `on-flags-added.*`, `on-flags-removed.*` (same `notify` + `cmd` shape) |
-| (no flag filter) | `on-flags-{added,removed}.flags = ["Seen", …]` narrows firing to a specific IANA-classified flag |
+| `on-message-added.notify.summary` / `.body` | `hooks.on-message-added.notify.summary` / `.body` |
+| `on-message-added.cmd` | `hooks.on-message-added.cmd` |
+| (no other event) | `hooks.on-message-removed.*`, `hooks.on-flags-added.*`, `hooks.on-flags-removed.*` (same `notify` + `cmd` shape) |
+| (no flag filter) | `hooks.on-flags-{added,removed}.flags = ["Seen", …]` narrows firing to a specific IANA-classified flag |
 
-Placeholders use shell-style `$name` / `${name}` syntax and are available everywhere: `id`, `mailbox`, `subject`, `sender`, `sender_name`, `sender_address`, `recipient`, `recipient_name`, `recipient_address`, `flag`, `flags`. Sender / recipient / subject only resolve on `on-message-added` (the other event kinds carry just the id). Shell-command hooks receive them as environment variables, so the shell's own expansion does the substitution: quote references as `"$subject"` for safe whitespace handling.
+Placeholders use shell-style `$name` / `${name}` syntax in the notification `summary` / `body` (expanded with [subst](https://crates.io/crates/subst)) and are also exported as environment variables on the spawned `cmd` process. Available names: `id`, `mailbox`, `subject`, `sender`, `sender_name`, `sender_address`, `recipient`, `recipient_name`, `recipient_address`, `flag`, `flags`. Sender / recipient / subject only resolve on `hooks.on-message-added`.
+
+The `cmd` field is decoded by [`pimalaya_config::command`](https://github.com/pimalaya/config) and accepts two TOML shapes: a **string** is handed to the platform shell (`/bin/sh -c <line>` on Unix, `cmd /C <line>` on Windows; quote placeholders as `"$subject"` so the shell expands them); a **list** `[program, args…]` is spawned directly with no shell (placeholders are still available as env vars to the spawned program).
 
 #### Secrets
 

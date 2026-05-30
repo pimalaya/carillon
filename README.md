@@ -30,7 +30,7 @@ CLI to watch mailbox changes, written in Rust
 - Remote backends: **IMAP** via [RFC 2177 IDLE](https://datatracker.ietf.org/doc/html/rfc2177), **JMAP** via [RFC 8620 §7.2 EventSource](https://datatracker.ietf.org/doc/html/rfc8620#section-7.2) push
 - Local backend: **Maildir** <sup>[specs](https://cr.yp.to/proto/maildir.html)</sup> via filesystem notifications
 - Watch events: **`on-message-added`**, **`on-message-removed`**, **`on-flags-added`**, **`on-flags-removed`** (flag hooks accept an optional `flags = [...]` filter)
-- Hook actions: **system notification** via [notify-rust](https://crates.io/crates/notify-rust) and **shell command** via `sh -c`
+- Hook actions: **system notification** via [notify-rust](https://crates.io/crates/notify-rust) and **shell command** (TOML string handed to `/bin/sh -c` on Unix / `cmd /C` on Windows; or a TOML `[program, args…]` list spawned directly with no shell)
 - Shell-style placeholders (`$name` / `${name}`) in hook strings: `id`, `mailbox`, `subject`, `sender`, `sender_name`, `sender_address`, `recipient`, `recipient_name`, `recipient_address`, `flag`, `flags`. Shell-command hooks receive them as environment variables, so the shell's own expansion does the substitution: write `"$subject"` (quoted) for safe whitespace handling.
 - **Simple auth** support for IMAP: anonymous, login, plain, oauthbearer, xoauth2, scram-sha-256
 - **HTTP auth** support for JMAP: basic, bearer
@@ -98,7 +98,7 @@ A persistent configuration is loaded from the first valid path among:
 - `$HOME/.config/mirador/config.toml`
 - `$HOME/.miradorrc`
 
-These are the same paths the [himalaya](https://github.com/pimalaya/himalaya) CLI and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) look at: one TOML file backs all three binaries, **starting from himalaya CLI v2**. Each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`), declared as flat dotted entries under `[accounts.<name>]`. Mirador-only fields (`mailbox`, the four `on-*` hook tables) coexist with the shared keys and are silently ignored by the other binaries.
+These are the same paths the [himalaya](https://github.com/pimalaya/himalaya) CLI and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) look at: one TOML file backs all three binaries, **starting from himalaya CLI v2**. Each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`), declared as flat dotted entries under `[accounts.<name>]`. Mirador-only fields (`mailbox`, the `hooks.on-*` tables) coexist with the shared keys and are silently ignored by the other binaries.
 
 > [!WARNING]
 > A pre-v0.1.0 mirador configuration file is **not** compatible with `v0.1.0`: the schema differs. See [MIGRATION.md](./MIGRATION.md) (or rewrite the file using [config.sample.toml](./config.sample.toml) as a template) before pointing `v0.1.0` at it.
@@ -117,18 +117,18 @@ An account may declare more than one of the `imap`, `jmap`, `maildir` blocks (so
 Mirador fires zero or more hooks per [watch event kind](#features). Each hook config can declare a system notification, a shell command, or both:
 
 ```toml
-[accounts.example.on-message-added]
-notify = { summary = "New mail from $sender", body = "$subject" }
-cmd = "mbsync example"
+# String `cmd`: handed to /bin/sh -c on Unix, cmd /C on Windows.
+# Placeholders are env vars; the shell does the expansion.
+hooks.on-message-added.notify = { summary = "New mail from $sender", body = "$subject" }
+hooks.on-message-added.cmd = 'echo "$id arrived" >> ~/.local/state/mirador.log'
 
-# Flag hooks may filter on the IANA flag name (case-insensitive, with or
-# without the leading "\" / "$"):
-[accounts.example.on-flags-added]
-flags = ["Seen"]
-cmd = 'echo "$id marked read" >> ~/.local/state/mirador.log'
+# List `cmd`: [program, args...] spawned directly. Flag hooks accept
+# an optional `flags = [...]` filter (IANA flag name, case-insensitive).
+hooks.on-flags-added.flags = ["Seen"]
+hooks.on-flags-added.cmd = ["notify-send", "New flag on $id"]
 ```
 
-Notifications use [notify-rust](https://crates.io/crates/notify-rust) (D-Bus / `NSUserNotification` / Windows toast). Shell commands run via `sh -c`; failures are logged at `warn` so a broken script never crashes the watcher.
+Both `cmd` shapes are decoded by [`pimalaya_config::command`](https://github.com/pimalaya/config). Notifications use [notify-rust](https://crates.io/crates/notify-rust) (D-Bus / `NSUserNotification` / Windows toast). Failures are logged at `warn` so a broken hook never crashes the watcher.
 
 ## Usage
 

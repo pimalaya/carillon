@@ -133,35 +133,18 @@ imap.sasl.plain.passwd.raw = "REPLACE_ME"
 #maildir.root = "~/Mail/example"
 
 # --------------------------------------------------------------------------------
-# Hooks
-#
-# Mirador fires zero or more hooks per watch event kind:
-#   - `on-message-added`   -> a new message landed in the watched mailbox
-#   - `on-message-removed` -> a message was expunged
-#   - `on-flags-added`     -> one or more flags were set on an existing message
-#   - `on-flags-removed`   -> one or more flags were unset on an existing message
-#
-# Each hook can declare a system notification (`notify`), a shell command
-# (`cmd`) or both. Placeholders use shell-style $name / ${name} syntax:
-# id, mailbox, subject, sender, sender_name, sender_address, recipient,
-# recipient_name, recipient_address, flag, flags. Sender / recipient /
-# subject only resolve on `on-message-added`. Shell-command hooks
-# receive the placeholders as environment variables, so the shell's
-# own expansion does the substitution: quote references as "$subject"
-# for safe whitespace handling.
+# Hooks: hooks.on-{message,flags}-{added,removed}.{notify,cmd}. `cmd` is
+# either a string (handed to /bin/sh -c on Unix, cmd /C on Windows) or a
+# list [program, args...] spawned directly. Placeholders are exported as
+# environment variables on the spawned process: $id, $mailbox, $subject,
+# $sender, $sender_name, $sender_address, $recipient, $recipient_name,
+# $recipient_address, $flag, $flags ($subject/$sender/$recipient only
+# resolve on on-message-added).
 # --------------------------------------------------------------------------------
 
-on-message-added.notify.summary = "New mail from $sender"
-on-message-added.notify.body = "$subject"
-#on-message-added.cmd = "mbsync example"
+hooks.on-message-added.notify.summary = "New mail from $sender"
+hooks.on-message-added.notify.body = "$subject"
+hooks.on-message-added.cmd = 'echo "$id arrived" >> ~/.local/state/mirador.log'
 
-#on-message-removed.cmd = 'echo "$id expunged" >> ~/.local/state/mirador.log'
-
-# Flag hooks accept an optional `flags = [...]` filter (case-insensitive IANA
-# flag name, with or without the leading `\` / `$`). When set, the hook fires
-# only if at least one of the listed flags is in the delta.
-#on-flags-added.flags = ["Seen"]
-#on-flags-added.cmd = 'echo "$id marked read"'
-
-#on-flags-removed.flags = ["Flagged"]
-#on-flags-removed.cmd = 'echo "$id unflagged"'
+hooks.on-flags-added.flags = ["Seen"]
+hooks.on-flags-added.cmd = ["notify-send", "New flag on $id"]

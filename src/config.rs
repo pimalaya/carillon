@@ -21,16 +21,21 @@
 //! [himalaya CLI v2] and [himalaya TUI]: each backend lives under its
 //! own protocol key (`imap`, `jmap`, `maildir`); declaring more than
 //! one is allowed and the runtime picks the active one via
-//! `-b/--backend`. Mirador-only fields (`mailbox`, the four `on-*`
-//! hook blocks) coexist with the shared keys and are silently ignored
-//! by the other binaries.
+//! `-b/--backend`. Mirador-only fields (`mailbox`, the `hooks.on-*`
+//! tables) coexist with the shared keys and are silently ignored by
+//! the other binaries.
 //!
 //! [himalaya CLI v2]: https://github.com/pimalaya/himalaya
 //! [himalaya TUI]: https://github.com/pimalaya/himalaya-tui
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::PathBuf,
+    process::Command,
+};
 
 use anyhow::Result;
+use pimalaya_config::command;
 #[cfg(feature = "imap")]
 use pimalaya_config::secret::Secret;
 use pimalaya_config::toml::TomlConfig;
@@ -41,8 +46,6 @@ use pimalaya_stream::sasl::{
 #[cfg(any(feature = "imap", feature = "jmap"))]
 use pimalaya_stream::tls::{Rustls, RustlsCrypto, Tls, TlsProvider};
 use serde::{Deserialize, Serialize};
-
-use crate::hook::config::HooksConfig;
 
 /// Root configuration: a map of named accounts.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -92,8 +95,8 @@ impl Config {
 /// `deny_unknown_fields` is intentionally omitted so the same TOML file
 /// can be shared with `himalaya` CLI v2 and `himalaya-tui`. Their
 /// extra fields (`smtp`, `m2dir`, `display-name`, `signature`, …)
-/// coexist silently with the mirador-only ones (`mailbox`, the four
-/// `on-*` hook tables).
+/// coexist silently with the mirador-only ones (`mailbox`, the
+/// `hooks.on-*` tables).
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct AccountConfig {
@@ -344,5 +347,73 @@ impl TryFrom<SaslConfig> for Sasl {
                 password: c.password.get()?,
             }),
         })
+    }
+}
+
+// ---- Hooks --------------------------------------------------------
+
+/// Per-account hook configuration: one optional hook per watch
+/// event kind.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct HooksConfig {
+    pub on_message_added: Option<MessageHook>,
+    pub on_message_removed: Option<MessageHook>,
+    pub on_flags_added: Option<FlagsHook>,
+    pub on_flags_removed: Option<FlagsHook>,
+}
+
+/// Hook that fires for envelope-level events (added or removed).
+/// Placeholders use shell-style `$name` / `${name}` syntax in the
+/// notification summary/body. Available names: `id`, `mailbox`, and
+/// (for `on-message-added` only) `subject`, `sender`, `sender_name`,
+/// `sender_address`, `recipient`, `recipient_name`,
+/// `recipient_address`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct MessageHook {
+    pub notify: Option<NotifyConfig>,
+    pub cmd: Option<HookCmd>,
+}
+
+/// Hook that fires for flag-level events (added or removed). `flags`
+/// optionally restricts firing to deltas whose IANA-classified flag
+/// raw name matches one of the listed names (case-insensitive; both
+/// `Seen` and `\Seen` work).
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct FlagsHook {
+    pub notify: Option<NotifyConfig>,
+    pub cmd: Option<HookCmd>,
+    #[serde(default)]
+    pub flags: BTreeSet<String>,
+}
+
+/// Desktop notification payload: a one-line summary and an optional
+/// multi-line body.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct NotifyConfig {
+    pub summary: String,
+    #[serde(default)]
+    pub body: String,
+}
+
+/// Shell-command payload. Deserialization delegates to
+/// [`pimalaya_config::command`]: a TOML string is wrapped through the
+/// platform shell (`/bin/sh -c <line>` on Unix, `cmd /C <line>` on
+/// Windows), a TOML list `[program, args…]` is spawned directly with
+/// no shell. Template vars are exported as environment variables on
+/// the spawned process in both shapes.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct HookCmd(#[serde(with = "command")] pub Command);
+
+impl Clone for HookCmd {
+    fn clone(&self) -> Self {
+        // `Command` itself is not `Clone`; rebuild a fresh one with
+        // the same program + args (mirrors `Secret`'s manual impl).
+        let mut new = Command::new(self.0.get_program());
+        new.args(self.0.get_args());
+        Self(new)
     }
 }

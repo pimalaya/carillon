@@ -47,10 +47,8 @@ use crate::{
     backend::Backend,
     client,
     config::Config,
-    hook::{
-        config::HooksConfig,
-        run::{FlagsContext, MessageContext, run_flags_hook, run_message_hook},
-    },
+    config::HooksConfig,
+    hook::{FlagsContext, MessageContext, run_flags_hook, run_message_hook},
 };
 
 const POLL_TICK: Duration = Duration::from_millis(500);
