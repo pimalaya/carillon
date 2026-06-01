@@ -73,11 +73,10 @@ imap.server = "imaps://imap.example.org"
 # to skip authentication entirely (no `AUTHENTICATE` command sent).
 
 # SASL PLAIN (https://www.iana.org/go/rfc4616)
-imap.sasl.plain.authcid = "user@example.org"
-imap.sasl.plain.passwd.raw = "REPLACE_ME"
+imap.sasl.plain.username = "user@example.org"
+imap.sasl.plain.password.raw = "REPLACE_ME"
 #imap.sasl.plain.authzid = "user@example.org"  # optional authorization identity
-#imap.sasl.plain.passwd.command = "pass show mirador/example"
-#imap.sasl.plain.passwd.command = ["secret-tool", "lookup", "service", "mirador-example"]
+#imap.sasl.plain.password.command = "pass show mirador/example"
 
 # SASL LOGIN (https://datatracker.ietf.org/doc/html/draft-murchison-sasl-login-00)
 #imap.sasl.login.username = "user@example.org"
@@ -86,11 +85,9 @@ imap.sasl.plain.passwd.raw = "REPLACE_ME"
 # SASL ANONYMOUS (https://www.iana.org/go/rfc4505)
 #imap.sasl.anonymous.message = "mirador"
 
-# SASL OAUTHBEARER (https://www.iana.org/go/rfc7628). Host/port are echoed
-# verbatim in the GS2 header; usually mirror the server you connect to.
+# SASL OAUTHBEARER (https://www.iana.org/go/rfc7628). Host/port for the
+# GS2 header are derived from the IMAP server URL at connect time.
 #imap.sasl.oauthbearer.username = "user@example.org"
-#imap.sasl.oauthbearer.host = "imap.example.org"
-#imap.sasl.oauthbearer.port = 993
 #imap.sasl.oauthbearer.token.command = ["ortie", "token", "read", "example"]
 
 # SASL XOAUTH2 (Google's pre-standard OAuth 2.0 SASL).

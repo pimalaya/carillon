@@ -283,7 +283,9 @@ pub struct SaslLoginConfig {
 pub struct SaslPlainConfig {
     pub authzid: Option<String>,
     #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_string")]
+    #[serde(alias = "username")]
     pub authcid: String,
+    #[serde(alias = "password")]
     pub passwd: Secret,
 }
 
@@ -293,8 +295,6 @@ pub struct SaslPlainConfig {
 pub struct SaslOauthbearerConfig {
     #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_string")]
     pub username: String,
-    pub host: String,
-    pub port: u16,
     pub token: Secret,
 }
 
@@ -317,11 +317,13 @@ pub struct SaslScramSha256Config {
 }
 
 #[cfg(feature = "imap")]
-impl TryFrom<SaslConfig> for Sasl {
-    type Error = anyhow::Error;
-
-    fn try_from(config: SaslConfig) -> Result<Self, Self::Error> {
-        Ok(match config {
+impl SaslConfig {
+    /// Resolves the SASL config into a runtime [`Sasl`]. `host` and
+    /// `port` come from the live server URL; they are only used by
+    /// OAUTHBEARER (echoed in the GS2 header) and ignored by every
+    /// other mechanism.
+    pub fn try_into_sasl(self, host: impl ToString, port: u16) -> Result<Sasl> {
+        Ok(match self {
             SaslConfig::Anonymous(c) => Sasl::Anonymous(SaslAnonymous { message: c.message }),
             SaslConfig::Login(c) => Sasl::Login(SaslLogin {
                 username: c.username,
@@ -334,8 +336,8 @@ impl TryFrom<SaslConfig> for Sasl {
             }),
             SaslConfig::Oauthbearer(c) => Sasl::Oauthbearer(SaslOauthbearer {
                 username: c.username,
-                host: c.host,
-                port: c.port,
+                host: host.to_string(),
+                port,
                 token: c.token.get()?,
             }),
             SaslConfig::Xoauth2(c) => Sasl::Xoauth2(SaslXoauth2 {

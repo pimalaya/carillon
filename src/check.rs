@@ -108,8 +108,16 @@ fn check_imap(
     let result = (|| -> Result<()> {
         let mut tls: Tls = imap_config.tls.clone().into();
         tls.rustls.alpn = vec!["imap".into()];
-        let sasl: Option<Sasl> = imap_config.sasl.clone().map(Sasl::try_from).transpose()?;
         let server = crate::client::parse_imap_server(&imap_config.server)?;
+        let sasl: Option<Sasl> = imap_config
+            .sasl
+            .clone()
+            .and_then(|cfg| {
+                let host = server.host_str()?;
+                let port = server.port_or_known_default()?;
+                Some(cfg.try_into_sasl(host, port))
+            })
+            .transpose()?;
         let _ = ImapClientStd::connect(&server, &tls, imap_config.starttls, sasl)?;
         Ok(())
     })();
