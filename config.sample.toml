@@ -98,6 +98,17 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #imap.sasl.scram-sha-256.username = "user@example.org"
 #imap.sasl.scram-sha-256.password.raw = "***"
 
+# RFC 2971 ID extension. Some providers (mail.qq.com, fastmail) require an `ID`
+# exchange straight after authentication; set `auto = true` to opt in.
+# https://www.rfc-editor.org/rfc/rfc2971.html
+#imap.id.auto = false
+
+# Per-field policy for the auto-ID command. Keys not listed here are NOT sent.
+# `true` substitutes mirador's canned value for the well-known keys (name,
+# version, vendor, support-url); unknown keys with `true` fall back to NIL with
+# a warning. `false` always sends NIL. An empty map sends `ID NIL`.
+#imap.id.fields = { name = true, version = true, vendor = true, support-url = true }
+
 # ---- JMAP backend (RFC 8620 §7.2 EventSource push) -----------------------------
 
 # JMAP server address. Either a bare authority (auto-discovered via

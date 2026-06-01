@@ -105,6 +105,8 @@ fn check_imap(
     use io_imap::client::ImapClientStd;
     use pimalaya_stream::{sasl::Sasl, tls::Tls};
 
+    use crate::config::resolve_auto_id_params;
+
     let result = (|| -> Result<()> {
         let mut tls: Tls = imap_config.tls.clone().into();
         tls.rustls.alpn = vec!["imap".into()];
@@ -118,7 +120,8 @@ fn check_imap(
                 Some(cfg.try_into_sasl(host, port))
             })
             .transpose()?;
-        let _ = ImapClientStd::connect(&server, &tls, imap_config.starttls, sasl)?;
+        let auto_id = resolve_auto_id_params(&imap_config.id)?;
+        let _ = ImapClientStd::connect(&server, &tls, imap_config.starttls, sasl, auto_id)?;
         Ok(())
     })();
 

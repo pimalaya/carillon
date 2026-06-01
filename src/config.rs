@@ -35,6 +35,13 @@ use std::{
 };
 
 use anyhow::Result;
+#[cfg(feature = "imap")]
+use anyhow::anyhow;
+#[cfg(feature = "imap")]
+use io_imap::types::{
+    IntoStatic,
+    core::{IString, NString},
+};
 use pimalaya_config::command;
 #[cfg(feature = "imap")]
 use pimalaya_config::secret::Secret;
@@ -145,6 +152,85 @@ pub struct ImapConfig {
     /// Optional SASL credentials. When omitted, the connection skips
     /// authentication entirely (no `AUTHENTICATE` is sent).
     pub sasl: Option<SaslConfig>,
+
+    /// RFC 2971 `ID` extension quirks. Some providers (notably
+    /// mail.qq.com, fastmail) require an `ID` exchange straight after
+    /// authentication; set `id.auto = true` to opt in.
+    #[serde(default)]
+    pub id: ImapIdConfig,
+}
+
+/// Per-account `imap.id.*` quirks.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ImapIdConfig {
+    /// When `true`, the auth coroutine chains an `ID` round-trip
+    /// after the tagged auth response. Default `false` skips ID
+    /// entirely.
+    #[serde(default)]
+    pub auto: bool,
+
+    /// Parameters sent with the auto-ID command. Empty (default)
+    /// sends `ID NIL`. For each entry: `true` substitutes mirador's
+    /// canned value for the well-known keys (`name`, `version`,
+    /// `vendor`, `support-url`) or `NIL` for unknown keys; `false`
+    /// always sends `NIL`. Keys absent from this map are not
+    /// transmitted.
+    #[serde(default)]
+    pub fields: HashMap<String, bool>,
+}
+
+/// Resolves an [`ImapIdConfig`] into the wire-level parameter list
+/// passed to the io-imap auth coroutines.
+///
+/// [`None`] when `auto = false`; otherwise a vec where each entry
+/// maps the user-supplied key to either mirador's canned value
+/// (when the user set `true` and the key is well-known) or `NIL`.
+/// Unknown keys with `true` log a warning and fall back to `NIL`.
+#[cfg(feature = "imap")]
+pub fn resolve_auto_id_params(
+    config: &ImapIdConfig,
+) -> Result<Option<Vec<(IString<'static>, NString<'static>)>>> {
+    if !config.auto {
+        return Ok(None);
+    }
+
+    let mut params = Vec::with_capacity(config.fields.len());
+    for (key, &use_canned) in &config.fields {
+        let ikey = IString::try_from(key.clone())
+            .map_err(|err| anyhow!("Invalid IMAP ID parameter key `{key}`: {err}"))?
+            .into_static();
+
+        let nval = if use_canned {
+            match canned_imap_id_value(key) {
+                Some(value) => NString::try_from(value)
+                    .map_err(|err| {
+                        anyhow!("Invalid canned IMAP ID value `{value}` for `{key}`: {err}")
+                    })?
+                    .into_static(),
+                None => {
+                    log::warn!("imap.id.fields.{key} = true: no canned value defined, sending NIL");
+                    NString::NIL
+                }
+            }
+        } else {
+            NString::NIL
+        };
+
+        params.push((ikey, nval));
+    }
+    Ok(Some(params))
+}
+
+#[cfg(feature = "imap")]
+fn canned_imap_id_value(key: &str) -> Option<&'static str> {
+    match key {
+        "name" => Some(env!("CARGO_PKG_NAME")),
+        "version" => Some(env!("CARGO_PKG_VERSION")),
+        "vendor" => Some("Pimalaya"),
+        "support-url" => Some("https://github.com/pimalaya/mirador"),
+        _ => None,
+    }
 }
 
 // ---- JMAP ---------------------------------------------------------

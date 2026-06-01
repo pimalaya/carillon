@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["imap", "jmap", "maildir", "rustls-ring"]
+default = ["rustls-ring", "imap", "jmap", "maildir"]
 imap = ["dep:io-imap", "io-email/imap", "io-imap/client", "pimalaya-cli/imap"]
 jmap = ["dep:base64", "dep:io-jmap", "io-email/jmap", "io-jmap/client", "pimalaya-cli/jmap"]
 maildir = ["dep:io-maildir", "io-email/maildir", "io-maildir/client"]

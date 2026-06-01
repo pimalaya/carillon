@@ -85,6 +85,8 @@ pub fn open(account: AccountConfig, backend: Backend) -> Result<EmailClientStd> 
 
 #[cfg(feature = "imap")]
 fn open_imap(config: crate::config::ImapConfig) -> Result<EmailClientStd> {
+    use crate::config::resolve_auto_id_params;
+
     let mut tls: Tls = config.tls.into();
     tls.rustls.alpn = vec!["imap".into()];
     let server = parse_imap_server(&config.server)?;
@@ -96,8 +98,10 @@ fn open_imap(config: crate::config::ImapConfig) -> Result<EmailClientStd> {
             Some(cfg.try_into_sasl(host, port))
         })
         .transpose()?;
+    let auto_id = resolve_auto_id_params(&config.id)?;
 
-    let mut client = EmailClientStd::new().connect_imap(&server, &tls, config.starttls, sasl)?;
+    let mut client =
+        EmailClientStd::new().connect_imap(&server, &tls, config.starttls, sasl, auto_id)?;
     if let Some(imap) = client.imap.as_mut() {
         // NOTE: mirador owns the connection for the lifetime of the
         // watch (IDLE + QRESYNC); auto_select would just cause an
