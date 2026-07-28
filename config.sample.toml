@@ -1,0 +1,36 @@
+# carillon daemon configuration.
+#
+# Loaded from the first of: the -c path, $XDG_CONFIG_HOME/carillon/config.toml,
+# ~/.config/carillon/config.toml, or ./carillon.toml. Copy this file, edit one
+# account, then run `carillon watch`.
+#
+# Each [accounts.<name>] block is one watched account. The name is carried on
+# every event and identifies the watch.
+
+[accounts.personal]
+# The default account, used when `carillon watch` is run without `-a <name>`.
+default = true
+# Mailbox to watch; overridden by `-m/--mailbox`. Defaults to INBOX.
+mailbox = "INBOX"
+
+[accounts.personal.imap]
+# Server address, `host` or `host:port` (implicit TLS; default port 993).
+server = "imap.fastmail.com:993"
+login = "me@fastmail.com"
+# Credential: a password (LOGIN) or a pre-minted OAuth token (OAUTHBEARER).
+# A secret is `raw` (inline, discouraged) or `command` (a keyring read, run
+# fresh on each connect).
+password.command = "pass show mail/fastmail"
+# password.raw = "app-specific-password"
+# token.command = ["ortie", "token", "read", "fastmail"]
+
+# The hook fired on every change. Both parts are optional and content-free:
+# the ring carries no message, only $account, $mailbox, $source, $state.
+[accounts.personal.hook.notify]
+summary = "$mailbox changed"
+body = "account $account"
+
+# A shell command instead of (or besides) a notification. The change fields
+# arrive as CARILLON_ACCOUNT, CARILLON_MAILBOX, CARILLON_SOURCE, CARILLON_STATE.
+# [accounts.personal.hook]
+# cmd = 'echo "$CARILLON_MAILBOX changed" | logger -t carillon'

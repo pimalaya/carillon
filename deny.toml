@@ -1,0 +1,14 @@
+[sources]
+allow-org.github = ["pimalaya"]
+unknown-git = "deny"
+unknown-registry = "deny"
+
+[licenses]
+allow = [
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "Unicode-3.0",
+]

@@ -1,0 +1,47 @@
+[package]
+name = "carillon"
+description = "CLI daemon to watch PIM account changes and fire local hooks"
+version = "0.0.0"
+authors = ["soywod <pimalaya.org@posteo.net>"]
+rust-version = "1.88"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+categories = ["email", "command-line-utilities"]
+keywords = ["watch", "imap", "idle", "notification", "daemon"]
+homepage = "https://pimalaya.org"
+repository = "https://github.com/pimalaya/carillon"
+
+[features]
+default = ["rustls-ring"]
+rustls-ring = ["pimalaya-stream/rustls-ring"]
+rustls-aws = ["pimalaya-stream/rustls-aws"]
+native-tls = ["pimalaya-stream/native-tls"]
+vendored = ["pimalaya-stream/vendored", "notify-rust/d_vendored"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[build-dependencies]
+pimalaya-cli = { version = "0.1", default-features = false, features = ["build"] }
+
+[dependencies]
+anyhow = "1"
+carillon-core = { path = "../core", default-features = false, features = ["imap"] }
+clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
+ctrlc = { version = "3", features = ["termination"] }
+log = "0.4"
+notify-rust = { version = "4", default-features = false, features = ["d"] }
+pimalaya-cli = { version = "0.1", default-features = false, features = ["terminal"] }
+pimalaya-config = { version = "0.1", default-features = false, features = ["toml", "secret"] }
+pimalaya-stream = { version = "0.1", default-features = false, features = ["std"] }
+secrecy = "0.10"
+serde = { version = "1", features = ["derive"] }
+subst = "0.3"
+
+[patch.crates-io]
+pimalaya-cli.git = "https://github.com/pimalaya/cli"
+pimalaya-config.git = "https://github.com/pimalaya/config"
+pimalaya-stream.git = "https://github.com/pimalaya/stream"
