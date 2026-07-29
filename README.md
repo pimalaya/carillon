@@ -22,8 +22,8 @@ carillon is the lightweight frontend of [Carillon](https://github.com/pimalaya):
 ## Features
 
 - **Content-free watching**: holds IMAP IDLE and detects a change without reading message content, so nothing about your mail leaves your machine.
-- **Desktop notifications**: pop a system notification the instant a watched mailbox changes.
-- **Shell hooks**: run any command on a change, with the event details passed as environment variables, so a script can re-fetch or react however it likes.
+- **Enriched notifications**: on a change, resolve the new message locally (on the daemon's own connection) and pop a system notification naming the sender and subject — one per new message.
+- **Shell hooks**: run any command on a change (e.g. kick a sync tool), with the raw event passed as environment variables, so a script can re-fetch or react however it likes.
 - **Keyring-friendly credentials**: read the password or token from a command such as `pass` or `secret-tool`, never storing it in cleartext.
 - **Multi-account config**: declare any number of accounts; pick which to watch with `-a <name>`.
 
@@ -48,12 +48,15 @@ The full field reference lives in [config.sample.toml](./config.sample.toml).
 
 ## Usage
 
-Watch the default account's mailbox until interrupted:
+Watch every configured account until interrupted, or name a subset:
 
 ```sh
-carillon watch
-carillon watch -a work -m INBOX
+carillon watch                # every configured account
+carillon watch work personal  # just these two
 ```
+
+Each account's watched mailbox comes from its own config (`mailbox`,
+defaulting to INBOX).
 
 Set `RUST_LOG=debug` for verbose logs. The complete command list is behind `carillon --help`.
 

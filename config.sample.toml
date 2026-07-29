@@ -24,13 +24,25 @@ password.command = "pass show mail/fastmail"
 # password.raw = "app-specific-password"
 # token.command = ["ortie", "token", "read", "fastmail"]
 
-# The hook fired on every change. Both parts are optional and content-free:
-# the ring carries no message, only $account, $mailbox, $source, $state.
+# The desktop notification fired on a change. It is enriched locally: on a
+# change the daemon opens its own connection and fetches the new messages, then
+# fires one notification per new message. Templates accept shell-style
+# `$name` / `${name}` placeholders over:
+#
+#   $account   the account name          $from       from name, else address
+#   $mailbox   the watched mailbox        $from_name  sender's display name
+#   $source    the source (imap)          $from_addr  sender's email address
+#   $count     new messages this change   $subject    message subject
+#                                         $date       message date
+#
+# A change with no new mail (a flag or delete) fires no notification.
 [accounts.personal.hook.notify]
-summary = "$mailbox changed"
-body = "account $account"
+summary = "$from"
+body = "$subject"
 
-# A shell command instead of (or besides) a notification. The change fields
-# arrive as CARILLON_ACCOUNT, CARILLON_MAILBOX, CARILLON_SOURCE, CARILLON_STATE.
+# A shell command instead of (or besides) a notification. It is NOT enriched
+# (its job is to kick a sync tool, which re-derives everything itself): it only
+# receives the raw content-free event as CARILLON_ACCOUNT, CARILLON_MAILBOX,
+# CARILLON_SOURCE, CARILLON_STATE.
 # [accounts.personal.hook]
-# cmd = 'echo "$CARILLON_MAILBOX changed" | logger -t carillon'
+# cmd = "mbsync personal"

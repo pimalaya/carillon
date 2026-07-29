@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use pimalaya_cli::{
     clap::{
-        args::{AccountFlag, JsonFlag, LogFlags},
+        args::{JsonFlag, LogFlags},
         commands::{CompletionCommand, ManualCommand},
         parsers::path_parser,
     },
@@ -35,9 +35,6 @@ pub struct Cli {
     pub config_paths: Vec<PathBuf>,
 
     #[command(flatten)]
-    pub account: AccountFlag,
-
-    #[command(flatten)]
     pub json: JsonFlag,
     #[command(flatten)]
     pub log: LogFlags,
@@ -46,7 +43,7 @@ pub struct Cli {
 /// The available subcommands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Watch a mailbox and fire the account hook on every change until Ctrl+C.
+    /// Watch accounts and fire their hooks on every change until Ctrl+C.
     Watch(WatchCommand),
     /// Generate man pages into the given directory.
     #[command(arg_required_else_help = true)]
@@ -57,14 +54,9 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn execute(
-        self,
-        printer: &mut impl Printer,
-        config_paths: &[PathBuf],
-        account_name: Option<&str>,
-    ) -> Result<()> {
+    pub fn execute(self, printer: &mut impl Printer, config_paths: &[PathBuf]) -> Result<()> {
         match self {
-            Self::Watch(cmd) => cmd.execute(printer, config_paths, account_name),
+            Self::Watch(cmd) => cmd.execute(printer, config_paths),
             Self::Manuals(cmd) => cmd.execute(printer, Cli::command()),
             Self::Completions(cmd) => cmd.execute(printer, Cli::command()),
         }

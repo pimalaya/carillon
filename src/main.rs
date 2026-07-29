@@ -11,14 +11,17 @@
 //! Standard Pimalaya CLI layout. main parses the CLI and dispatches; cli
 //! declares the parser and subcommands; config parses the TOML accounts;
 //! watch is the `watch` command; driver is the blocking pump over
-//! carillon-core's coroutine; hook runs the desktop notification and shell
-//! command. The daemon hosts only outbound sources, so it never needs a
-//! public endpoint.
+//! carillon-core's coroutine; resolve fetches new-message envelopes locally
+//! to enrich notifications; net is the shared TLS connect; hook runs the
+//! desktop notification and shell command. The daemon hosts only outbound
+//! sources, so it never needs a public endpoint.
 
 mod cli;
 mod config;
 mod driver;
 mod hook;
+mod net;
+mod resolve;
 mod watch;
 
 use anyhow::Result;
@@ -37,6 +40,5 @@ fn main() {
 fn execute(printer: &mut StdoutPrinter, cli: Cli) -> Result<()> {
     Logger::try_init(&cli.log)?;
     let config_paths = cli.config_paths.as_ref();
-    let account_name = cli.account.name.as_deref();
-    cli.command.execute(printer, config_paths, account_name)
+    cli.command.execute(printer, config_paths)
 }

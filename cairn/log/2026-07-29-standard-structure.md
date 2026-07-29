@@ -18,7 +18,7 @@ The driver is the whole I/O side. It opens a TLS stream, constructs a `CarillonI
 
 ## Deviations and notes
 
-The pimalaya-cli / config / stream git versions are `0.1.x`; the manifest pins `0.1` so the git patches apply (the crates.io `0.0.1` is stale). `build.rs` emits `GIT_DESCRIBE` / `GIT_REV` directly rather than calling `git_envs()`, whose libgit2 describe panics on a tagless repo.
+Initially the manifest pinned pimalaya-cli / config / stream to `0.1` behind a git `[patch.crates-io]` (crates.io was stale) and `build.rs` emitted `GIT_DESCRIBE` / `GIT_REV` directly, because `git_envs()` panicked on a tagless repo. Both are now resolved (2026-07-28): the crates are published (`cli 0.1.3`, `config 0.1.1`, `stream 0.1.2`) so the patch is dropped, and a root tag lets `build.rs` call `git_envs()` normally.
 
 ## Deferred
 

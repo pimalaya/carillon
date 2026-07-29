@@ -169,6 +169,7 @@ dependencies = [
  "carillon-core",
  "clap",
  "ctrlc",
+ "io-imap",
  "log",
  "notify-rust",
  "pimalaya-cli",
@@ -1132,7 +1133,8 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "pimalaya-cli"
 version = "0.1.3"
-source = "git+https://github.com/pimalaya/cli#d4ee2d3882b14f77b94e1cf8d7789608fa98d4c5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb05b9ef98361452d3124547bb43d7f4ee6e8fbc753a2f00b4645fa96a56ed7c"
 dependencies = [
  "anyhow",
  "clap",
@@ -1150,7 +1152,8 @@ dependencies = [
 [[package]]
 name = "pimalaya-config"
 version = "0.1.1"
-source = "git+https://github.com/pimalaya/config#b26012c2bdceb9741358e73adbdec00c8ec85edb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb8003d82767b0337f8b73b908d022d41ca7a7a41a789a9bd1e6544f8d80338b"
 dependencies = [
  "anyhow",
  "dirs",
@@ -1165,7 +1168,8 @@ dependencies = [
 [[package]]
 name = "pimalaya-stream"
 version = "0.1.2"
-source = "git+https://github.com/pimalaya/stream#781e3b132f5c9ae5dfd031c45d47ac593d6fe9b8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6f95d38d529870b6ef4ca97d17a3abd371505d0e5c4337e97200d00b4c72ce2"
 dependencies = [
  "anyhow",
  "io-proxy",
