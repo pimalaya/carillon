@@ -13,8 +13,8 @@
 # There is no wizard: copy this file, keep one backend and the hooks you want,
 # then delete the rest. The `[accounts.<name>]` block is the schema `himalaya`
 # CLI v2 and `himalaya-tui` read, so one file backs all three binaries; the
-# carillon-only fields (`collection`, the `watch` and `hooks.*` tables) are ignored
-# by them.
+# carillon-only fields (`collection`, and the `watch` and `hook` tables under
+# each backend) are ignored by them.
 # ================================================================================
 
 [accounts.example]
@@ -29,8 +29,9 @@ default = true
 #
 # IMAP takes the mailbox name. JMAP matches it by name, case-insensitively,
 # falling back to the special-use role for "INBOX". Maildir resolves it under
-# the backend root, "." naming the root itself. WebDAV reads it as a path under
-# `dav.server`, or as an absolute path when it starts with a slash.
+# the backend root, "." naming the root itself. CalDAV, CardDAV and WebDAV read
+# it as a path under their `server`, or as an absolute path when it starts with
+# a slash.
 collection = "INBOX"
 
 
@@ -38,14 +39,32 @@ collection = "INBOX"
 # Backend config
 # --------------------------------------------------------------------------------
 
-# Declare one or more of the `imap`, `jmap`, `maildir` and `dav` blocks below.
-# With more than one, `-b/--backend` selects the active one; `-b auto`, the
-# default, takes the first configured among IMAP, JMAP, Maildir, WebDAV.
+# Declare one or more of the `imap`, `jmap`, `maildir`, `caldav`, `carddav` and
+# `dav` blocks below. With more than one, `-b/--backend` selects the active one;
+# `-b auto`, the default, takes the first configured in that order.
+#
+# Each block carries the hooks that backend fires, under `<backend>.hook`
+# (`hooks` also reads). A hook is named after what its backend holds, so mail
+# fires `on-message-*`, an addressbook `on-card-*`, a calendar `on-event-*` and
+# `on-task-*`, and an untyped collection `on-item-*`. A backend takes only its
+# own names, and only the events its protocol can express, so anything else is
+# refused when this file is read rather than staying quiet forever.
+#
+# Every hook fires a `notify` desktop notification, a `cmd`, or both. `cmd` is
+# either a string handed to the platform shell (/bin/sh -c on Unix, cmd /C on
+# Windows) or a [program, args...] list spawned directly. Either way the
+# placeholders reach it as environment variables.
+#
+# Always available: $id and $collection. $id is the backend's own id: an IMAP
+# UID, a JMAP Email id, a Maildir file name, a WebDAV href. The envelope
+# variables ($subject, $date, $sender, $sender_name, $sender_address,
+# $recipient, $recipient_name, $recipient_address) are resolved on a second
+# connection, over IMAP only, and only for on-message-added. A flag hook gets
+# $flag instead, naming the one flag that moved.
 #
 # Every secret below is either `raw = "..."` or `command = "..."`, the command
 # being a string handed to the platform shell or a [program, args...] list, and
 # its standard output the value.
-
 # ---- IMAP: an idle connection (RFC 2177) ---------------------------------------
 
 # Server address: a bare authority (`imap.example.org[:port]`, read as
@@ -98,6 +117,18 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #imap.watch.idle.timeout = 600
 #imap.watch.poll.interval = 60
 
+
+# Mail is immutable, so IMAP reports arrivals, departures and flags, never an
+# edit. A flag hook fires once for each flag that moved, so `$flag` always names
+# the flag it fired for; `flags = [...]` narrows it to the flags it lists, with
+# or without the leading `\` or `$` and whatever the case.
+imap.hook.on-message-added.notify.summary = "New mail from $sender"
+imap.hook.on-message-added.notify.body = "$subject"
+imap.hook.on-message-added.cmd = 'echo "$id arrived" >> ~/.local/state/carillon.log'
+#imap.hook.on-message-removed.cmd = 'echo "$id left" >> ~/.local/state/carillon.log'
+imap.hook.on-flag-added.flags = ["Seen"]
+imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
+#imap.hook.on-flag-removed.notify.summary = "$flag cleared on $id"
 # ---- JMAP: a changes poll (RFC 8621) -------------------------------------------
 
 # Server address: a bare authority, discovered through `/.well-known/jmap`, or
@@ -120,6 +151,12 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #jmap.watch.push.ping = 30
 #jmap.watch.poll.interval = 60
 
+
+# Same events as IMAP, JMAP keywords arriving under the same flag names.
+#jmap.hook.on-message-added.notify.summary = "New mail from $sender"
+#jmap.hook.on-message-removed.cmd = "true"
+#jmap.hook.on-flag-added.flags = ["Seen"]
+#jmap.hook.on-flag-removed.cmd = "true"
 # ---- Maildir: a listing poll ---------------------------------------------------
 
 # Root of the Maildir tree, subfolders being real nested directories, the
@@ -130,54 +167,63 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 # Maildir has one way: re-list on an interval, a couple of seconds when unset.
 #maildir.watch.poll.interval = 2
 
-# ---- WebDAV: a sync-collection poll (RFC 6578) ---------------------------------
+
+# Same events again, the Maildir flag letters arriving under the same names.
+#maildir.hook.on-message-added.notify.summary = "$id arrived"
+#maildir.hook.on-message-removed.cmd = "true"
+#maildir.hook.on-flag-added.flags = ["Seen"]
+#maildir.hook.on-flag-removed.cmd = "true"
+
+# ---- CalDAV: a sync-collection poll over a calendar (RFC 6578) ------------------
 
 # The DAV server URL. What to watch under it is the account's `collection`,
-# read as a path: `collection = "calendars/alice/work/"` here. A CalDAV
-# calendar, a CardDAV addressbook and a plain DAV collection all configure the
-# same way.
-#dav.server = "https://dav.example.org/"
+# read as a path: `collection = "calendars/alice/work/"` here.
+#caldav.server = "https://dav.example.org/"
 
-# Omit for a collection readable without authentication.
-#dav.auth.basic.username = "alice"
-#dav.auth.basic.password.command = "pass show dav/example"
-#dav.auth.bearer.token.command = "ortie token read example"
-
-# WebDAV has one way: ask sync-collection on an interval, a minute when unset.
-#dav.watch.poll.interval = 60
+# Omit for a calendar readable without authentication.
+#caldav.auth.basic.username = "alice"
+#caldav.auth.basic.password.command = "pass show dav/example"
+#caldav.auth.bearer.token.command = "ortie token read example"
 
 # TLS options, same shape as `imap.tls`.
-#dav.tls.provider = "rustls"
+#caldav.tls.provider = "rustls"
 
-# --------------------------------------------------------------------------------
-# Hooks config
-# --------------------------------------------------------------------------------
+# WebDAV has one way: ask sync-collection on an interval, a minute when unset.
+#caldav.watch.poll.interval = 60
 
-# One hook per event: `hooks.on-item-added`, `hooks.on-item-removed`,
-# `hooks.on-item-changed`, `hooks.on-flags-added` and `hooks.on-flags-removed`,
-# the first two also answering to their former `on-message-*` names. Each fires
-# a `notify` desktop notification, a `cmd`, or both, and a flag hook takes an
-# optional `flags` filter narrowing it to the flags it names.
-#
-# `cmd` is either a string handed to the platform shell (/bin/sh -c on Unix,
-# cmd /C on Windows) or a [program, args...] list spawned directly. Either way
-# the placeholders reach it as environment variables: $id, $collection, $subject,
-# $date, $sender, $sender_name, $sender_address, $recipient, $recipient_name,
-# $recipient_address, $flag, $flags. $mailbox still reaches it as the former
-# name of $collection.
-#
-# $id is the backend's own id: an IMAP UID, a JMAP Email id, a Maildir file
-# name, a WebDAV href. The envelope variables ($subject, $date, $sender,
-# $recipient) are resolved on a second connection, over IMAP only, and only for
-# on-item-added.
-#
-# Flag names are the same whatever the backend: IMAP \Seen, JMAP $seen and the
-# Maildir S letter all arrive as Seen. WebDAV has no flags, and is the only
-# backend holding items mutable enough to report on-item-changed.
+# A calendar holds events, tasks, or both, and the watch asks it which when it
+# starts: a calendar holding only one of them answers for all its members at
+# once, and hooks naming a component it does not hold are refused there. A
+# calendar holding both costs one property read per member the watch has not
+# seen, which reads its content type and never the event itself.
+#caldav.hook.on-event-added.notify.summary = "New event"
+#caldav.hook.on-event-changed.cmd = "true"
+#caldav.hook.on-event-removed.cmd = "true"
+#caldav.hook.on-task-added.notify.summary = "New task"
+#caldav.hook.on-task-changed.cmd = "true"
+#caldav.hook.on-task-removed.cmd = "true"
 
-hooks.on-item-added.notify.summary = "New mail from $sender"
-hooks.on-item-added.notify.body = "$subject"
-hooks.on-item-added.cmd = 'echo "$id arrived" >> ~/.local/state/carillon.log'
+# ---- CardDAV: the same poll over an addressbook --------------------------------
 
-hooks.on-flags-added.flags = ["Seen"]
-hooks.on-flags-added.cmd = ["notify-send", "New flag on $id"]
+#carddav.server = "https://dav.example.org/"
+#carddav.auth.basic.username = "alice"
+#carddav.auth.basic.password.command = "pass show dav/example"
+#carddav.watch.poll.interval = 60
+
+# A vCard is edited where it stands, which is what `on-card-changed` reports and
+# no mail backend has: its etag moved, and the poll never reads the card itself.
+#carddav.hook.on-card-added.notify.summary = "New contact"
+#carddav.hook.on-card-changed.cmd = "true"
+#carddav.hook.on-card-removed.cmd = "true"
+
+# ---- WebDAV: the same poll over a collection naming no domain ------------------
+
+# For a collection that is neither a calendar nor an addressbook, whose members
+# are items because nothing better can be said about them.
+#dav.server = "https://dav.example.org/"
+#dav.auth.basic.username = "alice"
+#dav.auth.basic.password.command = "pass show dav/example"
+#dav.watch.poll.interval = 60
+#dav.hook.on-item-added.notify.summary = "$id arrived"
+#dav.hook.on-item-changed.cmd = "true"
+#dav.hook.on-item-removed.cmd = "true"

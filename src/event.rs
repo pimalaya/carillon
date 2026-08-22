@@ -1,32 +1,55 @@
-//! The change vocabulary every backend speaks, so a hook is written
-//! once whatever reported the change.
+//! The change vocabulary every backend speaks, so that one hook
+//! runner serves all of them.
 //!
-//! Not every backend can report every event, which is the protocol
-//! talking rather than a gap: mail is immutable, so nothing mail
-//! reports an edit, and a WebDAV poll reads etags, so flags are
-//! unknown to it rather than empty.
+//! What a change is about travels with it as a [`WatchDomain`], which
+//! is what lets a hook be named after a message, a card, an event or
+//! a task while the runner below stays one shape. Not every backend
+//! can report every kind of change, which is the protocol talking
+//! rather than a gap: mail is immutable, so nothing mail reports an
+//! edit, and a WebDAV poll reads etags, so flags are unknown to it
+//! rather than empty.
 
-use std::collections::BTreeSet;
-
-/// A change in a watched collection, keyed by the backend's own id.
+/// What a change is about, which is the noun its hook is named after.
 ///
-/// The vocabulary is deliberately not mail-shaped: an item is a
-/// message, a contact or a calendar event depending on the backend
-/// reporting it, and a hook is written once for all of them.
-// NOTE: which variants exist is the vocabulary's business; which of
+/// A backend fills it from what it holds: mail is always a message, a
+/// CardDAV member a card, a CalDAV member an event or a task, and an
+/// untyped DAV collection an item, having no domain to name.
+// NOTE: which domains exist is the vocabulary's business; which of
 // them can be constructed depends on the backends compiled in, so a
 // reduced feature set leaves some unused by construction.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchDomain {
+    /// A mail message, whichever of IMAP, JMAP and Maildir carries it.
+    Message,
+    /// A vCard in a CardDAV addressbook.
+    Card,
+    /// A VEVENT in a CalDAV calendar.
+    Event,
+    /// A VTODO in a CalDAV calendar.
+    Task,
+    /// A member of a DAV collection that names no domain.
+    Item,
+}
+
+/// A change in a watched collection, keyed by the backend's own id.
+// NOTE: same reason as above: a reduced feature set leaves some
+// variants unused by construction.
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WatchEvent {
     /// An item appeared in the collection.
     ItemAdded {
+        /// What the item is, which names the hook that fires.
+        domain: WatchDomain,
         /// The backend's id: an IMAP UID, a JMAP `Email` id, a Maildir
         /// file name, a WebDAV href.
         id: String,
     },
     /// An item left the collection, deleted or moved away.
     ItemRemoved {
+        /// What the item was, remembered from when it was still there.
+        domain: WatchDomain,
         /// The backend's id for the item.
         id: String,
     },
@@ -34,28 +57,48 @@ pub enum WatchEvent {
     ///
     /// Only a backend holding mutable items reports this: a message is
     /// immutable, so IMAP, JMAP and Maildir never do, while a WebDAV
-    /// contact or event is edited in place and its etag moves.
+    /// card or event is edited in place and its etag moves.
     ItemChanged {
+        /// What the item is.
+        domain: WatchDomain,
         /// The backend's id for the item.
         id: String,
     },
-    /// Flags were set on an item.
+    /// One flag was set on an item.
     ///
-    /// Only a backend that has flags reports this, which WebDAV does
-    /// not.
-    FlagsAdded {
+    /// A delta setting several flags reports one event each, so that a
+    /// hook always knows which flag it fired for. Only a backend that
+    /// has flags reports this, which WebDAV does not.
+    FlagAdded {
+        /// What the item is, which for a flag is always a message.
+        domain: WatchDomain,
         /// The backend's id for the item.
         id: String,
-        /// The flags that appeared, under their shared names.
-        flags: BTreeSet<String>,
+        /// The flag that appeared, under its shared name.
+        flag: String,
     },
-    /// Flags were cleared on an item.
-    FlagsRemoved {
+    /// One flag was cleared on an item.
+    FlagRemoved {
+        /// What the item is.
+        domain: WatchDomain,
         /// The backend's id for the item.
         id: String,
-        /// The flags that disappeared, under their shared names.
-        flags: BTreeSet<String>,
+        /// The flag that disappeared, under its shared name.
+        flag: String,
     },
+}
+
+impl WatchEvent {
+    /// The backend's id for the item this change is about.
+    pub fn id(&self) -> &str {
+        match self {
+            Self::ItemAdded { id, .. }
+            | Self::ItemRemoved { id, .. }
+            | Self::ItemChanged { id, .. }
+            | Self::FlagAdded { id, .. }
+            | Self::FlagRemoved { id, .. } => id,
+        }
+    }
 }
 
 /// What a hook can say about an item, once resolved.

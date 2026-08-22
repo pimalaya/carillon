@@ -26,7 +26,10 @@ use io_maildir::{
 };
 use log::{debug, trace};
 
-use crate::{config::MaildirConfig, event::WatchEvent};
+use crate::{
+    config::MaildirConfig,
+    event::{WatchDomain, WatchEvent},
+};
 
 /// How long the watch sleeps between two listings, unless the config
 /// says otherwise. A directory read is cheap, so it can be short.
@@ -107,29 +110,37 @@ fn diff(
 
     for id in before.keys() {
         if !after.contains_key(id) {
-            events.push(WatchEvent::ItemRemoved { id: id.clone() });
+            events.push(WatchEvent::ItemRemoved {
+                domain: WatchDomain::Message,
+                id: id.clone(),
+            });
         }
     }
 
     for (id, flags) in after {
         let Some(before) = before.get(id) else {
-            events.push(WatchEvent::ItemAdded { id: id.clone() });
+            events.push(WatchEvent::ItemAdded {
+                domain: WatchDomain::Message,
+                id: id.clone(),
+            });
             continue;
         };
 
-        let added: BTreeSet<String> = flags.difference(before).cloned().collect();
-        if !added.is_empty() {
-            events.push(WatchEvent::FlagsAdded {
+        // NOTE: one event per flag, so a hook always knows which
+        // flag it fired for.
+        for flag in flags.difference(before) {
+            events.push(WatchEvent::FlagAdded {
+                domain: WatchDomain::Message,
                 id: id.clone(),
-                flags: added,
+                flag: flag.clone(),
             });
         }
 
-        let removed: BTreeSet<String> = before.difference(flags).cloned().collect();
-        if !removed.is_empty() {
-            events.push(WatchEvent::FlagsRemoved {
+        for flag in before.difference(flags) {
+            events.push(WatchEvent::FlagRemoved {
+                domain: WatchDomain::Message,
                 id: id.clone(),
-                flags: removed,
+                flag: flag.clone(),
             });
         }
     }
@@ -232,10 +243,12 @@ mod tests {
         assert_eq!(
             vec![
                 WatchEvent::ItemRemoved {
-                    id: String::from("gone")
+                    domain: WatchDomain::Message,
+                    id: String::from("gone"),
                 },
                 WatchEvent::ItemAdded {
-                    id: String::from("new")
+                    domain: WatchDomain::Message,
+                    id: String::from("new"),
                 },
             ],
             diff(&before, &after),
@@ -250,15 +263,15 @@ mod tests {
         let events = diff(&before, &after);
         assert_eq!(2, events.len(), "got {events:?}");
 
-        let WatchEvent::FlagsAdded { flags, .. } = &events[0] else {
-            panic!("expected FlagsAdded, got {:?}", events[0]);
+        let WatchEvent::FlagAdded { flag, .. } = &events[0] else {
+            panic!("expected FlagAdded, got {:?}", events[0]);
         };
-        assert_eq!(&BTreeSet::from([String::from("Seen")]), flags);
+        assert_eq!("Seen", flag);
 
-        let WatchEvent::FlagsRemoved { flags, .. } = &events[1] else {
-            panic!("expected FlagsRemoved, got {:?}", events[1]);
+        let WatchEvent::FlagRemoved { flag, .. } = &events[1] else {
+            panic!("expected FlagRemoved, got {:?}", events[1]);
         };
-        assert_eq!(&BTreeSet::from([String::from("Flagged")]), flags);
+        assert_eq!("Flagged", flag);
     }
 
     #[test]
@@ -319,9 +332,10 @@ mod tests {
         let events = diff(&before, &after);
 
         assert_eq!(
-            vec![WatchEvent::FlagsAdded {
+            vec![WatchEvent::FlagAdded {
+                domain: WatchDomain::Message,
                 id: String::from("1700000000.a.host"),
-                flags: BTreeSet::from([String::from("Seen")]),
+                flag: String::from("Seen"),
             }],
             events,
         );

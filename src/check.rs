@@ -11,10 +11,7 @@ use clap::Parser;
 use pimalaya_config::toml::TomlConfig;
 use serde::Serialize;
 
-use crate::{
-    backend::Backend,
-    config::{AccountConfig, Config},
-};
+use crate::{backend::Backend, config::Config};
 
 /// Validate the account configuration.
 ///
@@ -49,34 +46,54 @@ impl CheckCommand {
         if backend.allows_imap()
             && let Some(imap_config) = account_config.imap.clone()
         {
-            report
-                .backends
-                .push(check_imap(&account_config, imap_config));
+            report.backends.push(check_imap(imap_config));
         }
 
         #[cfg(feature = "jmap")]
         if backend.allows_jmap()
             && let Some(jmap_config) = account_config.jmap.clone()
         {
-            report
-                .backends
-                .push(check_jmap(&account_config, jmap_config));
+            report.backends.push(check_jmap(jmap_config));
         }
 
         #[cfg(feature = "maildir")]
         if backend.allows_maildir()
             && let Some(maildir_config) = account_config.maildir.clone()
         {
-            report
-                .backends
-                .push(check_maildir(&account_config, maildir_config));
+            report.backends.push(check_maildir(maildir_config));
+        }
+
+        #[cfg(feature = "dav")]
+        if backend.allows_caldav()
+            && let Some(caldav_config) = account_config.caldav.clone()
+        {
+            report.backends.push(check_dav(
+                "caldav",
+                caldav_config.server(),
+                &account_config.collection,
+            ));
+        }
+
+        #[cfg(feature = "dav")]
+        if backend.allows_carddav()
+            && let Some(carddav_config) = account_config.carddav.clone()
+        {
+            report.backends.push(check_dav(
+                "carddav",
+                carddav_config.server(),
+                &account_config.collection,
+            ));
         }
 
         #[cfg(feature = "dav")]
         if backend.allows_dav()
             && let Some(dav_config) = account_config.dav.clone()
         {
-            report.backends.push(check_dav(&account_config, dav_config));
+            report.backends.push(check_dav(
+                "dav",
+                dav_config.server(),
+                &account_config.collection,
+            ));
         }
 
         if report.backends.is_empty() {
@@ -88,10 +105,7 @@ impl CheckCommand {
 }
 
 #[cfg(feature = "imap")]
-fn check_imap(
-    _account_config: &AccountConfig,
-    imap_config: crate::config::ImapConfig,
-) -> BackendCheck {
+fn check_imap(imap_config: crate::config::ImapConfig) -> BackendCheck {
     // NOTE: opening the session is the check: it runs the same
     // transport, greeting and authentication a watch would.
     let result = crate::imap::open(&imap_config).map(|_| ());
@@ -100,20 +114,14 @@ fn check_imap(
 }
 
 #[cfg(feature = "jmap")]
-fn check_jmap(
-    _account_config: &AccountConfig,
-    jmap_config: crate::config::JmapConfig,
-) -> BackendCheck {
+fn check_jmap(jmap_config: crate::config::JmapConfig) -> BackendCheck {
     let result = crate::jmap::open(&jmap_config).map(|_| ());
 
     BackendCheck::from("jmap", result)
 }
 
 #[cfg(feature = "maildir")]
-fn check_maildir(
-    _account_config: &AccountConfig,
-    maildir_config: crate::config::MaildirConfig,
-) -> BackendCheck {
+fn check_maildir(maildir_config: crate::config::MaildirConfig) -> BackendCheck {
     let result = (|| -> Result<()> {
         if !maildir_config.root.is_dir() {
             bail!(
@@ -128,14 +136,18 @@ fn check_maildir(
 }
 
 #[cfg(feature = "dav")]
-fn check_dav(account_config: &AccountConfig, dav_config: crate::config::DavConfig) -> BackendCheck {
+fn check_dav(
+    backend: &'static str,
+    server: crate::config::DavServer<'_>,
+    collection: &str,
+) -> BackendCheck {
     // NOTE: opening proves the transport, and one report proves the
     // credential and that the collection is really there, which is
     // what a watch would find out on its first poll.
     let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let result = crate::dav::probe(&dav_config, &account_config.collection, &shutdown);
+    let result = crate::dav::probe(server, collection, &shutdown);
 
-    BackendCheck::from("dav", result)
+    BackendCheck::from(backend, result)
 }
 
 #[derive(Clone, Debug, Serialize)]

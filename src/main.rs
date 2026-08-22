@@ -15,7 +15,14 @@
 //! feature, each learning about changes its own way and reporting them
 //! in the one vocabulary event defines. How a change is learned is the
 //! protocol crate's job (io-imap, io-jmap, io-maildir, io-webdav);
-//! what to do about it is this crate's.
+//! what to do about it is this crate's. The dav module serves three
+//! configured backends, CalDAV, CardDAV and plain WebDAV being one
+//! poll over collections that differ in what they hold.
+//!
+//! The hooks live under their backend rather than on the account,
+//! since which events exist and which variables a template can use are
+//! both the backend's; what reaches hook is the one hook an event
+//! resolved to, so the runner stays one shape.
 
 mod backend;
 mod check;

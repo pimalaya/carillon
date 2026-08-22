@@ -14,15 +14,16 @@ Renamed from mirador. The binary, the config directory, the `CARILLON_CONFIG` va
 
 - Reopen a watch that ends. A session lost to a dropped connection is retried with a capped exponential backoff that a healthy session resets, and the credential is resolved again on every attempt rather than held, so a rotated secret is picked up by the next reconnect.
 
-- Resolve an arrival's envelope for `on-item-added`. A watch learns of a new item by its id, not its subject, so the envelope is fetched on a second connection, only when that hook is configured, and only over IMAP. Adds `$date` to the templates beside `$subject`, `$sender` and `$recipient`.
+- Resolve an arrival's envelope for `on-message-added`. A watch learns of a new item by its id, not its subject, so the envelope is fetched on a second connection, only when that hook is configured, and only over IMAP. Adds `$date` to the templates beside `$subject`, `$sender` and `$recipient`.
 
 - Added `imap.sasl-ir`, forcing the RFC 4959 SASL-IR initial response on or off for providers such as Coremail (126.com, 163.com) that advertise the capability and then reject the inline form.
 
 - Initiated the project from [Himalaya CLI](https://github.com/pimalaya/himalaya) and [Neverest CLI](https://github.com/pimalaya/neverest).
 - Added the JMAP backend, polling `Email/changes` and resolving the changed ids through `Email/get` to keep the ones inside the watched mailbox (requires the `jmap` cargo feature).
-- Added five watch event hooks under the `hooks.` TOML namespace: `hooks.on-item-added`, `hooks.on-item-removed`, `hooks.on-item-changed`, `hooks.on-flags-added`, `hooks.on-flags-removed`. Flag hooks accept an optional `flags = [...]` filter that narrows firing to a specific IANA-classified flag (case-insensitive, with or without the leading `\` / `$`).
+- Added watch event hooks, under the `hook` table of the backend that fires them (`hooks` also reads). Each backend declares only the events its protocol can express, named after what it holds: `on-message-added` and `on-message-removed` over IMAP, JMAP and Maildir, `on-card-added`, `on-card-removed` and `on-card-changed` over CardDAV, the same three under `on-event-` and `on-task-` over CalDAV, and `on-item-` over a plain DAV collection. A hook a backend can never fire is refused when the configuration is read, naming the line and the events that backend has.
+- Added `on-flag-added` and `on-flag-removed`, on the backends that have flags, firing once for each flag that moved so `$flag` always names the flag it fired for. An optional `flags = [...]` filter narrows them to the flags it lists, case-insensitively and with or without the leading `\` or `$`.
 - Added per-protocol TLS feature flags: `rustls-ring` (default), `rustls-aws`, `native-tls`, `vendored`.
-- Added a global `-b/--backend {auto,imap,jmap,maildir}` flag that pins which backend block is opened on accounts declaring more than one.
+- Added a global `-b/--backend {auto,imap,jmap,maildir,caldav,carddav,dav}` flag that pins which backend block is opened on accounts declaring more than one.
 
 ### Changed
 
@@ -34,13 +35,11 @@ Renamed from mirador. The binary, the config directory, the `CARILLON_CONFIG` va
 
 - The Maildir mailbox is resolved through io-maildir's store rather than by joining the configured root with the mailbox name. Joining by hand bypassed the layout, so on a Maildir++ store a subfolder resolved to a directory that does not exist and the watch reported nothing, forever, without ever erroring. Resolving through the store also checks that `cur`, `new` and `tmp` are there, so a wrong mailbox name fails at startup; `.` and `INBOX` both name the root.
 
-- Added a WebDAV backend, which covers CalDAV and CardDAV alike: `dav.server` is the collection URL, `dav.auth` is basic, bearer or nothing, and `dav.poll` the interval between two RFC 6578 `sync-collection` reports (a minute by default). The report asks for etags only, so a poll never carries a contact or an event. Behind a `dav` cargo feature, on by default.
+- Added three WebDAV backends, one per domain a collection can hold: `caldav` for a calendar, `carddav` for an addressbook, `dav` for a collection naming neither. All three share one shape (`server` is the DAV root, `auth` is basic, bearer or nothing, `watch.poll.interval` the gap between two RFC 6578 `sync-collection` reports, a minute by default) and differ only in the events they fire, so a card hook on a calendar is refused rather than silent. The report asks for etags only, so a poll never carries a contact or an event. A calendar is asked for its `supported-calendar-component-set` when the watch starts: one holding a single component answers for all its members at once, and one holding both events and tasks reads a member's `getcontenttype` to tell them apart, still without reading the member. Behind a `dav` cargo feature, on by default.
 
-- Added a fifth event, `on-item-changed`, and renamed the two message hooks to `on-item-added` and `on-item-removed`. WebDAV items are edited in place where a message is immutable, so the four mail-shaped events could not express what a calendar or an addressbook does. `on-message-added` and `on-message-removed` keep working as aliases, so an existing configuration needs no edit.
+- One account is one backend watching one collection, one way. `mailbox` became a required `collection` (the old name still reads), `-m/--mailbox` is gone since what an account watches is its config, and each DAV backend's `server` became the DAV root with the collection as its path. Watching a second collection is a second account, which is also how it gets its own hooks.
 
-- One account is one backend watching one collection, one way. `mailbox` became a required `collection` (the old name still reads), `-m/--mailbox` is gone since what an account watches is its config, and `dav.server` became the DAV root with the collection as its path. Watching a second collection is a second account, which is also how it gets its own hooks.
-
-- Added `watch` under each backend, naming how an account learns about a change: `imap.watch.idle`, `imap.watch.poll.interval`, `jmap.watch.push.ping`, `jmap.watch.poll.interval`, `maildir.watch.poll.interval`, `dav.watch.poll.interval`. Unset takes the best that backend has. Each backend declares only the methods it has, so asking Maildir to idle is a parse error naming the line rather than a failure at watch time.
+- Added `watch` under each backend, naming how an account learns about a change: `imap.watch.idle`, `imap.watch.poll.interval`, `jmap.watch.push.ping`, `jmap.watch.poll.interval`, `maildir.watch.poll.interval`, and `watch.poll.interval` under each of `caldav`, `carddav` and `dav`. Unset takes the best that backend has. Each backend declares only the methods it has, so asking Maildir to idle is a parse error naming the line rather than a failure at watch time.
 
 - JMAP is pushed to again, over the RFC 8620 event-source stream, asking the server to close after each state change so the same socket carries the `Email/changes` round that follows. This closes a regression: the poll that replaced it when io-email was removed is now one method among the others.
 

@@ -47,7 +47,7 @@ use url::Url;
 
 use crate::{
     config::{ImapConfig, resolve_auto_id_params},
-    event::{ItemSummary, WatchEvent},
+    event::{ItemSummary, WatchDomain, WatchEvent},
 };
 
 /// How long a watch waits for an event before checking the shutdown
@@ -170,7 +170,7 @@ fn drain(
     while !shutdown.load(Ordering::SeqCst) {
         match stream.recv_timeout(POLL_TICK) {
             Ok(Ok(event)) => {
-                if let Some(event) = translate(event) {
+                for event in translate(event) {
                     on_event(event);
                 }
             }
@@ -184,25 +184,36 @@ fn drain(
 }
 
 /// Maps one io-imap delta onto carillon's vocabulary.
-fn translate(event: ImapMailboxWatchEvent) -> Option<WatchEvent> {
-    let event = match event {
-        ImapMailboxWatchEvent::EnvelopeAdded { uid, .. } => WatchEvent::ItemAdded {
+///
+/// A flag delta names every flag that moved at once, and a hook fires
+/// for one flag, so a delta of several becomes several events.
+fn translate(event: ImapMailboxWatchEvent) -> Vec<WatchEvent> {
+    match event {
+        ImapMailboxWatchEvent::EnvelopeAdded { uid, .. } => vec![WatchEvent::ItemAdded {
+            domain: WatchDomain::Message,
             id: uid.to_string(),
-        },
-        ImapMailboxWatchEvent::EnvelopeRemoved { uid } => WatchEvent::ItemRemoved {
+        }],
+        ImapMailboxWatchEvent::EnvelopeRemoved { uid } => vec![WatchEvent::ItemRemoved {
+            domain: WatchDomain::Message,
             id: uid.to_string(),
-        },
-        ImapMailboxWatchEvent::FlagsAdded { uid, flags } => WatchEvent::FlagsAdded {
-            id: uid.to_string(),
-            flags: render_flags(&flags),
-        },
-        ImapMailboxWatchEvent::FlagsRemoved { uid, flags } => WatchEvent::FlagsRemoved {
-            id: uid.to_string(),
-            flags: render_flags(&flags),
-        },
-    };
-
-    Some(event)
+        }],
+        ImapMailboxWatchEvent::FlagsAdded { uid, flags } => render_flags(&flags)
+            .into_iter()
+            .map(|flag| WatchEvent::FlagAdded {
+                domain: WatchDomain::Message,
+                id: uid.to_string(),
+                flag,
+            })
+            .collect(),
+        ImapMailboxWatchEvent::FlagsRemoved { uid, flags } => render_flags(&flags)
+            .into_iter()
+            .map(|flag| WatchEvent::FlagRemoved {
+                domain: WatchDomain::Message,
+                id: uid.to_string(),
+                flag,
+            })
+            .collect(),
+    }
 }
 
 /// Renders IMAP flags as the strings a hook filter matches against.

@@ -5,6 +5,10 @@
 //! pin the active backend to that protocol and bail when the account
 //! has no matching config block.
 //!
+//! CalDAV, CardDAV and plain WebDAV are three names rather than one,
+//! since what a collection holds is what its events are called, and a
+//! backend that names its domain can refuse the hooks of another.
+//!
 //! [himalaya CLI's `Backend`]: https://github.com/pimalaya/himalaya/blob/master/src/backend.rs
 
 use std::{fmt, str::FromStr};
@@ -15,7 +19,8 @@ use clap::Parser;
 /// Backend selector for the `-b/--backend` CLI flag.
 #[derive(Clone, Copy, Debug, Default, Parser, PartialEq, Eq)]
 pub enum Backend {
-    /// First configured block wins (priority: IMAP, JMAP, Maildir, DAV).
+    /// First configured block wins (priority: IMAP, JMAP, Maildir,
+    /// CalDAV, CardDAV, DAV).
     #[default]
     Auto,
     /// Force IMAP; bail when the account has no `imap` block.
@@ -24,7 +29,11 @@ pub enum Backend {
     Jmap,
     /// Force Maildir; bail when the account has no `maildir` block.
     Maildir,
-    /// Force WebDAV; bail when the account has no `dav` block.
+    /// Force CalDAV; bail when the account has no `caldav` block.
+    Caldav,
+    /// Force CardDAV; bail when the account has no `carddav` block.
+    Carddav,
+    /// Force plain WebDAV; bail when the account has no `dav` block.
     Dav,
 }
 
@@ -42,6 +51,14 @@ impl Backend {
         matches!(self, Self::Auto | Self::Maildir)
     }
 
+    pub fn allows_caldav(self) -> bool {
+        matches!(self, Self::Auto | Self::Caldav)
+    }
+
+    pub fn allows_carddav(self) -> bool {
+        matches!(self, Self::Auto | Self::Carddav)
+    }
+
     pub fn allows_dav(self) -> bool {
         matches!(self, Self::Auto | Self::Dav)
     }
@@ -56,6 +73,8 @@ impl FromStr for Backend {
             "imap" => Ok(Self::Imap),
             "jmap" => Ok(Self::Jmap),
             "maildir" => Ok(Self::Maildir),
+            "caldav" => Ok(Self::Caldav),
+            "carddav" => Ok(Self::Carddav),
             "dav" => Ok(Self::Dav),
             backend => bail!("Invalid backend {backend}"),
         }
@@ -69,6 +88,8 @@ impl fmt::Display for Backend {
             Self::Imap => write!(f, "imap"),
             Self::Jmap => write!(f, "jmap"),
             Self::Maildir => write!(f, "maildir"),
+            Self::Caldav => write!(f, "caldav"),
+            Self::Carddav => write!(f, "carddav"),
             Self::Dav => write!(f, "dav"),
         }
     }

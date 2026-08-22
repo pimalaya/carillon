@@ -41,7 +41,7 @@ use url::Url;
 
 use crate::{
     config::{JmapAuthConfig, JmapConfig},
-    event::WatchEvent,
+    event::{WatchDomain, WatchEvent},
 };
 
 /// How long the watch waits between two polls.
@@ -210,7 +210,10 @@ fn round(
 
     for id in &changes.destroyed {
         if known.remove(id).is_some() {
-            on_event(WatchEvent::ItemRemoved { id: id.clone() });
+            on_event(WatchEvent::ItemRemoved {
+                domain: WatchDomain::Message,
+                id: id.clone(),
+            });
         }
     }
 
@@ -316,7 +319,10 @@ fn reconcile(known: &mut Known, mailbox_id: &str, email: JmapEmail) -> Vec<Watch
 
     if !inside {
         return match known.remove(&id) {
-            Some(_) => vec![WatchEvent::ItemRemoved { id }],
+            Some(_) => vec![WatchEvent::ItemRemoved {
+                domain: WatchDomain::Message,
+                id,
+            }],
             None => Vec::new(),
         };
     }
@@ -324,22 +330,30 @@ fn reconcile(known: &mut Known, mailbox_id: &str, email: JmapEmail) -> Vec<Watch
     let keywords = render_keywords(email.keywords.as_ref());
 
     let Some(before) = known.insert(id.clone(), keywords.clone()) else {
-        return vec![WatchEvent::ItemAdded { id }];
+        return vec![WatchEvent::ItemAdded {
+            domain: WatchDomain::Message,
+            id,
+        }];
     };
 
     let mut events = Vec::new();
 
-    let added: BTreeSet<String> = keywords.difference(&before).cloned().collect();
-    if !added.is_empty() {
-        events.push(WatchEvent::FlagsAdded {
+    // NOTE: one event per keyword, so a hook always knows which
+    // flag it fired for.
+    for flag in keywords.difference(&before) {
+        events.push(WatchEvent::FlagAdded {
+            domain: WatchDomain::Message,
             id: id.clone(),
-            flags: added,
+            flag: flag.clone(),
         });
     }
 
-    let removed: BTreeSet<String> = before.difference(&keywords).cloned().collect();
-    if !removed.is_empty() {
-        events.push(WatchEvent::FlagsRemoved { id, flags: removed });
+    for flag in before.difference(&keywords) {
+        events.push(WatchEvent::FlagRemoved {
+            domain: WatchDomain::Message,
+            id: id.clone(),
+            flag: flag.clone(),
+        });
     }
 
     events

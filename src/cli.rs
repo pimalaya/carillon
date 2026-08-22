@@ -40,10 +40,11 @@ pub struct Cli {
     /// Force a specific backend.
     ///
     /// Carillon only opens one connection per `watch`, so when more
-    /// than one of `imap`, `jmap`, `maildir`, `dav` is declared on the
-    /// account this flag picks which one is used. With `auto`
-    /// (default), the priority order is IMAP, then JMAP, then
-    /// Maildir, then WebDAV; the first configured block wins.
+    /// than one of `imap`, `jmap`, `maildir`, `caldav`, `carddav`,
+    /// `dav` is declared on the account this flag picks which one is
+    /// used. With `auto` (default), the priority order is IMAP, JMAP,
+    /// Maildir, CalDAV, CardDAV, WebDAV; the first configured block
+    /// wins.
     #[arg(short, long, global = true, default_value_t)]
     pub backend: Backend,
 
