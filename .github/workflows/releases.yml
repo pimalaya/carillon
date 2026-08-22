@@ -13,3 +13,4 @@ jobs:
     secrets: inherit
     with:
       project: mirador
+      nixpkgs: nixos-25.11

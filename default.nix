@@ -3,6 +3,16 @@
   ...
 }@args:
 
+let
+  mirador = import ./default.nix (
+    removeAttrs args [
+      "crossPkgs"
+      "isStatic"
+      "target"
+    ]
+  );
+
+in
 pimalaya.mkDefault (
   {
     src = ./.;
@@ -18,7 +28,10 @@ pimalaya.mkDefault (
       }:
 
       pkgs.callPackage ./package.nix {
-        inherit lib rustPlatform buildPackages;
+        inherit lib rustPlatform;
+        buildPackages = buildPackages // {
+          inherit mirador;
+        };
         installShellCompletions = false;
         installManPages = false;
         buildNoDefaultFeatures = !defaultFeatures;

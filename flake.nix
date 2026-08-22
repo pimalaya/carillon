@@ -1,9 +1,8 @@
 {
-  description = "CLI to watch mailbox changes, written in Rust";
+  description = "CLI to watch PIM collection changes, written in Rust";
 
   inputs = {
     nixpkgs = {
-      # until crates.io fix fully backported
       url = "github:nixos/nixpkgs/nixos-25.11";
     };
     fenix = {

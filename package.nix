@@ -18,26 +18,25 @@
 }:
 
 let
-  inherit (stdenv.hostPlatform)
-    isLinux
-    isWindows
-    isAarch64
-    ;
+  nativeTls = builtins.elem "native-tls" buildFeatures;
+  notify = !buildNoDefaultFeatures || builtins.elem "notify" buildFeatures;
 
-  emulator = stdenv.hostPlatform.emulator buildPackages;
-  exe = stdenv.hostPlatform.extensions.executable;
-
-  dbus' = dbus.overrideAttrs (old: {
-    env = (old.env or { }) // {
-      NIX_CFLAGS_COMPILE =
-        (old.env.NIX_CFLAGS_COMPILE or "")
-        # required for D-Bus on Linux AArch64
-        + lib.optionalString (isLinux && isAarch64) " -mno-outline-atomics";
-    };
-  });
+  # dbus calls libgcc outline atomics that the static aarch64 link cannot
+  # resolve (__aarch64_ldset4_sync & co), so inline them instead.
+  dbus' =
+    if stdenv.hostPlatform.isLinux && stdenv.hostPlatform.isAarch64 then
+      dbus.overrideAttrs (old: {
+        env = (old.env or { }) // {
+          NIX_CFLAGS_COMPILE = (old.env.NIX_CFLAGS_COMPILE or "") + " -mno-outline-atomics";
+        };
+      })
+    else
+      dbus;
 
 in
-rustPlatform.buildRustPackage {
+rustPlatform.buildRustPackage (finalAttrs: {
+  __structuredAttrs = true;
+
   inherit buildNoDefaultFeatures;
 
   pname = "mirador";
@@ -46,12 +45,21 @@ rustPlatform.buildRustPackage {
 
   src = fetchFromGitHub {
     owner = "pimalaya";
-    repo = "mirador";
-    rev = "v0.1.0";
+    repo = finalAttrs.pname;
+    tag = "v${finalAttrs.version}";
     hash = "";
   };
 
-  env.OPENSSL_NO_VENDOR = true;
+  env = {
+    # pkg-config hands the linker libdbus but no rpath, leaving a binary that
+    # cannot find it: not in postInstall, which runs it, nor once installed.
+    NIX_LDFLAGS = lib.optionalString (notify && !stdenv.hostPlatform.isWindows) (
+      "-rpath " + lib.getLib dbus' + "/lib"
+    );
+
+    # openssl should not be provided by vendors, not even on windows
+    OPENSSL_NO_VENDOR = 1;
+  };
 
   nativeBuildInputs = [
     pkg-config
@@ -59,41 +67,50 @@ rustPlatform.buildRustPackage {
   ];
 
   buildInputs =
-    # D-Bus is provided by vendors on Windows
-    lib.optional (!isWindows) dbus' ++ lib.optional (builtins.elem "native-tls" buildFeatures) openssl;
+    lib.optional nativeTls openssl
+    # dbus is provided by vendors on windows
+    ++ lib.optional (notify && !stdenv.hostPlatform.isWindows) dbus';
 
-  buildFeatures = buildFeatures ++ lib.optional isWindows "vendored";
-
-  # most of the tests are lib side
-  doCheck = false;
+  buildFeatures =
+    buildFeatures
+    # dbus is provided by vendors on windows
+    ++ lib.optional (notify && stdenv.hostPlatform.isWindows) "vendored";
 
   postInstall =
-    lib.optionalString (lib.hasInfix "wine" emulator) ''
-      export WINEPREFIX="''${WINEPREFIX:-$(mktemp -d)}"
-      mkdir -p $WINEPREFIX
+    let
+      exe =
+        if stdenv.buildPlatform.canExecute stdenv.hostPlatform then
+          "$out/bin/${finalAttrs.meta.mainProgram}"
+        else
+          lib.getExe buildPackages.${finalAttrs.pname};
+    in
     ''
-    + ''
       mkdir -p $out/share/{completions,man,services}
-      cp assets/mirador@.service "$out"/share/services/
-      ${emulator} "$out"/bin/mirador${exe} manuals "$out"/share/man
-      ${emulator} "$out"/bin/mirador${exe} completions -d "$out"/share/completions bash elvish fish powershell zsh
+      cp assets/${finalAttrs.pname}@.service "$out"/share/services/
+      ${exe} manuals "$out"/share/man
+      ${exe} completions -d "$out"/share/completions bash elvish fish powershell zsh
     ''
     + lib.optionalString installManPages ''
       installManPage "$out"/share/man/*
     ''
     + lib.optionalString installShellCompletions ''
-      installShellCompletion --cmd mirador \
-        --bash "$out"/share/completions/mirador.bash \
-        --fish "$out"/share/completions/mirador.fish \
-        --zsh "$out"/share/completions/_mirador
+      installShellCompletion --cmd ${finalAttrs.meta.mainProgram} \
+        --bash "$out"/share/completions/${finalAttrs.meta.mainProgram}.bash \
+        --fish "$out"/share/completions/${finalAttrs.meta.mainProgram}.fish \
+        --zsh "$out"/share/completions/_${finalAttrs.meta.mainProgram}
     '';
 
+  cargoTestFlags = [ "--bins" ];
+
   meta = {
-    description = "CLI to watch mailbox changes";
-    mainProgram = "mirador";
-    homepage = "https://github.com/pimalaya/mirador";
-    changelog = "https://github.com/pimalaya/mirador/blob/master/CHANGELOG.md";
-    license = lib.licenses.agpl3Only;
+    description = "CLI to watch PIM collection changes";
+    mainProgram = "mailbox";
+    homepage = "https://github.com/pimalaya/${finalAttrs.pname}";
+    changelog = "${finalAttrs.meta.homepage}/releases/tag/${finalAttrs.src.tag}";
+    license = with lib.licenses; [
+      asl20
+      mit
+    ];
     maintainers = with lib.maintainers; [ soywod ];
   };
-}
+})
