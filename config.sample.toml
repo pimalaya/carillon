@@ -142,7 +142,9 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 
 # ---- Maildir backend (listing poll) -------------------------------------------
 
-# Root directory containing one subdirectory per mailbox (Maildir++ layout).
+# Root directory of the Maildir tree. Subfolders are real nested directories
+# (the layout himalaya uses); watch the root itself with mailbox = "." or
+# "INBOX", and a subfolder by its path, e.g. mailbox = "Archive".
 #maildir.root = "~/Mail/example"
 
 # --------------------------------------------------------------------------------

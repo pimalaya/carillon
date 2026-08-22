@@ -9,4 +9,5 @@ change: carillon-import
 - [x] Bump every Pimalaya dependency and the MSRV
 - [x] Build, clippy and fmt green on every feature combination
 - [x] Fold the delta into the spec and log the change
-- [ ] Verify each backend against a live server
+- [x] Verify the Maildir backend end to end, unit tests included
+- [ ] Verify the IMAP and JMAP backends against a live server

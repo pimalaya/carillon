@@ -50,13 +50,22 @@ pub fn run(
     while !shutdown.load(Ordering::SeqCst) {
         let started = Instant::now();
 
-        match watch_once(account, &config, &mailbox, backend, &hooks, &shutdown) {
-            Ok(()) => debug!("[{account}] session ended, reopening"),
-            Err(err) => warn!("[{account}] session lost: {err:#}"),
+        let outcome = watch_once(account, &config, &mailbox, backend, &hooks, &shutdown);
+
+        // NOTE: a session ending because it was asked to is not news,
+        // and a failure it raced on the way out is not a failure worth
+        // warning about; either way nothing is reopened.
+        if shutdown.load(Ordering::SeqCst) {
+            if let Err(err) = outcome {
+                debug!("[{account}] session ended while shutting down: {err:#}");
+            }
+
+            break;
         }
 
-        if shutdown.load(Ordering::SeqCst) {
-            break;
+        match outcome {
+            Ok(()) => debug!("[{account}] session ended, reopening"),
+            Err(err) => warn!("[{account}] session lost: {err:#}"),
         }
 
         // NOTE: a session that stayed up is evidence the server is

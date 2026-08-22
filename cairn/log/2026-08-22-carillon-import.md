@@ -25,3 +25,17 @@ Build, clippy and fmt green on every feature combination (imap, jmap, maildir, a
 ## Not done
 
 The repository is still called mirador. The rename to carillon comes after, so this reads as a merge in the history rather than as a rename.
+
+## Follow-up: the maildir mailbox was resolved by hand
+
+The first cut joined the configured root with the mailbox name directly, which bypasses io-maildir's store. That store is what applies the layout, and under Maildir++ a subfolder is a dot-prefixed flat sibling (`.Archive`, `.a.b`), not a plain subdirectory. Watching `Archive` on such a store would have listed an empty directory forever, reporting nothing and erroring never.
+
+It now resolves through `MaildirClient::load_maildir`, which applies the store's layout and checks that `cur`, `new` and `tmp` exist, so a wrong name fails at startup instead of watching a void. `.` and `INBOX` both name the store root. The config sample said Maildir++ where io-maildir defaults to real nested directories, the layout himalaya uses; it now says what actually happens.
+
+## Verified: the Maildir backend, end to end
+
+Maildir needs no server, so it is the one backend that can be run here, and it was. Against a real tree, the daemon reported an arrival, a read (the `new` to `cur` move with the `S` letter appended, which it correctly called one flag change rather than a departure and an arrival, since the id is the file name before `:2,`), and a deletion, firing the matching `cmd` hooks with the right variables each time. Ctrl+C returned in under ten milliseconds.
+
+Five unit tests cover the same ground on the pure parts: the three diff transitions, the subfolder resolution that the fix above is about, and the read-is-a-flag-change case. The other two backends remain unverified against a live server.
+
+One thing the run exposed: the supervisor logged "session ended, reopening" while it was shutting down, because it matched on the session's outcome before looking at the shutdown flag. It now checks the flag first, so a shutdown says so and a failure raced on the way out is a debug line rather than a warning about a session nobody is reopening.

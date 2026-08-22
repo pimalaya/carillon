@@ -32,6 +32,9 @@ codegen-units = 1
 strip = "symbols"
 panic = "abort"
 
+[dev-dependencies]
+tempfile = "3"
+
 [build-dependencies]
 pimalaya-cli = { version = "0.2", default-features = false, features = ["build"] }
 

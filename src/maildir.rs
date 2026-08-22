@@ -26,6 +26,7 @@ use io_maildir::{
     client::MaildirClient,
     flag::{MaildirFlag, MaildirFlags},
     maildir::Maildir,
+    path::MaildirPath,
 };
 use log::{debug, trace};
 
@@ -48,7 +49,7 @@ pub fn watch(
     mut on_event: impl FnMut(WatchEvent),
 ) -> Result<()> {
     let client = MaildirClient::new(config.root.clone());
-    let maildir = resolve(config, mailbox);
+    let maildir = resolve(&client, mailbox)?;
 
     let mut seen = list(&client, &maildir)?;
     debug!("watching maildir with {} entries", seen.len());
@@ -137,14 +138,24 @@ fn diff(
     events
 }
 
-/// Resolves the watched mailbox: the root itself for `.`, otherwise the
-/// named Maildir under it.
-fn resolve(config: &MaildirConfig, mailbox: &str) -> Maildir {
-    if mailbox == "." || mailbox.is_empty() {
-        return Maildir::from_path(config.root.clone());
-    }
+/// Resolves the watched mailbox through the store, so the layout and
+/// the validation are io-maildir's rather than a hand-joined path.
+fn resolve(client: &MaildirClient, mailbox: &str) -> Result<Maildir> {
+    // NOTE: the empty path is the store root, which is the mailbox a
+    // flat Maildir holds; `.` is how a config says so readably.
+    let name = match mailbox {
+        "." | "INBOX" => MaildirPath::default(),
+        mailbox => MaildirPath::from(mailbox),
+    };
 
-    Maildir::from_path(config.root.join(mailbox))
+    // NOTE: resolving through the client rather than joining the root
+    // by hand is what applies the store's layout (dot-prefixed flat
+    // names under Maildir++, real nested directories otherwise) and
+    // what turns a wrong name into an error instead of a listing that
+    // stays empty forever.
+    client
+        .load_maildir(name)
+        .with_context(|| format!("cannot open maildir `{mailbox}`"))
 }
 
 /// Renders Maildir flags under the names a hook filter matches, so a
@@ -180,4 +191,140 @@ fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
     }
 
     !shutdown.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    /// Builds a Maildir at `path`, with the three subdirectories a
+    /// listing needs.
+    fn maildir(path: &std::path::Path) {
+        for sub in ["cur", "new", "tmp"] {
+            fs::create_dir_all(path.join(sub)).expect("maildir subdirectory");
+        }
+    }
+
+    /// Writes an entry into one of the Maildir subdirectories, named
+    /// the way a delivering agent would.
+    fn entry(path: &std::path::Path, sub: &str, name: &str) {
+        fs::write(path.join(sub).join(name), b"body").expect("maildir entry");
+    }
+
+    fn listing(pairs: &[(&str, &[&str])]) -> BTreeMap<String, BTreeSet<String>> {
+        pairs
+            .iter()
+            .map(|(id, flags)| {
+                let flags = flags.iter().map(|flag| flag.to_string()).collect();
+                (id.to_string(), flags)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_arrival_and_a_departure_are_reported() {
+        let before = listing(&[("kept", &[]), ("gone", &[])]);
+        let after = listing(&[("kept", &[]), ("new", &[])]);
+
+        assert_eq!(
+            vec![
+                WatchEvent::MessageRemoved {
+                    id: String::from("gone")
+                },
+                WatchEvent::MessageAdded {
+                    id: String::from("new")
+                },
+            ],
+            diff(&before, &after),
+        );
+    }
+
+    #[test]
+    fn a_flag_moving_either_way_is_reported() {
+        let before = listing(&[("one", &["Flagged"])]);
+        let after = listing(&[("one", &["Seen"])]);
+
+        let events = diff(&before, &after);
+        assert_eq!(2, events.len(), "got {events:?}");
+
+        let WatchEvent::FlagsAdded { flags, .. } = &events[0] else {
+            panic!("expected FlagsAdded, got {:?}", events[0]);
+        };
+        assert_eq!(&BTreeSet::from([String::from("Seen")]), flags);
+
+        let WatchEvent::FlagsRemoved { flags, .. } = &events[1] else {
+            panic!("expected FlagsRemoved, got {:?}", events[1]);
+        };
+        assert_eq!(&BTreeSet::from([String::from("Flagged")]), flags);
+    }
+
+    #[test]
+    fn an_unchanged_mailbox_reports_nothing() {
+        let listed = listing(&[("one", &["Seen"]), ("two", &[])]);
+
+        assert!(diff(&listed, &listed).is_empty());
+    }
+
+    /// The regression this file exists for: a subfolder is resolved
+    /// through the store, so it is found, and a wrong name fails
+    /// instead of listing a directory that is not there.
+    #[test]
+    fn a_subfolder_resolves_through_the_store() {
+        let root = TempDir::new().expect("temp dir");
+        maildir(root.path());
+        maildir(&root.path().join("Archive"));
+        entry(root.path(), "new", "1700000000.a.host");
+        entry(&root.path().join("Archive"), "cur", "1700000001.b.host:2,S");
+
+        let client = MaildirClient::new(root.path().to_path_buf());
+
+        let inbox = resolve(&client, "INBOX").expect("inbox resolves");
+        let listed = list(&client, &inbox).expect("inbox lists");
+        assert_eq!(vec!["1700000000.a.host"], listed.keys().collect::<Vec<_>>());
+
+        let archive = resolve(&client, "Archive").expect("subfolder resolves");
+        let listed = list(&client, &archive).expect("subfolder lists");
+        assert_eq!(
+            vec![&BTreeSet::from([String::from("Seen")])],
+            listed.values().collect::<Vec<_>>(),
+        );
+
+        let err = resolve(&client, "Nope").expect_err("unknown mailbox fails");
+        assert!(format!("{err:#}").contains("Nope"), "got {err:#}");
+    }
+
+    /// Reading a message moves its file from `new` to `cur` and appends
+    /// the `S` letter, keeping the name before `:2,`. The watch must
+    /// see one flag change, not a message leaving and another arriving.
+    #[test]
+    fn reading_a_message_is_a_flag_change_not_a_move() {
+        let root = TempDir::new().expect("temp dir");
+        maildir(root.path());
+        entry(root.path(), "new", "1700000000.a.host");
+
+        let client = MaildirClient::new(root.path().to_path_buf());
+        let maildir = resolve(&client, ".").expect("root resolves");
+        let before = list(&client, &maildir).expect("first listing");
+
+        fs::rename(
+            root.path().join("new").join("1700000000.a.host"),
+            root.path().join("cur").join("1700000000.a.host:2,S"),
+        )
+        .expect("mark as read");
+
+        let after = list(&client, &maildir).expect("second listing");
+        let events = diff(&before, &after);
+
+        assert_eq!(
+            vec![WatchEvent::FlagsAdded {
+                id: String::from("1700000000.a.host"),
+                flags: BTreeSet::from([String::from("Seen")]),
+            }],
+            events,
+        );
+    }
 }
