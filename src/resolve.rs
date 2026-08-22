@@ -1,11 +1,11 @@
 //! Local envelope resolver for the notify consumer.
 //!
-//! carillon-core's ring is content-free; it says the mailbox changed, not
-//! what changed. The notify consumer is terminal — it cannot fetch on its
-//! own — so, on a change, the daemon resolves the new messages here, on its
-//! **own** IMAP connection (the consumer's own protocol client, never
-//! carillon-core), and hands the notification their subject, sender, and
-//! date. The `cmd` consumer is deliberately not enriched.
+//! The ring is content-free; it says the mailbox changed, not what
+//! changed. The notify consumer is terminal (it cannot fetch on its own),
+//! so, on a change, the daemon resolves the new messages here, on its
+//! **own** IMAP connection, never the watched one, and hands the
+//! notification their subject, sender, and date. The `cmd` consumer is
+//! deliberately not enriched.
 //!
 //! This drives io-imap's coroutines directly with a blocking pump, exactly
 //! as [`crate::driver`] drives the watch, but it is a short, one-shot
@@ -22,7 +22,6 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use carillon_core::credential::CarillonCredential;
 use io_imap::{
     codec::fragmentizer::Fragmentizer,
     coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
@@ -43,7 +42,7 @@ use io_imap::{
 };
 use secrecy::ExposeSecret;
 
-use crate::net;
+use crate::{credential::CarillonCredential, net};
 
 /// Only mailbox status and small envelopes are read, never a body, so the
 /// parser never needs to grow large.
@@ -220,7 +219,7 @@ fn nstring(value: &NString<'_>) -> Option<String> {
 /// performing each read and write it asks for. Returns the coroutine's own
 /// result (itself a `Result`), so callers use `??`.
 fn pump<C>(
-    stream: &mut pimalaya_stream::std::stream::StreamStd,
+    stream: &mut pimalaya_stream::stream::Stream,
     frag: &mut Fragmentizer,
     mut coroutine: C,
     shutdown: &Arc<AtomicBool>,

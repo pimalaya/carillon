@@ -1,10 +1,10 @@
-//! The blocking driver for carillon-core's I/O-free watch.
+//! The blocking driver for the I/O-free watch.
 //!
-//! carillon-core does no I/O: its `CarillonImapWatch` coroutine returns what
-//! to do next. This opens a TLS stream, pumps the coroutine over it
+//! [`crate::imap`] does no I/O: its `CarillonImapWatch` coroutine returns
+//! what to do next. This opens a TLS stream, pumps the coroutine over it
 //! (performing each read and write it requests), and on each surfaced change
-//! mints an event and fires the hook, reconnecting with capped backoff until
-//! shutdown. This is the whole I/O side for the CLI, one thread per watch.
+//! fires the hook, reconnecting with capped backoff until shutdown. This is
+//! the whole I/O side for the CLI, one thread per watch.
 //!
 //! The ring is content-free. When a watch has a notify hook, the driver
 //! resolves the change locally through [`crate::resolve`] (its own
@@ -18,22 +18,20 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use carillon_core::{
-    backend::CarillonImapBackend,
-    credential::CarillonCredential,
-    event::{CarillonEvent, CarillonSource},
-    imap::{CarillonImapWatch, CarillonImapWatchProgress as Progress},
-};
 use io_imap::types::mailbox::Mailbox;
 use log::{debug, info, warn};
 
 use crate::{
+    backend::CarillonImapBackend,
     config::{HookConfig, ImapConfig},
+    credential::CarillonCredential,
+    event::CarillonSource,
     hook::{self, HookContext},
+    imap::{CarillonImapWatch, CarillonImapWatchProgress as Progress},
     net,
     resolve::{self, CarillonImapMessage},
 };
@@ -138,14 +136,6 @@ fn watch_once(
                 stream.write_all(&bytes).context("write failed")?;
             }
             Progress::Changed(state) => {
-                let ring = CarillonEvent::new(
-                    new_id(),
-                    now_secs(),
-                    account,
-                    CarillonSource::Imap,
-                    mailbox,
-                    Some(state),
-                );
                 let new_messages = if enrich {
                     match resolve_new(imap, host, port, &watched, resolver_uid_next, shutdown) {
                         Ok((messages, uid_next)) => {
@@ -165,8 +155,8 @@ fn watch_once(
                     &HookContext {
                         account,
                         mailbox,
-                        source: ring.source.as_str(),
-                        state: ring.state.as_deref().unwrap_or_default(),
+                        source: CarillonSource::Imap.as_str(),
+                        state: &state,
                     },
                     &new_messages,
                 );
@@ -239,22 +229,4 @@ fn sleep_backoff(backoff: &mut Duration, shutdown: &Arc<AtomicBool>) -> bool {
     }
     *backoff = (*backoff * 2).min(MAX_BACKOFF);
     !shutdown.load(Ordering::SeqCst)
-}
-
-/// A distinct event id. The CLI does not sign or dedup deliveries, so a
-/// monotonic hex stamp suffices; the server mints a random id instead.
-fn new_id() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or(0);
-    format!("{nanos:032x}")
-}
-
-/// The current Unix time in seconds, or 0 before the epoch.
-fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or(0)
 }

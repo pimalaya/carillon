@@ -3,7 +3,7 @@ name = "carillon"
 description = "CLI daemon to watch PIM account changes and fire local hooks"
 version = "0.0.0"
 authors = ["soywod <pimalaya.org@posteo.net>"]
-rust-version = "1.88"
+rust-version = "1.89"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 categories = ["email", "command-line-utilities"]
@@ -25,19 +25,19 @@ strip = "symbols"
 panic = "abort"
 
 [build-dependencies]
-pimalaya-cli = { version = "0.1", default-features = false, features = ["build"] }
+pimalaya-cli = { version = "0.2", default-features = false, features = ["build"] }
 
 [dependencies]
 anyhow = "1"
-carillon-core = { path = "../core", default-features = false, features = ["imap"] }
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 ctrlc = { version = "3", features = ["termination"] }
-io-imap = { version = "0.2", default-features = false }
+io-imap = { version = "0.5", default-features = false }
 log = "0.4"
 notify-rust = { version = "4", default-features = false, features = ["d"] }
-pimalaya-cli = { version = "0.1", default-features = false, features = ["terminal"] }
+pimalaya-cli = { version = "0.2", default-features = false, features = ["terminal"] }
 pimalaya-config = { version = "0.1", default-features = false, features = ["toml", "secret"] }
-pimalaya-stream = { version = "0.1", default-features = false, features = ["std"] }
+pimalaya-stream = { version = "0.3", default-features = false, features = ["std"] }
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 subst = "0.3"
+thiserror = { version = "2", default-features = false }
