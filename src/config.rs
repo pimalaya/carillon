@@ -639,7 +639,25 @@ pub enum DavWatchConfig {
 #[cfg(feature = "imap")]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct IdleWatchConfig {}
+pub struct IdleWatchConfig {
+    /// Seconds an IDLE is held before it is re-issued, unset taking
+    /// io-imap's own default of 29.
+    ///
+    /// Short enough survives a NAT middle-box that drops a quiet
+    /// connection, at a round trip per interval; a server known to
+    /// hold one open is asked less often, up to the 29 minutes RFC
+    /// 2177 allows.
+    #[serde(default)]
+    pub timeout: Option<u64>,
+}
+
+#[cfg(feature = "imap")]
+impl IdleWatchConfig {
+    /// The interval this config overrides the io-imap default with.
+    pub fn timeout(&self) -> Option<Duration> {
+        self.timeout.map(Duration::from_secs)
+    }
+}
 
 /// Options of the push method.
 #[cfg(feature = "jmap")]

@@ -91,9 +91,11 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #imap.id.fields = { name = true, version = true, vendor = true, support-url = true }
 
 # How this account learns about a change, IMAP offering two ways. Unset holds
-# the idle connection. The interval is in seconds, and unset takes what suits
-# the backend.
-#imap.watch.idle = {}
+# the idle connection, re-issuing it every 29 seconds, which is short enough to
+# survive a NAT box that drops a quiet connection. A server known to hold one
+# open is asked less often, up to the 29 minutes RFC 2177 allows. Both values
+# are in seconds.
+#imap.watch.idle.timeout = 600
 #imap.watch.poll.interval = 60
 
 # ---- JMAP: a changes poll (RFC 8621) -------------------------------------------

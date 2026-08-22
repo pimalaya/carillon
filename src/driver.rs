@@ -20,10 +20,10 @@ use log::{debug, info, warn};
 
 #[cfg(feature = "dav")]
 use crate::config::DavWatchConfig;
-#[cfg(feature = "imap")]
-use crate::config::ImapWatchConfig;
 #[cfg(feature = "maildir")]
 use crate::config::MaildirWatchConfig;
+#[cfg(feature = "imap")]
+use crate::config::{IdleWatchConfig, ImapWatchConfig};
 #[cfg(feature = "jmap")]
 use crate::config::{JmapWatchConfig, PushWatchConfig};
 use crate::{
@@ -123,9 +123,20 @@ fn watch_once(
                         &mut on_event,
                     )
                 }
-                None | Some(ImapWatchConfig::Idle(_)) => {
+                watch => {
+                    let idle = match watch {
+                        Some(ImapWatchConfig::Idle(idle)) => idle.clone(),
+                        _ => IdleWatchConfig::default(),
+                    };
+
                     info!("[{account}] watching `{collection}` over imap, idling");
-                    crate::imap::watch_idle(imap, collection, shutdown, &mut on_event)
+                    crate::imap::watch_idle(
+                        imap,
+                        collection,
+                        idle.timeout(),
+                        shutdown,
+                        &mut on_event,
+                    )
                 }
             };
         }

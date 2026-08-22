@@ -108,10 +108,11 @@ pub fn open(config: &ImapConfig) -> Result<(ImapClientStd, Vec<Capability<'stati
 pub fn watch_idle(
     config: &ImapConfig,
     collection: &str,
+    timeout: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
     on_event: impl FnMut(WatchEvent),
 ) -> Result<()> {
-    watch(config, collection, None, shutdown, on_event)
+    watch(config, collection, timeout, None, shutdown, on_event)
 }
 
 /// Watches `collection` the same way, but re-reading on an interval
@@ -129,12 +130,13 @@ pub fn watch_poll(
 ) -> Result<()> {
     let interval = interval.unwrap_or(POLL_INTERVAL);
 
-    watch(config, collection, Some(interval), shutdown, on_event)
+    watch(config, collection, None, Some(interval), shutdown, on_event)
 }
 
 fn watch(
     config: &ImapConfig,
     collection: &str,
+    idle_timeout: Option<Duration>,
     poll: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
     mut on_event: impl FnMut(WatchEvent),
@@ -144,6 +146,7 @@ fn watch(
         .map_err(|err| anyhow!("invalid mailbox name `{collection}`: {err}"))?;
     let opts = ImapMailboxWatchStreamOptions {
         shutdown_poll: READ_TIMEOUT,
+        idle_timeout,
         poll,
     };
     let stream = client.watch_mailbox(watched, &capability, opts)?;
