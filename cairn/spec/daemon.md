@@ -13,10 +13,10 @@ It watches; it never syncs. A change is reported as it is seen (an item arrived,
 Each backend brings its own way of learning about a change, and the daemon translates all of them into one vocabulary, so one hook runner serves them all: IMAP holds IDLE and reports UID-keyed deltas, JMAP polls `Email/changes`, Maildir re-lists the mailbox, and the DAV backends report what a collection did since a sync token. Mail is not the boundary: CalDAV holds events and tasks and CardDAV holds cards, and each is configured and named for what it holds rather than reduced to a word true of everything. The protocol crates own the protocols (io-imap, io-jmap, io-maildir, io-webdav); this repository owns the config, the hooks and the supervision.
 
 ### Requirement: A watch runs from a TOML file
-The daemon SHALL read its accounts from a TOML config file, resolved from an explicit path then the standard user paths. Each account SHALL carry at least one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `dav`) and the collection it watches, and each backend block SHALL carry the hooks that backend fires. The config schema SHALL stay compatible with himalaya CLI and himalaya TUI, so one file can back every binary, and unknown keys SHALL be ignored rather than refused.
+The daemon SHALL read its accounts from a TOML config file, resolved from an explicit path then the standard user paths. Each account SHALL carry at least one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `dav`), and each block SHALL carry the collection it watches, how it watches, and the hooks it fires. The account block SHALL keep the shape himalaya CLI and himalaya TUI read, and unknown keys SHALL be ignored there rather than refused, so an account can be recognised across the binaries. A whole file SHALL NOT be claimed to load in all three, since every backend block is strict on both sides and each has keys the other does not know.
 
 #### Scenario: A local watch from a config file
-- **GIVEN** a config describing one IMAP account with an `imap.hook.on-message-added` notify hook
+- **GIVEN** a config describing one IMAP account with an `imap.mailbox` and an `imap.hook.on-message-added` notify hook
 - **WHEN** the daemon runs and a message arrives
 - **THEN** a desktop notification fires, with no network delivery and no account with any service
 
@@ -34,7 +34,7 @@ Bare `carillon watch` SHALL watch every configured account at once, one thread e
 - **THEN** the failure is logged and retried for that account alone, and the other account keeps watching
 
 ### Requirement: An account watches one collection, one way
-An account SHALL name the one collection it watches, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection is a second account, which is also how it gets its own hooks. Every backend SHALL read the collection the same way, the DAV ones included, whose `server` names the DAV root and whose collection is the path under it.
+An account SHALL watch the one collection its backend names, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection is a second account, which is also how it gets its own hooks. Every backend SHALL read its collection the same way, the DAV ones included, whose `server` names the DAV root and whose collection is the path under it.
 
 #### Scenario: A second collection
 - **GIVEN** an account watching one mailbox
@@ -168,7 +168,7 @@ A CalDAV watch SHALL resolve what its collection holds from `supported-calendar-
 - **THEN** `on-event-added` fires without any further request, and the account's task hooks are refused when the configuration is read
 
 ### Requirement: A hook templates against what its event carries
-Each hook SHALL declare the variables it can fill, and a notification naming anything else SHALL be refused when the configuration is read. `id` and `collection` SHALL be available to every hook, `flag` to a flag hook, and the envelope names only to the arrival hook of a backend that resolves one, which is IMAP alone. A `${name:default}` SHALL keep working whatever the name, a default being how a template says it can do without the value. A command SHALL NOT be validated, its placeholders reaching it as environment variables where an unset name is ordinary.
+Each hook SHALL declare the variables it can fill, and a notification naming anything else SHALL be refused when the configuration is read. `$id` SHALL be available to every hook, the collection SHALL be available under the name its backend configures it as, `$flag` to a flag hook, and the envelope names only to the arrival hook of a backend that resolves one, which is IMAP alone. A `${name:default}` SHALL keep working whatever the name, a default being how a template says it can do without the value. A command SHALL NOT be validated, its placeholders reaching it as environment variables where an unset name is ordinary.
 
 #### Scenario: A removal that asks for an envelope
 - **GIVEN** an account whose `imap.hook.on-message-removed` notification body reads `$subject`
@@ -179,4 +179,17 @@ Each hook SHALL declare the variables it can fill, and a notification naming any
 - **GIVEN** an account whose `imap.hook.on-message-added` notification summary reads `New mail from $sender`
 - **WHEN** a message arrives whose envelope carries no sender, or whose resolution failed
 - **THEN** the notification fires with that part empty, rather than being dropped
+
+### Requirement: The collection belongs to the backend, under its own name
+Each backend SHALL take the one collection it watches, required, under the name its domain uses: `imap.mailbox`, `jmap.mailbox`, `maildir.mailbox`, `caldav.calendar`, `carddav.addressbook` and `dav.collection`, the last being generic because a plain DAV collection has no domain to name. No account-level key SHALL name it, so an account block carries nothing that needs a backend to be understood. A hook SHALL template against the same name its backend configures, `$id` being the one variable every backend means the same way.
+
+#### Scenario: A mail hook naming its mailbox
+- **GIVEN** an account whose `imap.hook.on-message-added` summary reads `New mail in $mailbox`
+- **WHEN** a message arrives
+- **THEN** the notification names the mailbox from `imap.mailbox`
+
+#### Scenario: A hook naming another backend's word
+- **GIVEN** an account whose `caldav.hook.on-event-added` summary reads `$mailbox`
+- **WHEN** the configuration is read
+- **THEN** it is refused, since a calendar is configured and templated as `$calendar`
 

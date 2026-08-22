@@ -56,8 +56,6 @@ impl WatchCommand {
         for (name, account) in selected {
             let shutdown = shutdown.clone();
 
-            info!("watching `{}` on account `{name}`", account.collection);
-
             let handle = thread::Builder::new().name(name.clone()).spawn(move || {
                 if let Err(err) = driver::run(&name, account, backend, shutdown) {
                     error!("[{name}] watch stopped: {err:#}");

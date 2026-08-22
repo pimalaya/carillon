@@ -21,11 +21,11 @@ CLI to watch PIM collection changes, written in Rust
 ## Features
 
 - **Six backends**, mail and not only mail: IMAP idles, JMAP is pushed to, Maildir re-lists, and CalDAV, CardDAV and plain WebDAV each ask a collection what moved.
-- **One account, one collection, one method**: both are its config, so nothing is passed on the command line. Any backend can poll instead, for a server whose idle or push cannot be trusted.
+- **One account, one collection, one method**: all three are its config, so nothing is passed on the command line. Each backend names the collection it watches in its own word (`imap.mailbox`, `caldav.calendar`, `carddav.addressbook`, `dav.collection`), and a hook templates against that same word. Any backend can poll instead, for a server whose idle or push cannot be trusted.
 - **Events named after what they carry**: mail fires `on-message-*`, an addressbook `on-card-*`, a calendar `on-event-*` and `on-task-*`, an untyped collection `on-item-*`, and anything with flags `on-flag-*`, once per flag. Flag names are the same on every backend, so a filter written once fires everywhere.
 - **Hooks under their backend**: a desktop notification, a shell command, or both, with the event's fields as placeholders. Each backend takes only the events it can report, and each hook only the variables its event carries, so a hook that could never fire is refused when the file is read.
 - **Every account at once**, one thread each, reopening a dropped watch with a capped backoff and reading the credential again each time.
-- **Shared configuration** with `himalaya` and `himalaya-tui`, secrets read from your own password manager.
+- **Familiar configuration**: the account block keeps the shape `himalaya` and `himalaya-tui` read, and secrets come from your own password manager.
 ## Coverage
 
 | Spec      | What is covered |
@@ -104,9 +104,9 @@ nix run
 
 Copy the annotated [config.sample.toml](./config.sample.toml), keep one backend and the hooks you want, delete the rest. It documents every key.
 
-A configuration is read from `$XDG_CONFIG_HOME/carillon/config.toml`, `$HOME/.config/carillon/config.toml` or `$HOME/.carillonrc`, overridden by `-c <PATH>` or `CARILLON_CONFIG=<PATH>`. Those are the paths [himalaya](https://github.com/pimalaya/himalaya) and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) read too, so one file backs all three.
+A configuration is read from `$XDG_CONFIG_HOME/carillon/config.toml`, `$HOME/.config/carillon/config.toml` or `$HOME/.carillonrc`, overridden by `-c <PATH>` or `CARILLON_CONFIG=<PATH>`. Those are the paths [himalaya](https://github.com/pimalaya/himalaya) and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) read too, and an account block is written the same way, but one file does not load in all three: every backend block is strict on each side and carries keys the others do not know.
 
-An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `dav`), the `collection` it watches, and under that backend both how it watches (`watch`) and what it fires (`hook`). Declaring several backends is allowed; `-b/--backend` then picks one.
+An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `dav`) carrying everything that backend needs: the collection it watches under its own name, how it watches (`watch`), and what it fires (`hook`). Declaring several backends is allowed; `-b/--backend` then picks one.
 
 ## Usage
 

@@ -81,7 +81,7 @@ impl CheckCommand {
             report.backends.push(check_dav(
                 "caldav",
                 caldav_config.server(),
-                &account_config.collection,
+                &caldav_config.calendar,
             ));
         }
 
@@ -92,7 +92,7 @@ impl CheckCommand {
             report.backends.push(check_dav(
                 "carddav",
                 carddav_config.server(),
-                &account_config.collection,
+                &carddav_config.addressbook,
             ));
         }
 
@@ -103,7 +103,7 @@ impl CheckCommand {
             report.backends.push(check_dav(
                 "dav",
                 dav_config.server(),
-                &account_config.collection,
+                &dav_config.collection,
             ));
         }
 

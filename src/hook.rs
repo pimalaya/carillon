@@ -24,10 +24,10 @@ use crate::{
     event::{ItemSummary, WatchEvent},
 };
 
-/// The variables every hook can fill, whatever reported the change.
-const COMMON_VARS: &[&str] = &["id", "collection"];
+/// The one variable every backend means the same way.
+const ID_VAR: &str = "id";
 /// What a flag hook adds: the one flag its firing is about.
-const FLAG_VARS: &[&str] = &["flag"];
+const FLAG_VAR: &str = "flag";
 /// What an arrival adds, where the backend can read one. Nothing else
 /// resolves an envelope, so nothing else may name these.
 const ENVELOPE_VARS: &[&str] = &[
@@ -41,6 +41,18 @@ const ENVELOPE_VARS: &[&str] = &[
     "recipient_address",
 ];
 
+/// The collection a watch is on: what its backend calls it, and which
+/// one it is.
+///
+/// The name travels with the value because it is the backend's word,
+/// not carillon's: mail watches a `mailbox`, CalDAV a `calendar`,
+/// CardDAV an `addressbook`, and only a collection with no domain to
+/// name is a `collection`.
+pub struct HookCollection<'a> {
+    pub name: &'static str,
+    pub value: &'a str,
+}
+
 /// What a hook's notification may name, which is what its event
 /// carries and no more.
 ///
@@ -49,20 +61,54 @@ const ENVELOPE_VARS: &[&str] = &[
 /// runner seeds it empty so a name that is legitimate but absent from
 /// one item expands to nothing rather than dropping the notification.
 #[derive(Clone, Copy)]
-pub struct Vocabulary(&'static [&'static [&'static str]]);
-
-/// An item hook on a backend that resolves an arrival's envelope.
-pub const RESOLVED_ITEM: Vocabulary = Vocabulary(&[COMMON_VARS, ENVELOPE_VARS]);
-/// An item hook with nothing to resolve: a removal, an edit, or an
-/// arrival on a backend that reads no envelope.
-pub const ITEM: Vocabulary = Vocabulary(&[COMMON_VARS]);
-/// A flag hook.
-pub const FLAG: Vocabulary = Vocabulary(&[COMMON_VARS, FLAG_VARS]);
+pub struct Vocabulary {
+    /// What this backend calls the collection it watches.
+    collection: &'static str,
+    /// Whether an envelope is resolved for this hook, which only the
+    /// IMAP arrival is.
+    envelope: bool,
+    /// Whether this hook is about one flag.
+    flag: bool,
+}
 
 impl Vocabulary {
+    /// An item hook with nothing to resolve: a removal, an edit, or an
+    /// arrival on a backend that reads no envelope.
+    pub const fn item(collection: &'static str) -> Self {
+        Self {
+            collection,
+            envelope: false,
+            flag: false,
+        }
+    }
+
+    /// An item hook on a backend that resolves an arrival's envelope.
+    pub const fn resolved(collection: &'static str) -> Self {
+        Self {
+            collection,
+            envelope: true,
+            flag: false,
+        }
+    }
+
+    /// A flag hook.
+    pub const fn flag(collection: &'static str) -> Self {
+        Self {
+            collection,
+            envelope: false,
+            flag: true,
+        }
+    }
+
     /// The names this vocabulary holds.
     fn names(&self) -> impl Iterator<Item = &'static str> {
-        self.0.iter().copied().flatten().copied()
+        let envelope: &[&str] = if self.envelope { ENVELOPE_VARS } else { &[] };
+        let flag = self.flag.then_some(FLAG_VAR);
+
+        [ID_VAR, self.collection]
+            .into_iter()
+            .chain(envelope.iter().copied())
+            .chain(flag)
     }
 
     /// The names, rendered the way a template writes them, for an
@@ -108,7 +154,12 @@ pub fn validate(notify: Option<&NotifyConfig>, vocabulary: Vocabulary, hook: &st
 
 /// Fires `hook` for `event`, with `summary` filled in when an arrival
 /// was resolved.
-pub fn run(hook: Hook<'_>, event: &WatchEvent, collection: &str, summary: Option<&ItemSummary>) {
+pub fn run(
+    hook: Hook<'_>,
+    event: &WatchEvent,
+    collection: HookCollection<'_>,
+    summary: Option<&ItemSummary>,
+) {
     trace!("dispatch event: {event:?}");
 
     match hook {
@@ -132,16 +183,16 @@ fn run_item_hook(hook: &ItemHook, vars: BTreeMap<&'static str, String>) {
 
 /// Fires a flag-level hook for the one flag that moved, honouring its
 /// optional filter.
-fn run_flag_hook(hook: &FlagHook, id: &str, collection: &str, flag: &str) {
+fn run_flag_hook(hook: &FlagHook, id: &str, collection: HookCollection<'_>, flag: &str) {
     if !hook.flags.is_empty() && !matches_filter(hook, flag) {
         trace!("flag hook skipped: `{flag}` is not in the filter");
         return;
     }
 
-    let mut vars = seeded(FLAG);
-    vars.insert("id", id.to_string());
-    vars.insert("collection", collection.to_string());
-    vars.insert("flag", flag.to_string());
+    let mut vars = seeded(Vocabulary::flag(collection.name));
+    vars.insert(ID_VAR, id.to_string());
+    vars.insert(collection.name, collection.value.to_string());
+    vars.insert(FLAG_VAR, flag.to_string());
 
     fire(hook.notify.as_ref(), hook.cmd.as_ref(), &vars);
 }
@@ -154,12 +205,12 @@ fn run_flag_hook(hook: &FlagHook, id: &str, collection: &str, flag: &str) {
 /// notification rather than take the whole notification down.
 fn item_vars(
     id: &str,
-    collection: &str,
+    collection: HookCollection<'_>,
     summary: Option<&ItemSummary>,
 ) -> BTreeMap<&'static str, String> {
-    let mut vars = seeded(RESOLVED_ITEM);
-    vars.insert("id", id.to_string());
-    vars.insert("collection", collection.to_string());
+    let mut vars = seeded(Vocabulary::resolved(collection.name));
+    vars.insert(ID_VAR, id.to_string());
+    vars.insert(collection.name, collection.value.to_string());
 
     let Some(summary) = summary else {
         return vars;
@@ -295,6 +346,13 @@ fn matches_filter(hook: &FlagHook, flag: &str) -> bool {
 mod tests {
     use crate::{event::ItemSummary, hook::*};
 
+    fn mailbox() -> HookCollection<'static> {
+        HookCollection {
+            name: "mailbox",
+            value: "INBOX",
+        }
+    }
+
     fn notified(body: &str) -> NotifyConfig {
         NotifyConfig {
             summary: String::from("something happened"),
@@ -308,27 +366,44 @@ mod tests {
     #[test]
     fn an_envelope_variable_is_refused_where_nothing_resolves_one() {
         let notify = notified("$subject");
-        let err = validate(Some(&notify), ITEM, "imap.hook.on-message-removed")
-            .expect_err("an envelope name is refused");
+        let err = validate(
+            Some(&notify),
+            Vocabulary::item("mailbox"),
+            "imap.hook.on-message-removed",
+        )
+        .expect_err("an envelope name is refused");
         let err = format!("{err:#}");
 
         assert!(err.contains("on-message-removed.notify.body"), "got {err}");
         assert!(err.contains("$subject"), "got {err}");
-        assert!(err.contains("$id, $collection"), "got {err}");
+        assert!(err.contains("$id, $mailbox"), "got {err}");
     }
 
     #[test]
     fn the_variables_an_event_carries_are_accepted() {
-        let notify = notified("$subject from $sender in $collection");
-        validate(Some(&notify), RESOLVED_ITEM, "imap.hook.on-message-added")
-            .expect("an arrival resolves an envelope");
+        let notify = notified("$subject from $sender in $mailbox");
+        validate(
+            Some(&notify),
+            Vocabulary::resolved("mailbox"),
+            "imap.hook.on-message-added",
+        )
+        .expect("an arrival resolves an envelope");
 
         let notify = notified("$flag on $id");
-        validate(Some(&notify), FLAG, "imap.hook.on-flag-added").expect("a flag hook has its flag");
+        validate(
+            Some(&notify),
+            Vocabulary::flag("mailbox"),
+            "imap.hook.on-flag-added",
+        )
+        .expect("a flag hook has its flag");
 
         let notify = notified("$flag");
-        validate(Some(&notify), ITEM, "dav.hook.on-item-added")
-            .expect_err("an item hook has no flag");
+        validate(
+            Some(&notify),
+            Vocabulary::item("collection"),
+            "dav.hook.on-item-added",
+        )
+        .expect_err("an item hook has no flag");
     }
 
     /// A default is how a template says it can do without the value,
@@ -336,14 +411,19 @@ mod tests {
     #[test]
     fn a_default_stands_in_for_any_name() {
         let notify = notified("${subject:no subject}");
-        validate(Some(&notify), ITEM, "dav.hook.on-item-removed").expect("a default is enough");
+        validate(
+            Some(&notify),
+            Vocabulary::item("collection"),
+            "dav.hook.on-item-removed",
+        )
+        .expect("a default is enough");
     }
 
     /// The other half: a name the hook may use, absent from this one
     /// item, leaves a gap rather than taking the notification down.
     #[test]
     fn an_absent_variable_expands_to_nothing() {
-        let vars = item_vars("42", "INBOX", None);
+        let vars = item_vars("42", mailbox(), None);
         let expanded = subst::substitute("$subject from $sender", &vars).expect("expands");
         assert_eq!(" from ", expanded);
 
@@ -351,7 +431,7 @@ mod tests {
             from_addr: Some(String::from("alice@example.org")),
             ..Default::default()
         };
-        let vars = item_vars("42", "INBOX", Some(&summary));
+        let vars = item_vars("42", mailbox(), Some(&summary));
         let expanded = subst::substitute("$subject from $sender", &vars).expect("expands");
         assert_eq!(" from alice@example.org", expanded);
     }

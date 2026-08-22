@@ -55,13 +55,12 @@ pub fn run(
     backend: Backend,
     shutdown: Arc<AtomicBool>,
 ) -> Result<()> {
-    let collection = config.collection.clone();
     let mut backoff = INITIAL_BACKOFF;
 
     while !shutdown.load(Ordering::SeqCst) {
         let started = Instant::now();
 
-        let outcome = watch_once(account, &config, &collection, backend, &shutdown);
+        let outcome = watch_once(account, &config, backend, &shutdown);
 
         // NOTE: neither an asked-for ending nor a failure raced on the
         // way out is news, and nothing is reopened either way.
@@ -103,29 +102,32 @@ pub fn run(
 fn watch_once(
     account: &str,
     config: &AccountConfig,
-    collection: &str,
     backend: Backend,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<()> {
     #[cfg(feature = "imap")]
     if backend.allows_imap() {
         if let Some(imap_config) = &config.imap {
-            let mut resolver = Resolver::new(imap_config, collection, shutdown);
+            let collection = imap_config.collection();
+            let mut resolver = Resolver::new(imap_config, collection.value, shutdown);
             let mut on_event = |event: WatchEvent| {
                 let Some(hook) = imap_config.hook.get(&event) else {
                     return;
                 };
 
                 let summary = resolve_added(account, &event, &mut resolver);
-                hook::run(hook, &event, collection, summary.as_ref());
+                hook::run(hook, &event, imap_config.collection(), summary.as_ref());
             };
 
             return match &imap_config.watch {
                 Some(ImapWatchConfig::Poll(poll)) => {
-                    info!("[{account}] watching `{collection}` over imap, polling");
+                    info!(
+                        "[{account}] watching `{}` over imap, polling",
+                        collection.value
+                    );
                     imap::watch_poll(
                         imap_config,
-                        collection,
+                        collection.value,
                         poll.interval(),
                         shutdown,
                         &mut on_event,
@@ -137,10 +139,13 @@ fn watch_once(
                         _ => IdleWatchConfig::default(),
                     };
 
-                    info!("[{account}] watching `{collection}` over imap, idling");
+                    info!(
+                        "[{account}] watching `{}` over imap, idling",
+                        collection.value
+                    );
                     imap::watch_idle(
                         imap_config,
-                        collection,
+                        collection.value,
                         idle.timeout(),
                         shutdown,
                         &mut on_event,
@@ -157,18 +162,22 @@ fn watch_once(
     #[cfg(feature = "jmap")]
     if backend.allows_jmap() {
         if let Some(jmap_config) = &config.jmap {
+            let collection = jmap_config.collection();
             let mut on_event = |event: WatchEvent| {
                 if let Some(hook) = jmap_config.hook.get(&event) {
-                    hook::run(hook, &event, collection, None);
+                    hook::run(hook, &event, jmap_config.collection(), None);
                 }
             };
 
             return match &jmap_config.watch {
                 Some(JmapWatchConfig::Poll(poll)) => {
-                    info!("[{account}] watching `{collection}` over jmap, polling");
+                    info!(
+                        "[{account}] watching `{}` over jmap, polling",
+                        collection.value
+                    );
                     jmap::watch_poll(
                         jmap_config,
-                        collection,
+                        collection.value,
                         poll.interval(),
                         shutdown,
                         &mut on_event,
@@ -179,8 +188,11 @@ fn watch_once(
                         Some(JmapWatchConfig::Push(push)) => push.ping,
                         _ => PushWatchConfig::default().ping,
                     };
-                    info!("[{account}] watching `{collection}` over jmap, pushed");
-                    jmap::watch_push(jmap_config, collection, ping, shutdown, &mut on_event)
+                    info!(
+                        "[{account}] watching `{}` over jmap, pushed",
+                        collection.value
+                    );
+                    jmap::watch_push(jmap_config, collection.value, ping, shutdown, &mut on_event)
                 }
             };
         }
@@ -193,20 +205,24 @@ fn watch_once(
     #[cfg(feature = "maildir")]
     if backend.allows_maildir() {
         if let Some(maildir_config) = &config.maildir {
+            let collection = maildir_config.collection();
             let MaildirWatchConfig::Poll(poll) = maildir_config
                 .watch
                 .clone()
                 .unwrap_or(MaildirWatchConfig::Poll(Default::default()));
 
-            info!("[{account}] watching `{collection}` over maildir, polling");
+            info!(
+                "[{account}] watching `{}` over maildir, polling",
+                collection.value
+            );
             let mut on_event = |event: WatchEvent| {
                 if let Some(hook) = maildir_config.hook.get(&event) {
-                    hook::run(hook, &event, collection, None);
+                    hook::run(hook, &event, maildir_config.collection(), None);
                 }
             };
             return maildir::watch(
                 maildir_config,
-                collection,
+                collection.value,
                 poll.interval(),
                 shutdown,
                 &mut on_event,
@@ -221,16 +237,20 @@ fn watch_once(
     #[cfg(feature = "dav")]
     if backend.allows_caldav() {
         if let Some(caldav_config) = &config.caldav {
-            info!("[{account}] watching `{collection}` over caldav, polling");
+            let collection = caldav_config.collection();
+            info!(
+                "[{account}] watching `{}` over caldav, polling",
+                collection.value
+            );
             let mut on_event = |event: WatchEvent| {
                 if let Some(hook) = caldav_config.hook.get(&event) {
-                    hook::run(hook, &event, collection, None);
+                    hook::run(hook, &event, caldav_config.collection(), None);
                 }
             };
             return dav::watch(
                 caldav_config.server(),
                 DavKind::Calendar(caldav_config.hook.domains()),
-                collection,
+                collection.value,
                 dav_interval(&caldav_config.watch),
                 shutdown,
                 &mut on_event,
@@ -245,16 +265,20 @@ fn watch_once(
     #[cfg(feature = "dav")]
     if backend.allows_carddav() {
         if let Some(carddav_config) = &config.carddav {
-            info!("[{account}] watching `{collection}` over carddav, polling");
+            let collection = carddav_config.collection();
+            info!(
+                "[{account}] watching `{}` over carddav, polling",
+                collection.value
+            );
             let mut on_event = |event: WatchEvent| {
                 if let Some(hook) = carddav_config.hook.get(&event) {
-                    hook::run(hook, &event, collection, None);
+                    hook::run(hook, &event, carddav_config.collection(), None);
                 }
             };
             return dav::watch(
                 carddav_config.server(),
                 DavKind::Addressbook,
-                collection,
+                collection.value,
                 dav_interval(&carddav_config.watch),
                 shutdown,
                 &mut on_event,
@@ -269,16 +293,20 @@ fn watch_once(
     #[cfg(feature = "dav")]
     if backend.allows_dav() {
         if let Some(dav_config) = &config.dav {
-            info!("[{account}] watching `{collection}` over dav, polling");
+            let collection = dav_config.collection();
+            info!(
+                "[{account}] watching `{}` over dav, polling",
+                collection.value
+            );
             let mut on_event = |event: WatchEvent| {
                 if let Some(hook) = dav_config.hook.get(&event) {
-                    hook::run(hook, &event, collection, None);
+                    hook::run(hook, &event, dav_config.collection(), None);
                 }
             };
             return dav::watch(
                 dav_config.server(),
                 DavKind::Plain,
-                collection,
+                collection.value,
                 dav_interval(&dav_config.watch),
                 shutdown,
                 &mut on_event,

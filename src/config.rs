@@ -1,17 +1,18 @@
 //! Carillon configuration.
 //!
-//! The `[accounts.<name>]` block mirrors the schema used by
+//! The `[accounts.<name>]` block keeps the shape used by
 //! [himalaya CLI v2] and [himalaya TUI]: each backend lives under its
-//! own protocol key (`imap`, `jmap`, `maildir`); declaring more than
-//! one is allowed and the runtime picks the active one via
-//! `-b/--backend`. Carillon-only fields (`collection`, and under each
-//! backend its `watch` and `hook` tables) coexist with the shared keys
-//! and are silently ignored by the other binaries.
+//! own protocol key, declaring more than one is allowed, and the
+//! runtime picks the active one via `-b/--backend`. A whole file is
+//! not portable between the three binaries, every backend block being
+//! `deny_unknown_fields` on each side and carrying keys the others do
+//! not know.
 //!
-//! The hooks belong to their backend rather than to the account,
-//! since what a backend reports and what a hook can template against
-//! are both the backend's. Each table declares only the events its
-//! backend has, so a hook it could never fire is refused when the
+//! Everything a backend needs lives under that backend: the collection
+//! it watches, under the name its own domain uses, how it watches, and
+//! the hooks it fires. What it reports and what a hook may template
+//! against are both the backend's, so each table declares only its own
+//! events and its own variables, and anything else is refused when the
 //! file is read.
 //!
 //! [himalaya CLI v2]: https://github.com/pimalaya/himalaya
@@ -49,7 +50,10 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "dav")]
 use crate::event::WatchDomain;
-use crate::{event::WatchEvent, hook};
+use crate::{
+    event::WatchEvent,
+    hook::{self, HookCollection, Vocabulary},
+};
 
 /// Root configuration: a map of named accounts.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -107,25 +111,16 @@ impl Config {
 
 /// Per-account configuration.
 ///
-/// `deny_unknown_fields` is intentionally omitted so the same TOML file
-/// can be shared with `himalaya` CLI v2 and `himalaya-tui`. Their
-/// extra fields (`smtp`, `m2dir`, `display-name`, `signature`, …)
-/// coexist silently with the carillon-only ones (`collection`, and the
-/// `watch` and `hook` tables under each backend).
+/// `deny_unknown_fields` is intentionally omitted here so an account
+/// written for `himalaya` CLI v2 or `himalaya-tui` is still recognised:
+/// their account-level fields (`smtp`, `m2dir`, `display-name`,
+/// `signature`, …) coexist silently. The backend blocks are strict, so
+/// the tolerance stops at this level.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct AccountConfig {
     #[serde(default)]
     pub default: bool,
-
-    /// What this account watches: an IMAP mailbox, a JMAP mailbox
-    /// name, a Maildir under the backend `root` (`.` naming the root
-    /// itself), a WebDAV collection path under the backend `server`.
-    ///
-    /// One account watches one collection. Watching a second one is a
-    /// second account, which is also how it gets its own hooks.
-    #[serde(alias = "mailbox")]
-    pub collection: String,
 
     #[cfg(feature = "imap")]
     #[serde(default)]
@@ -192,6 +187,11 @@ impl AccountConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ImapConfig {
+    /// The mailbox this account watches, and the only one it
+    /// watches: watching a second is a second account, which is also
+    /// how it gets its own hooks.
+    pub mailbox: String,
+
     /// IMAP server address. Either a bare authority
     /// (`imap.example.org[:port]`, treated as `imaps://<authority>`
     /// by default) or a full URL with `imap://` (cleartext, with
@@ -309,6 +309,11 @@ fn canned_imap_id_value(key: &str) -> Option<&'static str> {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct JmapConfig {
+    /// The mailbox this account watches, matched by name and
+    /// case-insensitively, falling back to the special-use role for
+    /// "INBOX".
+    pub mailbox: String,
+
     /// JMAP server address. Either a bare authority (`fastmail.com`,
     /// `mail.example.org:8080`) for automatic discovery via
     /// `GET /.well-known/jmap`, or a full URL pointing directly at
@@ -352,6 +357,11 @@ pub enum JmapAuthConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct MaildirConfig {
+    /// The mailbox this account watches, resolved under `root`
+    /// through io-maildir's store; `.` and "INBOX" both name the
+    /// root itself.
+    pub mailbox: String,
+
     #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_path")]
     pub root: PathBuf,
 
@@ -530,6 +540,93 @@ impl SaslConfig {
     }
 }
 
+// NOTE: each backend names the collection it watches in its own
+// domain's word, and a hook templates against that same word, so the
+// name is declared once here and read by both.
+
+#[cfg(feature = "imap")]
+impl ImapConfig {
+    /// What IMAP calls the collection it watches.
+    pub const COLLECTION: &'static str = "mailbox";
+
+    /// The collection this backend watches, under its own name.
+    pub fn collection(&self) -> HookCollection<'_> {
+        HookCollection {
+            name: Self::COLLECTION,
+            value: &self.mailbox,
+        }
+    }
+}
+
+#[cfg(feature = "jmap")]
+impl JmapConfig {
+    /// What JMAP calls the collection it watches.
+    pub const COLLECTION: &'static str = "mailbox";
+
+    /// The collection this backend watches, under its own name.
+    pub fn collection(&self) -> HookCollection<'_> {
+        HookCollection {
+            name: Self::COLLECTION,
+            value: &self.mailbox,
+        }
+    }
+}
+
+#[cfg(feature = "maildir")]
+impl MaildirConfig {
+    /// What Maildir calls the collection it watches.
+    pub const COLLECTION: &'static str = "mailbox";
+
+    /// The collection this backend watches, under its own name.
+    pub fn collection(&self) -> HookCollection<'_> {
+        HookCollection {
+            name: Self::COLLECTION,
+            value: &self.mailbox,
+        }
+    }
+}
+
+#[cfg(feature = "dav")]
+impl CaldavConfig {
+    /// What CalDAV calls the collection it watches.
+    pub const COLLECTION: &'static str = "calendar";
+
+    /// The collection this backend watches, under its own name.
+    pub fn collection(&self) -> HookCollection<'_> {
+        HookCollection {
+            name: Self::COLLECTION,
+            value: &self.calendar,
+        }
+    }
+}
+
+#[cfg(feature = "dav")]
+impl CarddavConfig {
+    /// What CardDAV calls the collection it watches.
+    pub const COLLECTION: &'static str = "addressbook";
+
+    /// The collection this backend watches, under its own name.
+    pub fn collection(&self) -> HookCollection<'_> {
+        HookCollection {
+            name: Self::COLLECTION,
+            value: &self.addressbook,
+        }
+    }
+}
+
+#[cfg(feature = "dav")]
+impl DavConfig {
+    /// What a collection with no domain to name is called.
+    pub const COLLECTION: &'static str = "collection";
+
+    /// The collection this backend watches, under its own name.
+    pub fn collection(&self) -> HookCollection<'_> {
+        HookCollection {
+            name: Self::COLLECTION,
+            value: &self.collection,
+        }
+    }
+}
 // ---- Hooks --------------------------------------------------------
 
 // NOTE: the hooks live under their backend, and each backend declares
@@ -643,6 +740,9 @@ pub enum Hook<'a> {
 
 #[cfg(feature = "imap")]
 impl ImapHookConfig {
+    /// What the backend this table hangs on calls its collection.
+    const COLLECTION: &'static str = ImapConfig::COLLECTION;
+
     /// The hook `event` calls for, when one is configured.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
         match event {
@@ -657,6 +757,9 @@ impl ImapHookConfig {
 
 #[cfg(feature = "jmap")]
 impl JmapHookConfig {
+    /// What the backend this table hangs on calls its collection.
+    const COLLECTION: &'static str = JmapConfig::COLLECTION;
+
     /// The hook `event` calls for, when one is configured.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
         match event {
@@ -671,6 +774,9 @@ impl JmapHookConfig {
 
 #[cfg(feature = "maildir")]
 impl MaildirHookConfig {
+    /// What the backend this table hangs on calls its collection.
+    const COLLECTION: &'static str = MaildirConfig::COLLECTION;
+
     /// The hook `event` calls for, when one is configured.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
         match event {
@@ -783,26 +889,26 @@ impl ImapHookConfig {
             self.on_message_added
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            hook::RESOLVED_ITEM,
+            Vocabulary::resolved(Self::COLLECTION),
             "imap.hook.on-message-added",
         )?;
         hook::validate(
             self.on_message_removed
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            hook::ITEM,
+            Vocabulary::item(Self::COLLECTION),
             "imap.hook.on-message-removed",
         )?;
         hook::validate(
             self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
-            hook::FLAG,
+            Vocabulary::flag(Self::COLLECTION),
             "imap.hook.on-flag-added",
         )?;
         hook::validate(
             self.on_flag_removed
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            hook::FLAG,
+            Vocabulary::flag(Self::COLLECTION),
             "imap.hook.on-flag-removed",
         )
     }
@@ -816,26 +922,26 @@ impl JmapHookConfig {
             self.on_message_added
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            hook::ITEM,
+            Vocabulary::item(Self::COLLECTION),
             "jmap.hook.on-message-added",
         )?;
         hook::validate(
             self.on_message_removed
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            hook::ITEM,
+            Vocabulary::item(Self::COLLECTION),
             "jmap.hook.on-message-removed",
         )?;
         hook::validate(
             self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
-            hook::FLAG,
+            Vocabulary::flag(Self::COLLECTION),
             "jmap.hook.on-flag-added",
         )?;
         hook::validate(
             self.on_flag_removed
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            hook::FLAG,
+            Vocabulary::flag(Self::COLLECTION),
             "jmap.hook.on-flag-removed",
         )
     }
@@ -849,26 +955,26 @@ impl MaildirHookConfig {
             self.on_message_added
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            hook::ITEM,
+            Vocabulary::item(Self::COLLECTION),
             "maildir.hook.on-message-added",
         )?;
         hook::validate(
             self.on_message_removed
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            hook::ITEM,
+            Vocabulary::item(Self::COLLECTION),
             "maildir.hook.on-message-removed",
         )?;
         hook::validate(
             self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
-            hook::FLAG,
+            Vocabulary::flag(Self::COLLECTION),
             "maildir.hook.on-flag-added",
         )?;
         hook::validate(
             self.on_flag_removed
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            hook::FLAG,
+            Vocabulary::flag(Self::COLLECTION),
             "maildir.hook.on-flag-removed",
         )
     }
@@ -887,7 +993,11 @@ impl CaldavHookConfig {
             (&self.on_task_changed, "on-task-changed"),
         ] {
             let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
-            hook::validate(notify, hook::ITEM, &format!("caldav.hook.{name}"))?;
+            hook::validate(
+                notify,
+                Vocabulary::item(CaldavConfig::COLLECTION),
+                &format!("caldav.hook.{name}"),
+            )?;
         }
 
         Ok(())
@@ -904,7 +1014,11 @@ impl CarddavHookConfig {
             (&self.on_card_changed, "on-card-changed"),
         ] {
             let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
-            hook::validate(notify, hook::ITEM, &format!("carddav.hook.{name}"))?;
+            hook::validate(
+                notify,
+                Vocabulary::item(CarddavConfig::COLLECTION),
+                &format!("carddav.hook.{name}"),
+            )?;
         }
 
         Ok(())
@@ -921,7 +1035,11 @@ impl DavHookConfig {
             (&self.on_item_changed, "on-item-changed"),
         ] {
             let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
-            hook::validate(notify, hook::ITEM, &format!("dav.hook.{name}"))?;
+            hook::validate(
+                notify,
+                Vocabulary::item(DavConfig::COLLECTION),
+                &format!("dav.hook.{name}"),
+            )?;
         }
 
         Ok(())
@@ -1003,8 +1121,12 @@ impl Clone for HookCmd {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CaldavConfig {
-    /// The DAV server URL, `http://` or `https://`. What to watch
-    /// under it is the account's `collection`, read as a path.
+    /// The calendar this account watches, read as a path under
+    /// `server`, or as an absolute path when it starts with a slash.
+    pub calendar: String,
+
+    /// The DAV server URL, `http://` or `https://`, naming the DAV
+    /// root the calendar hangs under.
     pub server: String,
     #[serde(default)]
     pub tls: TlsConfig,
@@ -1025,8 +1147,12 @@ pub struct CaldavConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CarddavConfig {
-    /// The DAV server URL, `http://` or `https://`. What to watch
-    /// under it is the account's `collection`, read as a path.
+    /// The addressbook this account watches, read as a path under
+    /// `server`, or as an absolute path when it starts with a slash.
+    pub addressbook: String,
+
+    /// The DAV server URL, `http://` or `https://`, naming the DAV
+    /// root the addressbook hangs under.
     pub server: String,
     #[serde(default)]
     pub tls: TlsConfig,
@@ -1048,8 +1174,12 @@ pub struct CarddavConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DavConfig {
-    /// The DAV server URL, `http://` or `https://`. What to watch
-    /// under it is the account's `collection`, read as a path.
+    /// The collection this account watches, read as a path under
+    /// `server`, or as an absolute path when it starts with a slash.
+    pub collection: String,
+
+    /// The DAV server URL, `http://` or `https://`, naming the DAV
+    /// root the collection hangs under.
     pub server: String,
     #[serde(default)]
     pub tls: TlsConfig,

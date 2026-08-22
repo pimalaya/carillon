@@ -11,28 +11,16 @@
 # top of it.
 #
 # There is no wizard: copy this file, keep one backend and the hooks you want,
-# then delete the rest. The `[accounts.<name>]` block is the schema `himalaya`
-# CLI v2 and `himalaya-tui` read, so one file backs all three binaries; the
-# carillon-only fields (`collection`, and the `watch` and `hook` tables under
-# each backend) are ignored by them.
+# then delete the rest. The `[accounts.<name>]` block keeps the shape `himalaya`
+# CLI v2 and `himalaya-tui` read, so an account is recognisable across the three;
+# a whole file is not portable between them, every backend block being strict on
+# each side and carrying keys the others do not know.
 # ================================================================================
 
 [accounts.example]
 
 # Use this account when `-a/--account` is not passed.
 default = true
-
-# What this account watches, and the only thing it watches: one account is one
-# backend is one collection. Required. Watching a second collection is a second
-# account, which is also how it gets its own hooks. `mailbox` still reads as the
-# former name of this key.
-#
-# IMAP takes the mailbox name. JMAP matches it by name, case-insensitively,
-# falling back to the special-use role for "INBOX". Maildir resolves it under
-# the backend root, "." naming the root itself. CalDAV, CardDAV and WebDAV read
-# it as a path under their `server`, or as an absolute path when it starts with
-# a slash.
-collection = "INBOX"
 
 
 # --------------------------------------------------------------------------------
@@ -43,7 +31,13 @@ collection = "INBOX"
 # `dav` blocks below. With more than one, `-b/--backend` selects the active one;
 # `-b auto`, the default, takes the first configured in that order.
 #
-# Each block carries the hooks that backend fires, under `<backend>.hook`
+# Each block carries the one collection it watches, under the name its own
+# domain uses and required: `imap.mailbox`, `jmap.mailbox`, `maildir.mailbox`,
+# `caldav.calendar`, `carddav.addressbook`, `dav.collection`. One account is one
+# backend is one collection; watching a second is a second account, which is also
+# how it gets its own hooks.
+#
+# Each block also carries the hooks that backend fires, under `<backend>.hook`
 # (`hooks` also reads). A hook is named after what its backend holds, so mail
 # fires `on-message-*`, an addressbook `on-card-*`, a calendar `on-event-*` and
 # `on-task-*`, and an untyped collection `on-item-*`. A backend takes only its
@@ -55,12 +49,14 @@ collection = "INBOX"
 # Windows) or a [program, args...] list spawned directly. Either way the
 # placeholders reach it as environment variables.
 #
-# Always available: $id and $collection. $id is the backend's own id: an IMAP
-# UID, a JMAP Email id, a Maildir file name, a WebDAV href. A flag hook adds
-# $flag, naming the one flag that moved. The envelope variables ($subject,
-# $date, $sender, $sender_name, $sender_address, $recipient, $recipient_name,
-# $recipient_address) are resolved on a second connection, over IMAP only, and
-# only for on-message-added, so they belong to that hook alone.
+# A hook templates against $id and against the collection under the same name
+# its backend configures it: $mailbox for mail, $calendar, $addressbook,
+# $collection. $id is the backend's own id: an IMAP UID, a JMAP Email id, a
+# Maildir file name, a WebDAV href. A flag hook adds $flag, naming the one flag
+# that moved. The envelope variables ($subject, $date, $sender, $sender_name,
+# $sender_address, $recipient, $recipient_name, $recipient_address) are resolved
+# on a second connection, over IMAP only, and only for on-message-added, so they
+# belong to that hook alone.
 #
 # A notification naming anything else is refused when this file is read, since
 # an expunged message has no envelope to read and a template that asks for one
@@ -71,7 +67,14 @@ collection = "INBOX"
 # Every secret below is either `raw = "..."` or `command = "..."`, the command
 # being a string handed to the platform shell or a [program, args...] list, and
 # its standard output the value.
+# Every secret below is either `raw = "..."` or `command = "..."`, the command
+# being a string handed to the platform shell or a [program, args...] list, and
+# its standard output the value.
+
 # ---- IMAP: an idle connection (RFC 2177) ---------------------------------------
+
+# The mailbox this account watches. Required.
+imap.mailbox = "INBOX"
 
 # Server address: a bare authority (`imap.example.org[:port]`, read as
 # `imaps://<authority>`), or a full `imap://` (cleartext, optionally upgraded
@@ -128,7 +131,7 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 # edit. A flag hook fires once for each flag that moved, so `$flag` always names
 # the flag it fired for; `flags = [...]` narrows it to the flags it lists, with
 # or without the leading `\` or `$` and whatever the case.
-imap.hook.on-message-added.notify.summary = "New mail from $sender"
+imap.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
 imap.hook.on-message-added.notify.body = "$subject"
 imap.hook.on-message-added.cmd = 'echo "$id arrived" >> ~/.local/state/carillon.log'
 #imap.hook.on-message-removed.notify.summary = "Mail ${subject:with no subject} deleted"
@@ -137,6 +140,10 @@ imap.hook.on-flag-added.flags = ["Seen"]
 imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #imap.hook.on-flag-removed.notify.summary = "$flag cleared on $id"
 # ---- JMAP: a changes poll (RFC 8621) -------------------------------------------
+
+# The mailbox this account watches, matched by name and case-insensitively,
+# falling back to the special-use role for "INBOX". Required.
+#jmap.mailbox = "INBOX"
 
 # Server address: a bare authority, discovered through `/.well-known/jmap`, or
 # a full URL naming the session endpoint.
@@ -166,6 +173,10 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #jmap.hook.on-flag-removed.cmd = "true"
 # ---- Maildir: a listing poll ---------------------------------------------------
 
+# The mailbox this account watches, resolved under `root` through io-maildir's
+# store; "." and "INBOX" both name the root itself. Required.
+#maildir.mailbox = "."
+
 # Root of the Maildir tree, subfolders being real nested directories, the
 # layout himalaya uses. Watch the root itself with collection = "." or "INBOX",
 # and a subfolder by its path, e.g. collection = "Archive".
@@ -183,8 +194,11 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 # ---- CalDAV: a sync-collection poll over a calendar (RFC 6578) ------------------
 
-# The DAV server URL. What to watch under it is the account's `collection`,
-# read as a path: `collection = "calendars/alice/work/"` here.
+# The calendar this account watches, read as a path under `caldav.server`, or as
+# an absolute path when it starts with a slash. Required.
+#caldav.calendar = "calendars/alice/work/"
+
+# The DAV server URL, naming the root the calendar hangs under.
 #caldav.server = "https://dav.example.org/"
 
 # Omit for a calendar readable without authentication.
@@ -212,6 +226,9 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 # ---- CardDAV: the same poll over an addressbook --------------------------------
 
+# The addressbook this account watches, read the same way. Required.
+#carddav.addressbook = "addressbooks/alice/default/"
+
 #carddav.server = "https://dav.example.org/"
 #carddav.auth.basic.username = "alice"
 #carddav.auth.basic.password.command = "pass show dav/example"
@@ -227,6 +244,7 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 # For a collection that is neither a calendar nor an addressbook, whose members
 # are items because nothing better can be said about them.
+#dav.collection = "files/alice/shared/"
 #dav.server = "https://dav.example.org/"
 #dav.auth.basic.username = "alice"
 #dav.auth.basic.password.command = "pass show dav/example"
