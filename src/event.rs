@@ -1,19 +1,10 @@
-//! The change vocabulary every backend speaks.
+//! The change vocabulary every backend speaks, so a hook is written
+//! once whatever reported the change.
 //!
-//! A watch reports what changed in a watched collection, keyed by the
-//! backend's own id: an item arrived, one left, one was edited, flags
-//! moved. Nothing here is protocol-specific, so a hook is written once
-//! and fires the same way whether the change came from an IMAP IDLE, a
-//! JMAP poll, a Maildir listing or a WebDAV sync-collection.
-//!
-//! Not every backend can report every event, and that is a property of
-//! the protocol rather than a gap: mail is immutable, so nothing mail
-//! reports an edit, and WebDAV has no flags.
-//!
-//! An arrival carries no envelope: an IMAP watch learns of a new UID
-//! without its subject, and reading one costs a fetch. The watcher
-//! reports the arrival, and the backend fills the envelope in only
-//! when a hook asks for it.
+//! Not every backend can report every event, which is the protocol
+//! talking rather than a gap: mail is immutable, so nothing mail
+//! reports an edit, and a WebDAV poll reads etags, so flags are
+//! unknown to it rather than empty.
 
 use std::collections::BTreeSet;
 
@@ -67,12 +58,13 @@ pub enum WatchEvent {
     },
 }
 
-/// What a hook can say about a newly-arrived message, once resolved.
+/// What a hook can say about an item, once resolved.
 ///
-/// Every field is optional: a server may omit any envelope part, and
-/// resolving is skipped entirely when no hook asks for it.
+/// The per-kind summary pimdir calls `meta`: mail fills the envelope
+/// fields, another kind would fill its own. Every field is optional,
+/// and nothing is resolved unless a hook asks.
 #[derive(Clone, Debug, Default)]
-pub struct MessageSummary {
+pub struct ItemSummary {
     /// The sender's personal name.
     pub from_name: Option<String>,
     /// The sender's `mailbox@host` address.

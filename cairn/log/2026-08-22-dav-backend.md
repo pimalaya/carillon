@@ -25,3 +25,13 @@ Build, clippy and fmt green on every feature combination (imap, jmap, maildir, d
 ## Not done
 
 Discovery. The collection URL is pasted in rather than found from a bare domain through RFC 6764 and a home-set lookup, which io-pim-discovery already does for the other Pimalaya tools. It changes the config surface rather than the watch, so it fits as a follow-up.
+
+## Follow-up: the flags question, and a documentation pass
+
+Whether flags belong in a domain-agnostic tool at all was raised, and pimdir answered it: `flags` is a column on every item whatever its kind, holding "a JSON array of the raw flag strings", with `NULL` meaning unknown and `'[]'` meaning known-empty, and the per-kind detail living in the separate opaque `meta`. So flags stay, under their name, and mail is simply the kind that populates them today.
+
+Two things followed from reading that spec. The unknown-versus-empty distinction is now stated: a WebDAV poll reads etags, so an item's flags are unknown to it rather than empty, which is why it reports none. And `MessageSummary` became `ItemSummary`, described as what pimdir calls `meta`, which leaves a place for a DAV resolver to put a contact's name later.
+
+What was considered and dropped: reporting raw flag strings the way pimdir stores them. A store keeps them raw because it has to round-trip exactly what the server said; a notifier does not, and "a filter written once fires on every backend" is a stated feature here. The normalisation stays.
+
+The documentation was read back and the stale parts fixed. The one that mattered: the sample config told a JMAP user to set `mailbox` to the Mailbox **id**, while the resolver matches by name (falling back to the special-use role for `INBOX`), so following that advice would have failed to resolve. Also corrected: the migration guide still counted three backends and four message-shaped hooks, the changelog described the hooks under their old names, and the `mailbox` field said nothing about the `dav` backend ignoring it. The module headers were trimmed, and `src/main.rs` regained the architecture header AGENTS.md points at.

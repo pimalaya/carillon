@@ -1,15 +1,11 @@
 //! Maildir backend: a poll that diffs the mailbox against what it last
 //! saw.
 //!
-//! A Maildir has no notification channel, so the watch re-lists the
-//! mailbox on an interval and reports what moved: a file that appeared,
-//! one that vanished, and the flag letters that changed in a file name.
-//! The listing is names only, never message bodies, so a poll costs one
-//! directory read.
-//!
-//! Flags are reported under their IMAP-ish names rather than their
-//! Maildir letters, so one hook filter (`flags = ["Seen"]`) works the
-//! same against every backend.
+//! A Maildir has no notification channel, so the watch re-lists it on
+//! an interval. The listing is file names only, never bodies, so a
+//! poll costs one directory read, and the flag letters live in those
+//! names. They are reported under their shared names, so one filter
+//! (`flags = ["Seen"]`) fires on every backend.
 
 use std::{
     collections::{BTreeMap, BTreeSet},

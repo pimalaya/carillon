@@ -1,16 +1,13 @@
-//! IMAP backend: session opening, the mailbox watch, and envelope
-//! resolution for the hooks that want one.
+//! IMAP backend: session opening, the mailbox watch, and the envelope
+//! resolution a hook may ask for.
 //!
-//! The watch itself is io-imap's: [`ImapMailboxWatch`] holds IDLE,
-//! re-reads what changed on every wake and reports UID-keyed deltas.
-//! With QRESYNC the server names them; without it, io-imap re-reads the
-//! mailbox and diffs locally. Either way this module only translates
-//! those deltas into [`WatchEvent`], so mirador owns no watcher of its
-//! own.
+//! The watch is io-imap's `ImapMailboxWatch`, which holds IDLE and
+//! reports UID-keyed deltas, named by the server under QRESYNC and
+//! diffed locally without it. This module only translates them, so
+//! mirador owns no watcher.
 //!
-//! A delta names a UID, never a subject. [`Resolver`] fetches the
-//! envelope of an arrival on a second connection, and only when a hook
-//! declares it wants one.
+//! A delta names a UID, never a subject, so [`Resolver`] reads the
+//! envelope on a second connection.
 
 use std::{
     collections::BTreeSet,
@@ -50,7 +47,7 @@ use url::Url;
 
 use crate::{
     config::{ImapConfig, resolve_auto_id_params},
-    event::{MessageSummary, WatchEvent},
+    event::{ItemSummary, WatchEvent},
 };
 
 /// How long a watch waits for an event before checking the shutdown
@@ -210,7 +207,7 @@ impl<'a> Resolver<'a> {
 
     /// Fetches the envelope of `uid`, reconnecting once when the
     /// pooled session turns out to be dead.
-    pub fn summary(&mut self, uid: &str) -> Result<MessageSummary> {
+    pub fn summary(&mut self, uid: &str) -> Result<ItemSummary> {
         match self.fetch(uid) {
             Ok(summary) => Ok(summary),
             Err(err) if self.shutdown.load(Ordering::SeqCst) => Err(err),
@@ -222,7 +219,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn fetch(&mut self, uid: &str) -> Result<MessageSummary> {
+    fn fetch(&mut self, uid: &str) -> Result<ItemSummary> {
         let mailbox = Mailbox::try_from(self.mailbox.to_string())
             .map_err(|err| anyhow!("invalid mailbox name `{}`: {err}", self.mailbox))?;
 
@@ -326,8 +323,8 @@ fn is_timeout(err: &io::Error) -> bool {
 }
 
 /// Folds a FETCH response into what the hook templates expose.
-fn summarize(items: Vec<MessageDataItem<'static>>) -> MessageSummary {
-    let mut summary = MessageSummary::default();
+fn summarize(items: Vec<MessageDataItem<'static>>) -> ItemSummary {
+    let mut summary = ItemSummary::default();
 
     for item in items {
         let MessageDataItem::Envelope(envelope) = item else {

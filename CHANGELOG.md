@@ -12,13 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Reopen a watch that ends. A session lost to a dropped connection is retried with a capped exponential backoff that a healthy session resets, and the credential is resolved again on every attempt rather than held, so a rotated secret is picked up by the next reconnect.
 
-- Resolve an arrival's envelope for `on-message-added`. A watch learns of a new message by its id, not its subject, so the envelope is fetched on a second connection and only when that hook is configured. Adds `$date` to the templates beside `$subject`, `$sender` and `$recipient`.
+- Resolve an arrival's envelope for `on-item-added`. A watch learns of a new item by its id, not its subject, so the envelope is fetched on a second connection, only when that hook is configured, and only over IMAP. Adds `$date` to the templates beside `$subject`, `$sender` and `$recipient`.
 
 - Added `imap.sasl-ir`, forcing the RFC 4959 SASL-IR initial response on or off for providers such as Coremail (126.com, 163.com) that advertise the capability and then reject the inline form.
 
 - Initiated the project from [Himalaya CLI](https://github.com/pimalaya/himalaya) and [Neverest CLI](https://github.com/pimalaya/neverest).
 - Added the JMAP backend, polling `Email/changes` and resolving the changed ids through `Email/get` to keep the ones inside the watched mailbox (requires the `jmap` cargo feature).
-- Added four watch event hooks under the `hooks.` TOML namespace: `hooks.on-message-added`, `hooks.on-message-removed`, `hooks.on-flags-added`, `hooks.on-flags-removed`. Flag hooks accept an optional `flags = [...]` filter that narrows firing to a specific IANA-classified flag (case-insensitive, with or without the leading `\` / `$`).
+- Added five watch event hooks under the `hooks.` TOML namespace: `hooks.on-item-added`, `hooks.on-item-removed`, `hooks.on-item-changed`, `hooks.on-flags-added`, `hooks.on-flags-removed`. Flag hooks accept an optional `flags = [...]` filter that narrows firing to a specific IANA-classified flag (case-insensitive, with or without the leading `\` / `$`).
 - Added per-protocol TLS feature flags: `rustls-ring` (default), `rustls-aws`, `native-tls`, `vendored`.
 - Added a global `-b/--backend {auto,imap,jmap,maildir}` flag that pins which backend block is opened on accounts declaring more than one.
 
@@ -26,7 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Removed io-email. Each backend now speaks to its own protocol crate: io-imap for the IDLE watch, io-jmap for the `Email/changes` poll, io-maildir for the listing poll. The aggregator was frozen and pinned every protocol crate to an old generation, which is what kept this tool two majors behind.
 
-  The IMAP watch is now io-imap's own `watch::ImapMailboxWatch`, so mirador owns no watcher: it emits the same four events, and no longer needs QRESYNC, since io-imap re-reads the mailbox and diffs locally against a server that lacks it.
+  The IMAP watch is now io-imap's own `watch::ImapMailboxWatch`, so mirador owns no watcher: it emits the same events, and no longer needs QRESYNC, since io-imap re-reads the mailbox and diffs locally against a server that lacks it.
 
 - Flags are reported under one set of names whatever the backend spells them as, so a filter written once fires everywhere: IMAP `\Seen`, JMAP `$seen` and the Maildir `S` letter all arrive as `Seen`.
 

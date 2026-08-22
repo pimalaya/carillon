@@ -96,9 +96,9 @@ pub struct AccountConfig {
     pub default: bool,
 
     /// Mailbox watched by `mirador watch` when `-m/--mailbox` is
-    /// omitted. Defaults to `"INBOX"` for IMAP/JMAP and to the mailbox
-    /// name for Maildir. For Maildir, the value resolves relative to
-    /// the backend `root` (use `"."` to watch the root mailbox).
+    /// omitted, defaulting to `INBOX`. For Maildir it resolves under
+    /// the backend `root`, `.` naming the root itself. The `dav`
+    /// backend ignores it, its collection URL naming what to watch.
     #[serde(default)]
     pub mailbox: Option<String>,
 

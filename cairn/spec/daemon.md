@@ -16,7 +16,7 @@ Each backend brings its own way of learning about a change, and the daemon trans
 The daemon SHALL read its accounts from a TOML config file, resolved from an explicit path then the standard user paths. Each account SHALL carry at least one backend block (`imap`, `jmap`, `maildir`, `dav`), an optional watched mailbox, and the hooks it fires. The config schema SHALL stay compatible with himalaya CLI and himalaya TUI, so one file can back every binary, and unknown keys SHALL be ignored rather than refused.
 
 #### Scenario: A local watch from a config file
-- **GIVEN** a config describing one IMAP account with an `on-message-added` notify hook
+- **GIVEN** a config describing one IMAP account with an `on-item-added` notify hook
 - **WHEN** the daemon runs and a message arrives
 - **THEN** a desktop notification fires, with no network delivery and no account with any service
 
@@ -42,7 +42,7 @@ The daemon SHALL own reconnection: a session that ends, for any reason other tha
 - **THEN** the daemon waits its backoff, resolves the credential again, and reopens the watch
 
 ### Requirement: One change vocabulary across backends
-Every backend SHALL report changes in one vocabulary: an item added, an item removed, an item changed, flags added, flags removed. Flags SHALL be reported under one set of names whatever the backend spells them as, so that a hook filter written once (`flags = ["Seen"]`) fires against IMAP `\Seen`, JMAP `$seen` and the Maildir `S` letter alike. A backend SHALL report only the events its protocol can express, which is a property of the protocol rather than a gap: mail is immutable, so nothing mail reports an edit, and WebDAV has no flags. The hooks SHALL be named after items rather than messages, and the message-shaped names SHALL keep working as aliases.
+Every backend SHALL report changes in one vocabulary: an item added, an item removed, an item changed, flags added, flags removed. Flags SHALL be reported under one set of names whatever the backend spells them as, so that a hook filter written once (`flags = ["Seen"]`) fires against IMAP `\Seen`, JMAP `$seen` and the Maildir `S` letter alike. A backend SHALL report only the events its protocol can express, which is a property of the protocol rather than a gap: mail is immutable, so nothing mail reports an edit, and a WebDAV poll reads etags, so the flags of an item are unknown to it rather than empty, and it reports none. Unknown and empty are distinct, as they are in a pimdir store. The hooks SHALL be named after items rather than messages, and the message-shaped names SHALL keep working as aliases.
 
 #### Scenario: A message is marked read on each mail backend
 - **GIVEN** three accounts watching the same mailbox over IMAP, JMAP and Maildir
@@ -66,10 +66,11 @@ The daemon SHALL watch a WebDAV collection, which covers CalDAV and CardDAV alik
 - **GIVEN** a watch whose stored sync token is older than the server keeps
 - **WHEN** the next report is refused
 - **THEN** the collection is enumerated again, no event is fired for what was already there, and the watch continues from the fresh token
-### Requirement: Arrivals are resolved only when a hook wants them
-A watch learns that a message arrived, not what it says. The daemon SHALL resolve an arrival into its envelope (subject, sender, recipient, date) only when the account configures an `on-item-added` hook, and SHALL do so on a second connection, never the one holding the watch. A resolution failure SHALL degrade to an unresolved event rather than ending the watch.
 
-#### Scenario: A cmd-only account with no message hook
+### Requirement: Arrivals are resolved only when a hook wants them
+A watch learns that an item arrived, not what it says. The daemon SHALL resolve an arrival into its summary (for mail: subject, sender, recipient, date) only when the account configures an `on-item-added` hook, and SHALL do so on a second connection, never the one holding the watch. Only a backend able to read one resolves anything; the others leave the summary empty. A resolution failure SHALL degrade to an unresolved event rather than ending the watch.
+
+#### Scenario: An account with no item hook
 - **GIVEN** an account whose only hook is `on-flags-added`
 - **WHEN** a message arrives
 - **THEN** no envelope is fetched and no second connection is opened

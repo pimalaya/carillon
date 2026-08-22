@@ -1,5 +1,21 @@
-//! Binary entry point: parses the CLI, configures logging and dispatches
-//! the requested subcommand.
+//! # mirador
+//!
+//! Watches PIM accounts and fires local hooks on every change. One
+//! account is one thread; nothing is stored between runs.
+//!
+//! ## Layout
+//!
+//! The frontend: main dispatches, cli declares the parser, config
+//! parses the TOML accounts, watch and check are the two commands,
+//! driver supervises one account (backend selection, reconnect
+//! backoff, credential per attempt), hook fires the notification and
+//! the command.
+//!
+//! The backends: imap, jmap, maildir and dav, each behind its cargo
+//! feature, each learning about changes its own way and reporting them
+//! in the one vocabulary event defines. How a change is learned is the
+//! protocol crate's job (io-imap, io-jmap, io-maildir, io-webdav);
+//! what to do about it is this crate's.
 
 mod backend;
 mod check;

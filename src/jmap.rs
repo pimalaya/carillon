@@ -1,11 +1,9 @@
 //! JMAP backend: session opening, authentication and the mailbox watch.
 //!
-//! JMAP has no held connection here. The watch polls `Email/changes`,
-//! which answers with the ids created, updated and destroyed since the
-//! state the client last saw, and resolves those ids through
-//! `Email/get` to keep the ones inside the watched mailbox. A push
-//! subscription (RFC 8620 §7.2) would replace the interval with a
-//! wake-up; the change reconciliation below would not move.
+//! The watch polls `Email/changes` and resolves the ids it names
+//! through `Email/get`, keeping the ones inside the watched mailbox. A
+//! push subscription (RFC 8620 §7.2) would replace the interval with a
+//! wake-up and leave the reconciliation below untouched.
 
 use std::{
     collections::{BTreeMap, BTreeSet},

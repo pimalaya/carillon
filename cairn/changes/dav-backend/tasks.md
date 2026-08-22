@@ -9,4 +9,5 @@ change: dav-backend
 - [x] Wire it into the backend selector, the driver and `check`
 - [x] Build, clippy and fmt green on every feature combination
 - [x] Fold the delta into the spec and log the change
+- [x] Read the docs back and fix the stale ones
 - [ ] Verify against a live CalDAV or CardDAV server

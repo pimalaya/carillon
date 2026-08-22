@@ -15,17 +15,12 @@ use notify_rust::Notification;
 
 use crate::{
     config::{FlagsHook, HookCmd, HooksConfig, ItemHook, NotifyConfig},
-    event::{MessageSummary, WatchEvent},
+    event::{ItemSummary, WatchEvent},
 };
 
 /// Fires whichever hook `event` calls for, with `summary` filled in
 /// when an arrival was resolved.
-pub fn run(
-    hooks: &HooksConfig,
-    event: &WatchEvent,
-    mailbox: &str,
-    summary: Option<&MessageSummary>,
-) {
+pub fn run(hooks: &HooksConfig, event: &WatchEvent, mailbox: &str, summary: Option<&ItemSummary>) {
     trace!("dispatch event: {event:?}");
 
     match event {
@@ -96,7 +91,7 @@ fn run_flags_hook(
 fn item_vars(
     id: &str,
     mailbox: &str,
-    summary: Option<&MessageSummary>,
+    summary: Option<&ItemSummary>,
 ) -> BTreeMap<&'static str, String> {
     let mut vars = BTreeMap::new();
     vars.insert("id", id.to_string());

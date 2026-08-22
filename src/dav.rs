@@ -1,21 +1,10 @@
-//! WebDAV backend: a `sync-collection` poll over any DAV collection.
+//! WebDAV backend: an RFC 6578 `sync-collection` poll over any DAV
+//! collection, CalDAV calendar and CardDAV addressbook included.
 //!
-//! CalDAV and CardDAV are WebDAV, so one backend watches a calendar, an
-//! addressbook or a plain collection: RFC 6578 answers "what changed
-//! since this token" with the members that moved and a fresh token,
-//! which is the whole watch. Nothing out there implements a push a
-//! client can subscribe to without a public endpoint, so the interval
-//! is the state of the art rather than a shortcut.
-//!
-//! The report asks for `getetag` and nothing else, so a poll never
-//! carries a vCard or a VEVENT: the watch says an item moved, and a
-//! hook that wants its content goes and reads it.
-//!
-//! Because RFC 6578 reports created and updated members together, the
-//! backend keeps an href to etag picture of the collection and reads
-//! the difference: an href it has never seen is an arrival, a known one
-//! whose etag moved is an edit. That edit is the event mail never
-//! needed, a contact being mutable where a message is not.
+//! The report asks for `getetag` only, so a poll carries no vCard and
+//! no VEVENT. It reports created and updated members together, so the
+//! backend keeps an href to etag picture and reads the difference: an
+//! unseen href is an arrival, a known one whose etag moved is an edit.
 
 use std::{
     collections::BTreeMap,
@@ -136,10 +125,9 @@ pub fn watch(
         loop {
             let delta = match sync(&mut client, &collection, token.as_deref(), shutdown) {
                 Ok(delta) => delta,
-                // NOTE: a rejected token is the server saying its
-                // history no longer reaches back that far. The only
-                // answer is to enumerate again, and a re-baseline is
-                // not news, so nothing is reported from it.
+                // NOTE: a rejected token means the server's history no
+                // longer reaches that far. Enumerating again is the
+                // only answer, and a re-baseline is not news.
                 Err(err) if is_invalid_token(&err) => {
                     warn!("dav sync token rejected, re-enumerating the collection");
                     let (fresh, next) = baseline(&mut client, &collection, shutdown)?;

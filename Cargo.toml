@@ -1,6 +1,6 @@
 [package]
 name = "mirador"
-description = "CLI to watch mailbox changes"
+description = "CLI to watch PIM collection changes"
 version = "0.1.0"
 authors = ["Clément DOUIN (soywod) <clement.douin@posteo.net>"]
 rust-version = "1.89"

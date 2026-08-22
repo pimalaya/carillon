@@ -16,7 +16,7 @@
 #
 # The `[accounts.<name>]` block uses the same schema as `himalaya` CLI v2 and
 # `himalaya-tui`. One TOML file can back all three binaries; mirador-only
-# fields (`mailbox`, the four `on-*` hook tables) coexist with the shared keys
+# fields (`mailbox`, the five `on-*` hook tables) coexist with the shared keys
 # without errors.
 # ================================================================================
 
@@ -31,12 +31,12 @@
 # Use this account when `-a/--account` is not passed.
 default = true
 
-# Mailbox watched by `mirador watch` when `-m/--mailbox` is omitted. Defaults
-# to `"INBOX"` for IMAP/JMAP and to the mailbox name for Maildir. For JMAP,
-# set this to the Mailbox **id** (not the display name); look it up once via
-# `himalaya jmap mailbox query` or the provider's admin console. For Maildir,
-# the value resolves relative to the backend `root` (use `"."` for the root
-# mailbox).
+# Mailbox watched by `mirador watch` when `-m/--mailbox` is omitted, defaulting
+# to "INBOX". JMAP matches the mailbox by name, case-insensitively, and falls
+# back to the special-use role for "INBOX", so a server naming its inbox in
+# another language still resolves. For Maildir the value resolves under the
+# backend root, "." naming the root itself. The dav backend ignores this: its
+# collection URL already names what to watch.
 mailbox = "INBOX"
 
 # --------------------------------------------------------------------------------

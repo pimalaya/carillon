@@ -1,6 +1,6 @@
 # 🔭 Mirador [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya) [![Sponsor](https://img.shields.io/badge/sponsor-pink?style=flat&logo=github-sponsors&logoColor=white)](https://pimalaya.org/sponsor/)
 
-CLI to watch mailbox changes, written in Rust
+CLI to watch PIM collection changes, written in Rust
 
 > [!CAUTION]
 > Mirador is in active development and currently shipped as `v0.1.x`. Expect breaking changes between releases until stabilization. See the [migration guide](./MIGRATION.md) if you ran a pre-v0.1.0 build.

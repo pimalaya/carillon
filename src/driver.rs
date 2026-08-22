@@ -1,11 +1,10 @@
-//! Per-account supervisor: opens a watch, dispatches what it reports to
-//! the account's hooks, and reopens it when the connection drops.
+//! Per-account supervisor: opens a watch, dispatches what it reports
+//! to the hooks, and reopens it when the connection drops.
 //!
-//! One account is one thread, and everything that can fail per account
-//! is held here: the backend selection, the reconnect backoff, and the
-//! resolution of an arrival into the envelope a hook templates against.
-//! A failure ends the session, never the process, so one unreachable
-//! server cannot stop the other accounts from watching.
+//! One account is one thread, holding everything that can fail per
+//! account: backend selection, reconnect backoff, envelope
+//! resolution. A failure ends the session, never the process, so one
+//! unreachable server cannot stop the other accounts watching.
 
 use std::{
     sync::{
@@ -52,9 +51,8 @@ pub fn run(
 
         let outcome = watch_once(account, &config, &mailbox, backend, &hooks, &shutdown);
 
-        // NOTE: a session ending because it was asked to is not news,
-        // and a failure it raced on the way out is not a failure worth
-        // warning about; either way nothing is reopened.
+        // NOTE: neither an asked-for ending nor a failure raced on the
+        // way out is news, and nothing is reopened either way.
         if shutdown.load(Ordering::SeqCst) {
             if let Err(err) = outcome {
                 debug!("[{account}] session ended while shutting down: {err:#}");
@@ -69,8 +67,8 @@ pub fn run(
         }
 
         // NOTE: a session that stayed up is evidence the server is
-        // healthy, so the next failure starts over from the floor
-        // rather than inheriting the backoff of an old outage.
+        // healthy, so the next failure starts from the floor rather
+        // than inheriting an old outage's backoff.
         if started.elapsed() >= HEALTHY_THRESHOLD {
             backoff = INITIAL_BACKOFF;
         }
@@ -154,16 +152,15 @@ fn watch_once(
     )
 }
 
-/// Resolves the envelope of an arrival, but only when an
-/// `on-message-added` hook is configured to consume one. Every other
-/// event, and every account without that hook, costs nothing.
+/// Resolves an arrival, only when `on-item-added` is configured to
+/// consume one. Anything else costs nothing.
 #[cfg(feature = "imap")]
 fn resolve_added(
     account: &str,
     hooks: &HooksConfig,
     event: &WatchEvent,
     resolver: &mut crate::imap::Resolver<'_>,
-) -> Option<crate::event::MessageSummary> {
+) -> Option<crate::event::ItemSummary> {
     let WatchEvent::ItemAdded { id } = event else {
         return None;
     };
@@ -173,7 +170,7 @@ fn resolve_added(
     match resolver.summary(id) {
         Ok(summary) => Some(summary),
         Err(err) => {
-            warn!("[{account}] cannot resolve message `{id}`: {err:#}");
+            warn!("[{account}] cannot resolve item `{id}`: {err:#}");
             None
         }
     }
