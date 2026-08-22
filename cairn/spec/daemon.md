@@ -4,43 +4,71 @@ capability: daemon
 status: current
 ---
 
-# The carillon CLI daemon
+# The watch daemon
 
-carillon is the lightweight frontend of Carillon: a self-hostable daemon that watches PIM accounts and fires local consumers on each change. It hosts carillon-core, the same watch loop the server runs, without the network-and-trust apparatus (no HTTP listener, datastore, auth, custody, metering, or billing). It is the top of the funnel: a free local watcher that makes "let us host the watch for you" the natural next sentence.
+mirador watches PIM accounts and fires local hooks on every change. It reads a TOML config of named accounts, watches each one on its own thread, and runs on one machine with no server apparatus: no HTTP listener, datastore, auth, custody, metering or billing.
 
-The daemon reads a TOML config of named IMAP watches. Per watch, a supervisor task owns the transport and reconnect and drives core's one-session watch over the opened stream; every content-free ring is routed to that watch's consumers. See [[../../../core/cairn/spec/watch-client]] for the shared watcher this frontend hosts.
+It watches; it never syncs. A change is reported as it is seen (a message arrived, one left, flags moved) and nothing is stored between runs. What a hook wants beyond that, mirador goes and reads on demand.
 
-### Requirement: A watch runs from a TOML file with no server apparatus
-The daemon SHALL read its watches from a TOML config file, resolved from an explicit path, then the XDG path, the home path, and a local carillon.toml in turn. Each watch SHALL carry the IMAP host, port, login, mailbox, a credential, and the consumers it fires. The daemon SHALL run a watch end to end on one machine with no HTTP listener, datastore, auth, custody, metering, or billing.
+Each backend brings its own way of learning about a change, and the daemon translates all of them into one vocabulary, so a hook is written once: IMAP holds IDLE and reports UID-keyed deltas, JMAP polls `Email/changes`, Maildir re-lists the mailbox. The protocol crates own the protocols (io-imap, io-jmap, io-maildir); this repository owns the config, the hooks and the supervision.
 
-#### Scenario: Local watch from a config file
-- **GIVEN** a carillon config describing one IMAP watch with the notify consumer
-- **WHEN** the daemon runs and the mailbox changes
-- **THEN** a desktop notification fires, with no network delivery and no Carillon account involved
+### Requirement: A watch runs from a TOML file
+The daemon SHALL read its accounts from a TOML config file, resolved from an explicit path then the standard user paths. Each account SHALL carry at least one backend block (`imap`, `jmap`, `maildir`), an optional watched mailbox, and the hooks it fires. The config schema SHALL stay compatible with himalaya CLI and himalaya TUI, so one file can back every binary, and unknown keys SHALL be ignored rather than refused.
 
-### Requirement: The frontend owns transport and reconnect
-The daemon SHALL own the transport: it opens the TLS connection (it trusts the user's own config, so it applies no SSRF guard) and hands core the stream. It SHALL own the reconnect loop, resolving a fresh credential and opening a fresh connection on each attempt, with capped exponential backoff and jitter. carillon-core SHALL only run one session over the stream it is handed.
+#### Scenario: A local watch from a config file
+- **GIVEN** a config describing one IMAP account with an `on-message-added` notify hook
+- **WHEN** the daemon runs and a message arrives
+- **THEN** a desktop notification fires, with no network delivery and no account with any service
+
+### Requirement: Every configured account, or a chosen one
+Bare `mirador watch` SHALL watch every configured account at once, one thread each under a single shared shutdown. `-a/--account` SHALL narrow the watch to that account, and an unknown name SHALL be an error. Each account's mailbox SHALL come from its own config, so accounts watching different mailboxes need no flag; `-m/--mailbox` overrides it and SHALL be refused when more than one account is watched, since it could only mean one of them.
+
+#### Scenario: Watch everything
+- **GIVEN** a config with two accounts and no account flag
+- **WHEN** `mirador watch` runs
+- **THEN** both accounts are watched at once, each on its configured mailbox, and Ctrl+C stops them together
+
+#### Scenario: One account's server is unreachable
+- **GIVEN** two watched accounts, one of whose servers refuses connections
+- **WHEN** that watch fails
+- **THEN** the failure is logged and retried for that account alone, and the other account keeps watching
+
+### Requirement: The daemon owns the connection lifecycle
+The daemon SHALL own reconnection: a session that ends, for any reason other than a requested shutdown, SHALL be reopened after a capped exponential backoff, and a session that stayed up long enough to look healthy SHALL reset that backoff. Credentials SHALL be resolved per attempt rather than held, so a rotated secret is picked up by the next reconnect and residency stays minimal.
 
 #### Scenario: The connection drops
 - **GIVEN** a running watch
-- **WHEN** core's one-session watch returns because the connection dropped
-- **THEN** the daemon waits a jittered backoff and reconnects, resolving the credential again
+- **WHEN** the session ends because the connection dropped
+- **THEN** the daemon waits its backoff, resolves the credential again, and reopens the watch
 
-### Requirement: Credentials resolve locally, never inside core
-The daemon SHALL resolve a watch's credential itself and hand core a ready secret. It SHALL support a cleartext password (discouraged) and a password_command whose first stdout line is the password, for a keyring read. OAuth is out of scope for the first version.
+### Requirement: One change vocabulary across backends
+Every backend SHALL report changes as the same four events: a message added, a message removed, flags added, flags removed. Flags SHALL be reported under one set of names whatever the backend spells them as, so that a hook filter written once (`flags = ["Seen"]`) fires against IMAP `\Seen`, JMAP `$seen` and the Maildir `S` letter alike.
 
-#### Scenario: A keyring-backed password
-- **GIVEN** a watch with a password_command such as `pass show mail/me`
-- **WHEN** the daemon connects
-- **THEN** it runs the command, takes the first stdout line as the password, and hands core a password credential
+#### Scenario: A message is marked read on each backend
+- **GIVEN** three accounts watching the same mailbox over IMAP, JMAP and Maildir
+- **WHEN** a message is marked read on each
+- **THEN** all three fire `on-flags-added` with the flag named `Seen`
 
-### Requirement: Two built-in local consumers
-The daemon SHALL ship two consumers: notify (a content-free desktop notification naming the target and account) and exec (a shell command receiving the ring's fields as CARILLON_ACCOUNT, CARILLON_SOURCE, CARILLON_TARGET, and CARILLON_STATE). A consumer failure SHALL be logged, not propagated, so one consumer never stalls the others. Neither consumer SHALL emit message content, since the ring carries none.
+### Requirement: Arrivals are resolved only when a hook wants them
+A watch learns that a message arrived, not what it says. The daemon SHALL resolve an arrival into its envelope (subject, sender, recipient, date) only when the account configures an `on-message-added` hook, and SHALL do so on a second connection, never the one holding the watch. A resolution failure SHALL degrade to an unresolved event rather than ending the watch.
 
-#### Scenario: An exec hook reacts to a ring
-- **GIVEN** a watch with an exec command
-- **WHEN** the mailbox changes
-- **THEN** the daemon runs the command with the ring's fields in the environment, and the script may re-fetch content itself
+#### Scenario: A cmd-only account with no message hook
+- **GIVEN** an account whose only hook is `on-flags-added`
+- **WHEN** a message arrives
+- **THEN** no envelope is fetched and no second connection is opened
 
-### Requirement: The daemon hosts only outbound sources
-The daemon SHALL host only outbound transport classes (standing-connection now, poll later). It SHALL NOT host public-callback sources such as Gmail push, which need a public endpoint the daemon does not have. Those remain the server's.
+### Requirement: A hook failure never stops the watch
+A hook SHALL be a desktop notification, a shell command, or both. Its templates SHALL expand the event's variables, and the command SHALL receive the same variables in its environment. A hook that fails SHALL be logged and left behind: neither a missing notification daemon nor a broken script SHALL end the watch.
+
+#### Scenario: The hook script exits non-zero
+- **GIVEN** an account whose `cmd` hook exits with an error
+- **WHEN** it fires
+- **THEN** the failure is logged and the watch keeps running
+
+### Requirement: The account can be checked before it is watched
+`mirador check` SHALL open each backend the account declares and report per backend whether it worked, so a credential or connectivity error surfaces before a watch is started rather than in the middle of one.
+
+#### Scenario: A wrong password
+- **GIVEN** an account whose IMAP password is wrong
+- **WHEN** `mirador check` runs
+- **THEN** the imap backend is reported as failed with the server's reason, and the process exits non-zero

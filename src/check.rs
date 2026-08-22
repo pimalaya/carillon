@@ -85,35 +85,9 @@ fn check_imap(
     _account_config: &AccountConfig,
     imap_config: crate::config::ImapConfig,
 ) -> BackendCheck {
-    use io_imap::client::ImapClientStd;
-    use pimalaya_stream::{sasl::Sasl, tls::Tls};
-
-    use crate::config::resolve_auto_id_params;
-
-    let result = (|| -> Result<()> {
-        let mut tls: Tls = imap_config.tls.clone().into();
-        tls.rustls.alpn = vec!["imap".into()];
-        let server = crate::client::parse_imap_server(&imap_config.server)?;
-        let sasl: Option<Sasl> = imap_config
-            .sasl
-            .clone()
-            .map(|cfg| {
-                let host = server.host_str().unwrap_or_default();
-                // url does not know the imap(s) default ports; gating on
-                // port_or_known_default() would silently drop the whole SASL
-                // config for a portless URL, opening an unauthenticated
-                // session.
-                let port =
-                    server
-                        .port()
-                        .unwrap_or(if server.scheme() == "imaps" { 993 } else { 143 });
-                cfg.try_into_sasl(host, port)
-            })
-            .transpose()?;
-        let auto_id = resolve_auto_id_params(&imap_config.id)?;
-        let _ = ImapClientStd::connect(&server, &tls, imap_config.starttls, sasl, auto_id)?;
-        Ok(())
-    })();
+    // NOTE: opening the session is the check: it runs the same
+    // transport, greeting and authentication a watch would.
+    let result = crate::imap::open(&imap_config).map(|_| ());
 
     BackendCheck::from("imap", result)
 }
@@ -123,18 +97,7 @@ fn check_jmap(
     _account_config: &AccountConfig,
     jmap_config: crate::config::JmapConfig,
 ) -> BackendCheck {
-    use io_jmap::client::JmapClientStd;
-    use pimalaya_stream::tls::Tls;
-
-    let result = (|| -> Result<()> {
-        let mut tls: Tls = jmap_config.tls.clone().into();
-        tls.rustls.alpn = vec!["http/1.1".into()];
-        let http_auth = crate::client::jmap_http_auth(jmap_config.auth.clone())?;
-        let url = crate::client::parse_jmap_server(&jmap_config.server)?;
-        let mut client = JmapClientStd::connect(&url, &tls, http_auth)?;
-        client.session_get(&url)?;
-        Ok(())
-    })();
+    let result = crate::jmap::open(&jmap_config).map(|_| ());
 
     BackendCheck::from("jmap", result)
 }

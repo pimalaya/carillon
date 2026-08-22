@@ -25,14 +25,16 @@ use io_imap::types::{
     IntoStatic,
     core::{IString, NString},
 };
+#[cfg(feature = "imap")]
+use io_sasl::{
+    login::SaslLoginCreds, mechanism::Sasl, rfc4505::anonymous::SaslAnonymousCreds,
+    rfc4616::plain::SaslPlainCreds, rfc5801::SaslGs2ChannelBinding, rfc5802::SaslScramCreds,
+    rfc7628::oauthbearer::SaslOauthbearerCreds, xoauth2::SaslXoauth2Creds,
+};
 use pimalaya_config::command;
 #[cfg(feature = "imap")]
 use pimalaya_config::secret::Secret;
 use pimalaya_config::toml::TomlConfig;
-#[cfg(feature = "imap")]
-use pimalaya_stream::sasl::{
-    Sasl, SaslAnonymous, SaslLogin, SaslOauthbearer, SaslPlain, SaslScramSha256, SaslXoauth2,
-};
 #[cfg(any(feature = "imap", feature = "jmap"))]
 use pimalaya_stream::tls::{Rustls, RustlsCrypto, Tls, TlsProvider};
 use serde::{Deserialize, Serialize};
@@ -136,6 +138,12 @@ pub struct ImapConfig {
     /// authentication entirely (no `AUTHENTICATE` is sent).
     pub sasl: Option<SaslConfig>,
 
+    /// Forces the RFC 4959 SASL-IR initial response on or off. Unset
+    /// follows the advertised `SASL-IR` capability, which Coremail
+    /// (126.com, 163.com) advertises falsely; set it to `false` there.
+    #[serde(default)]
+    pub sasl_ir: Option<bool>,
+
     /// RFC 2971 `ID` extension quirks. Some providers (notably
     /// mail.qq.com, fastmail) require an `ID` exchange straight after
     /// authentication; set `id.auto = true` to opt in.
@@ -144,6 +152,7 @@ pub struct ImapConfig {
 }
 
 /// Per-account `imap.id.*` quirks.
+#[cfg(feature = "imap")]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ImapIdConfig {
@@ -393,29 +402,34 @@ impl SaslConfig {
     /// other mechanism.
     pub fn try_into_sasl(self, host: impl ToString, port: u16) -> Result<Sasl> {
         Ok(match self {
-            SaslConfig::Anonymous(c) => Sasl::Anonymous(SaslAnonymous { message: c.message }),
-            SaslConfig::Login(c) => Sasl::Login(SaslLogin {
+            SaslConfig::Anonymous(c) => Sasl::Anonymous(SaslAnonymousCreds { message: c.message }),
+            SaslConfig::Login(c) => Sasl::Login(SaslLoginCreds {
                 username: c.username,
                 password: c.password.get()?,
             }),
-            SaslConfig::Plain(c) => Sasl::Plain(SaslPlain {
+            SaslConfig::Plain(c) => Sasl::Plain(SaslPlainCreds {
                 authzid: c.authzid,
                 authcid: c.authcid,
                 passwd: c.passwd.get()?,
             }),
-            SaslConfig::Oauthbearer(c) => Sasl::Oauthbearer(SaslOauthbearer {
+            SaslConfig::Oauthbearer(c) => Sasl::Oauthbearer(SaslOauthbearerCreds {
                 username: c.username,
                 host: host.to_string(),
                 port,
                 token: c.token.get()?,
             }),
-            SaslConfig::Xoauth2(c) => Sasl::Xoauth2(SaslXoauth2 {
+            SaslConfig::Xoauth2(c) => Sasl::Xoauth2(SaslXoauth2Creds {
                 username: c.username,
                 token: c.token.get()?,
             }),
-            SaslConfig::ScramSha256(c) => Sasl::ScramSha256(SaslScramSha256 {
+            // NOTE: an empty nonce means "draw one for me": the client
+            // fills it before the exchange, an I/O-free coroutine having
+            // no way to generate randomness itself.
+            SaslConfig::ScramSha256(c) => Sasl::ScramSha256(SaslScramCreds {
                 username: c.username,
                 password: c.password.get()?,
+                nonce: Vec::new(),
+                channel_binding: SaslGs2ChannelBinding::Unsupported,
             }),
         })
     }

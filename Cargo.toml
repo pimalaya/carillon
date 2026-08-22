@@ -3,7 +3,7 @@ name = "mirador"
 description = "CLI to watch mailbox changes"
 version = "0.1.0"
 authors = ["soywod <clement.douin@posteo.net>"]
-rust-version = "1.88"
+rust-version = "1.89"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 categories = ["command-line-utilities", "email"]
@@ -18,12 +18,12 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["rustls-ring", "imap", "jmap", "maildir"]
-imap = ["dep:io-imap", "io-email/imap", "io-imap/client", "pimalaya-cli/imap"]
-jmap = ["dep:base64", "dep:io-jmap", "io-email/jmap", "io-jmap/client", "pimalaya-cli/jmap"]
-maildir = ["dep:io-maildir", "io-email/maildir", "io-maildir/client"]
-native-tls = ["pimalaya-stream/native-tls", "io-email/native-tls", "io-imap?/native-tls", "io-jmap?/native-tls"]
-rustls-aws = ["pimalaya-stream/rustls-aws", "io-email/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws"]
-rustls-ring = ["pimalaya-stream/rustls-ring", "io-email/rustls-ring", "io-imap?/rustls-ring", "io-jmap?/rustls-ring"]
+imap = ["dep:io-imap", "io-imap/client", "pimalaya-cli/imap"]
+jmap = ["dep:base64", "dep:io-jmap", "io-jmap/client", "pimalaya-cli/jmap"]
+maildir = ["dep:io-maildir", "io-maildir/client", "io-maildir/parser"]
+native-tls = ["pimalaya-stream/native-tls", "io-imap?/native-tls", "io-jmap?/native-tls"]
+rustls-aws = ["pimalaya-stream/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws"]
+rustls-ring = ["pimalaya-stream/rustls-ring", "io-imap?/rustls-ring", "io-jmap?/rustls-ring"]
 vendored = ["pimalaya-stream/vendored", "notify-rust/d_vendored"]
 
 [profile.release]
@@ -33,53 +33,23 @@ strip = "symbols"
 panic = "abort"
 
 [build-dependencies]
-pimalaya-cli = { version = "0.0.1", default-features = false, features = ["build"] }
+pimalaya-cli = { version = "0.2", default-features = false, features = ["build"] }
 
 [dependencies]
 anyhow = "1"
-base64 = { version = "0.22", optional = true }
+base64 = { version = "0.23", optional = true }
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 ctrlc = { version = "3", features = ["termination"] }
-dirs = "6"
-io-email = { version = "0.1", default-features = false, features = ["client", "serde"] }
-io-imap = { version = "0.1", default-features = false, optional = true }
-io-jmap = { version = "0.1", default-features = false, optional = true }
-io-maildir = { version = "0.1", default-features = false, optional = true }
+io-imap = { version = "0.5", default-features = false, optional = true }
+io-jmap = { version = "0.3", default-features = false, optional = true }
+io-maildir = { version = "0.3", default-features = false, optional = true }
+io-sasl = { version = "0.1", default-features = false, features = ["scram"] }
 log = "0.4"
 notify-rust = { version = "4", default-features = false, features = ["d"] }
-percent-encoding = "2"
-pimalaya-cli = { version = "0.0.1", default-features = false, features = ["terminal", "prompt", "spinner"] }
-pimalaya-config = { version = "0.0.1", default-features = false, features = ["toml", "secret"] }
-pimalaya-stream = { version = "0.0.1", default-features = false, features = ["std"] }
+pimalaya-cli = { version = "0.2", default-features = false, features = ["terminal", "spinner"] }
+pimalaya-config = { version = "0.1", default-features = false, features = ["toml", "secret"] }
+pimalaya-stream = { version = "0.3", default-features = false, features = ["std"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-shellexpand = "3.1"
 subst = "0.3"
 url = { version = "2.2", features = ["serde"] }
-
-# [patch.crates-io]
-# io-email.path = "../io-email"
-# io-gmail.path = "../io-gmail"
-# io-http.path = "../io-http"
-# io-imap.path = "../io-imap"
-# io-jmap.path = "../io-jmap"
-# io-msgraph.path = "../io-msgraph"
-# io-smtp.path = "../io-smtp"
-# io-maildir.path = "../io-maildir"
-# pimalaya-cli.path = "../cli"
-# pimalaya-config.path = "../config"
-# pimalaya-stream.path = "../stream"
-
-[patch.crates-io]
-io-email.git = "https://github.com/pimalaya/io-email"
-io-gmail.git = "https://github.com/pimalaya/io-gmail"
-io-http.git = "https://github.com/pimalaya/io-http"
-io-imap.git = "https://github.com/pimalaya/io-imap"
-io-jmap.git = "https://github.com/pimalaya/io-jmap"
-io-maildir.git = "https://github.com/pimalaya/io-maildir"
-io-msgraph.git = "https://github.com/pimalaya/io-msgraph"
-io-smtp.git = "https://github.com/pimalaya/io-smtp"
-pimalaya-cli.git = "https://github.com/pimalaya/cli"
-pimalaya-config.git = "https://github.com/pimalaya/config"
-pimalaya-stream.git = "https://github.com/pimalaya/stream"

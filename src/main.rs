@@ -4,9 +4,16 @@
 mod backend;
 mod check;
 mod cli;
-mod client;
 mod config;
+mod driver;
+mod event;
 mod hook;
+#[cfg(feature = "imap")]
+mod imap;
+#[cfg(feature = "jmap")]
+mod jmap;
+#[cfg(feature = "maildir")]
+mod maildir;
 mod watch;
 
 use anyhow::Result;

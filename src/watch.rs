@@ -1,46 +1,41 @@
-//! `mirador watch` command: opens the configured backend, watches
-//! the chosen mailbox via the new
-//! [`io_email::client::EmailClientStd::watch_mailbox`] shared API,
-//! and fires per-event hooks until Ctrl+C.
+//! `mirador watch` command: watches accounts and fires their hooks on
+//! every change until Ctrl+C.
 //!
-//! Threading model: io-email's `watch_mailbox` is **blocking**, so
-//! we spawn it on a dedicated thread and stream events back through
-//! an `std::sync::mpsc` channel. The main thread reads the channel,
-//! dispatches hooks, and watches the shutdown flag.
+//! Bare `watch` watches every configured account at once, one thread
+//! each under a single shared shutdown; `-a/--account` narrows it to
+//! one. Each account's mailbox comes from its own config, so accounts
+//! watching different mailboxes need no flag; `-m/--mailbox` overrides
+//! it when a single account is watched.
 
 use std::{
     path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, RecvTimeoutError},
     },
     thread,
-    time::Duration,
 };
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use io_email::envelope::event::WatchEvent;
-use log::{info, trace};
+use log::{error, info};
 use pimalaya_cli::printer::Printer;
-use pimalaya_config::toml::TomlConfig;
 
 use crate::{
     backend::Backend,
-    client,
-    config::Config,
-    config::HooksConfig,
-    hook::{FlagsContext, MessageContext, run_flags_hook, run_message_hook},
+    config::{AccountConfig, Config},
+    driver,
 };
 
-const POLL_TICK: Duration = Duration::from_millis(500);
+/// The mailbox watched when neither the flag nor the account says.
+const DEFAULT_MAILBOX: &str = "INBOX";
 
-/// Watch a mailbox and execute hooks on every change.
+/// Watch accounts and fire their hooks on every change.
 #[derive(Debug, Parser)]
 pub struct WatchCommand {
     /// Mailbox to watch. Overrides the account's `mailbox` setting;
-    /// falls back to `INBOX` when neither is provided.
+    /// falls back to `INBOX` when neither is provided. Only valid when
+    /// a single account is watched, since accounts watch their own.
     #[arg(long, short)]
     pub mailbox: Option<String>,
 }
@@ -54,103 +49,70 @@ impl WatchCommand {
         backend: Backend,
     ) -> Result<()> {
         let mut config = Config::load(config_paths)?;
+        let selected = select_accounts(&mut config, account_name)?;
 
-        let Some((name, account)) = config.take_account(account_name)? else {
-            bail!("Cannot find account");
-        };
-
-        let mailbox = self
-            .mailbox
-            .or(account.mailbox.clone())
-            .unwrap_or_else(|| "INBOX".into());
-
-        let hooks = account.hooks.clone();
-
-        info!("watching mailbox `{mailbox}` on account `{name}`");
-
-        let mut client = client::open(account, backend)?;
+        if self.mailbox.is_some() && selected.len() > 1 {
+            bail!("--mailbox needs a single account; narrow with --account");
+        }
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_for_ctrlc = shutdown.clone();
         ctrlc::set_handler(move || {
-            println!("Received SIGINT, shutting down the watcher…");
-            shutdown_for_ctrlc.store(true, Ordering::SeqCst)
+            println!("received Ctrl+C, shutting down the watcher…");
+            shutdown_for_ctrlc.store(true, Ordering::SeqCst);
         })?;
 
-        let (tx, rx) = mpsc::channel();
+        let mut handles = Vec::with_capacity(selected.len());
 
-        // NOTE: spawn the blocking watch_mailbox on its own thread;
-        // main thread consumes events through `rx`.
-        let mailbox_for_worker = mailbox.clone();
-        let shutdown_for_worker = shutdown.clone();
-        let worker = thread::spawn(move || -> Result<()> {
-            client.watch_mailbox(&mailbox_for_worker, shutdown_for_worker, tx)?;
-            Ok(())
-        });
+        for (name, account) in selected {
+            let mailbox = self
+                .mailbox
+                .clone()
+                .or_else(|| account.mailbox.clone())
+                .unwrap_or_else(|| String::from(DEFAULT_MAILBOX));
+            let shutdown = shutdown.clone();
 
-        println!("Watching `{mailbox}` on account `{name}` (press Ctrl+C to exit)");
+            info!("watching `{mailbox}` on account `{name}`");
 
-        loop {
-            if shutdown.load(Ordering::SeqCst) {
-                break;
-            }
+            let handle = thread::Builder::new().name(name.clone()).spawn(move || {
+                if let Err(err) = driver::run(&name, account, mailbox, backend, shutdown) {
+                    error!("[{name}] watch stopped: {err:#}");
+                }
+            })?;
 
-            match rx.recv_timeout(POLL_TICK) {
-                Ok(event) => dispatch_event(&hooks, &event),
-                Err(RecvTimeoutError::Timeout) => continue,
-                Err(RecvTimeoutError::Disconnected) => break,
-            }
+            handles.push(handle);
         }
 
-        // NOTE: wait for the worker to wind down cleanly. It either
-        // observed `shutdown` and returned `Ok(())`, or it errored
-        // out and we surface that to the caller.
-        match worker.join() {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(err)) => Err(err),
-            Err(_) => bail!("Watch worker panicked"),
+        info!("press Ctrl+C to exit");
+
+        for handle in handles {
+            let _ = handle.join();
         }
+
+        Ok(())
     }
 }
 
-fn dispatch_event(hooks: &HooksConfig, event: &WatchEvent) {
-    trace!("dispatch event: {event:?}");
+/// Selects the accounts to watch: the named one, or every configured
+/// account when no name is given.
+fn select_accounts(
+    config: &mut Config,
+    account_name: Option<&str>,
+) -> Result<Vec<(String, AccountConfig)>> {
+    if let Some(name) = account_name {
+        let Some(entry) = config.accounts.remove_entry(name) else {
+            bail!("account `{name}` not found in config");
+        };
 
-    match event {
-        WatchEvent::EnvelopeAdded { mailbox, envelope } => {
-            if let Some(hook) = &hooks.on_message_added {
-                run_message_hook(
-                    hook,
-                    &MessageContext {
-                        mailbox,
-                        id: &envelope.id,
-                        envelope: Some(envelope),
-                    },
-                );
-            }
-        }
-        WatchEvent::EnvelopeRemoved { mailbox, id } => {
-            if let Some(hook) = &hooks.on_message_removed {
-                run_message_hook(
-                    hook,
-                    &MessageContext {
-                        mailbox,
-                        id,
-                        envelope: None,
-                    },
-                );
-            }
-        }
-        WatchEvent::FlagsAdded { mailbox, id, flags } => {
-            if let Some(hook) = &hooks.on_flags_added {
-                run_flags_hook(hook, &FlagsContext { mailbox, id, flags });
-            }
-        }
-        WatchEvent::FlagsRemoved { mailbox, id, flags } => {
-            if let Some(hook) = &hooks.on_flags_removed {
-                run_flags_hook(hook, &FlagsContext { mailbox, id, flags });
-            }
-        }
-        WatchEvent::KeepAlive => {}
+        return Ok(vec![entry]);
     }
+
+    if config.accounts.is_empty() {
+        bail!("no accounts configured");
+    }
+
+    let mut all: Vec<_> = config.accounts.drain().collect();
+    all.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    Ok(all)
 }

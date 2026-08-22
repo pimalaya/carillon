@@ -61,6 +61,11 @@ imap.server = "imaps://imap.example.org"
 # Enable STARTTLS (only valid when the server resolves to `imap://`).
 #imap.starttls = false
 
+# Force the RFC 4959 SASL-IR initial response on or off. Unset follows the
+# advertised SASL-IR capability, which Coremail (126.com, 163.com) advertises
+# and then rejects; set it to false there.
+#imap.sasl-ir = false
+
 # TLS provider, defaults to the first available at runtime.
 #imap.tls.provider = "rustls"
 #imap.tls.provider = "native-tls"
@@ -135,7 +140,7 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #jmap.auth.basic.username = "user@example.org"
 #jmap.auth.basic.password.command = "pass show mirador/example"
 
-# ---- Maildir backend (filesystem notifications) -------------------------------
+# ---- Maildir backend (listing poll) -------------------------------------------
 
 # Root directory containing one subdirectory per mailbox (Maildir++ layout).
 #maildir.root = "~/Mail/example"
@@ -145,9 +150,16 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 # either a string (handed to /bin/sh -c on Unix, cmd /C on Windows) or a
 # list [program, args...] spawned directly. Placeholders are exported as
 # environment variables on the spawned process: $id, $mailbox, $subject,
-# $sender, $sender_name, $sender_address, $recipient, $recipient_name,
-# $recipient_address, $flag, $flags ($subject/$sender/$recipient only
-# resolve on on-message-added).
+# $date, $sender, $sender_name, $sender_address, $recipient, $recipient_name,
+# $recipient_address, $flag, $flags.
+#
+# $id is the backend's own message id: an IMAP UID, a JMAP Email id, a Maildir
+# file name. The envelope variables ($subject, $date, $sender, $recipient) are
+# resolved on a second connection and only for on-message-added, over IMAP; the
+# other backends leave them unset.
+#
+# Flag names are normalised across backends, so one filter fires everywhere:
+# IMAP \Seen, JMAP $seen and the Maildir S letter all arrive as Seen.
 # --------------------------------------------------------------------------------
 
 hooks.on-message-added.notify.summary = "New mail from $sender"

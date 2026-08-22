@@ -29,11 +29,12 @@ CLI to watch mailbox changes, written in Rust
 
 ## Features
 
-- Remote backends: **IMAP** via [RFC 2177 IDLE](https://datatracker.ietf.org/doc/html/rfc2177), **JMAP** via [RFC 8620 §7.2 EventSource](https://datatracker.ietf.org/doc/html/rfc8620#section-7.2) push
-- Local backend: **Maildir** <sup>[specs](https://cr.yp.to/proto/maildir.html)</sup> via filesystem notifications
+- Remote backends: **IMAP** via [RFC 2177 IDLE](https://datatracker.ietf.org/doc/html/rfc2177) with [RFC 7162 QRESYNC](https://datatracker.ietf.org/doc/html/rfc7162) deltas where the server offers them, **JMAP** via an [RFC 8620 §5.2 `Email/changes`](https://datatracker.ietf.org/doc/html/rfc8620#section-5.2) poll
+- Local backend: **Maildir** <sup>[specs](https://cr.yp.to/proto/maildir.html)</sup> via a listing poll
+- Watch every configured account at once (one thread each), or narrow to one with `-a/--account`; a dropped connection is reopened with a capped backoff
 - Watch events: **`on-message-added`**, **`on-message-removed`**, **`on-flags-added`**, **`on-flags-removed`** (flag hooks accept an optional `flags = [...]` filter)
 - Hook actions: **system notification** via [notify-rust](https://crates.io/crates/notify-rust) and **shell command** (TOML string handed to `/bin/sh -c` on Unix / `cmd /C` on Windows; or a TOML `[program, args…]` list spawned directly with no shell)
-- Shell-style placeholders (`$name` / `${name}`) in hook strings: `id`, `mailbox`, `subject`, `sender`, `sender_name`, `sender_address`, `recipient`, `recipient_name`, `recipient_address`, `flag`, `flags`. Shell-command hooks receive them as environment variables, so the shell's own expansion does the substitution: write `"$subject"` (quoted) for safe whitespace handling.
+- Shell-style placeholders (`$name` / `${name}`) in hook strings: `id`, `mailbox`, `subject`, `date`, `sender`, `sender_name`, `sender_address`, `recipient`, `recipient_name`, `recipient_address`, `flag`, `flags`. Shell-command hooks receive them as environment variables, so the shell's own expansion does the substitution: write `"$subject"` (quoted) for safe whitespace handling.
 - **Simple auth** support for IMAP: anonymous, login, plain, oauthbearer, xoauth2, scram-sha-256
 - **HTTP auth** support for JMAP: basic, bearer
 - **TLS** support:
