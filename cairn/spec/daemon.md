@@ -13,7 +13,7 @@ It watches; it never syncs. A change is reported as it is seen (an item arrived,
 Each backend brings its own way of learning about a change, and the daemon translates all of them into one vocabulary, so a hook is written once: IMAP holds IDLE and reports UID-keyed deltas, JMAP polls `Email/changes`, Maildir re-lists the mailbox, WebDAV reports what a collection did since a sync token. Mail is not the boundary: a WebDAV collection is a CalDAV calendar or a CardDAV addressbook just as readily. The protocol crates own the protocols (io-imap, io-jmap, io-maildir, io-webdav); this repository owns the config, the hooks and the supervision.
 
 ### Requirement: A watch runs from a TOML file
-The daemon SHALL read its accounts from a TOML config file, resolved from an explicit path then the standard user paths. Each account SHALL carry at least one backend block (`imap`, `jmap`, `maildir`, `dav`), an optional watched mailbox, and the hooks it fires. The config schema SHALL stay compatible with himalaya CLI and himalaya TUI, so one file can back every binary, and unknown keys SHALL be ignored rather than refused.
+The daemon SHALL read its accounts from a TOML config file, resolved from an explicit path then the standard user paths. Each account SHALL carry at least one backend block (`imap`, `jmap`, `maildir`, `dav`), the collection it watches, and the hooks it fires. The config schema SHALL stay compatible with himalaya CLI and himalaya TUI, so one file can back every binary, and unknown keys SHALL be ignored rather than refused.
 
 #### Scenario: A local watch from a config file
 - **GIVEN** a config describing one IMAP account with an `on-item-added` notify hook
@@ -21,7 +21,28 @@ The daemon SHALL read its accounts from a TOML config file, resolved from an exp
 - **THEN** a desktop notification fires, with no network delivery and no account with any service
 
 ### Requirement: Every configured account, or a chosen one
-Bare `mirador watch` SHALL watch every configured account at once, one thread each under a single shared shutdown. `-a/--account` SHALL narrow the watch to that account, and an unknown name SHALL be an error. Each account's mailbox SHALL come from its own config, so accounts watching different mailboxes need no flag; `-m/--mailbox` overrides it and SHALL be refused when more than one account is watched, since it could only mean one of them.
+Bare `mirador watch` SHALL watch every configured account at once, one thread each under a single shared shutdown. `-a/--account` SHALL narrow the watch to that account, and an unknown name SHALL be an error. One account's watch failure SHALL be logged and retried on its own without stalling the others.
+
+### Requirement: An account watches one collection, one way
+An account SHALL name the one collection it watches, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection is a second account, which is also how it gets its own hooks. Every backend SHALL read the collection the same way, the DAV one included, whose `server` names the DAV root and whose collection is the path under it.
+
+#### Scenario: A second collection
+- **GIVEN** an account watching one mailbox
+- **WHEN** a second mailbox is to be watched
+- **THEN** it is a second account, with its own hooks, and no flag exists to ask for it
+
+### Requirement: A backend refuses a method it does not have
+The watch method SHALL be named by its mechanism (`watch.idle`, `watch.push`, `watch.poll`), the way a SASL mechanism and an HTTP auth scheme already are. Unset, an account SHALL watch the best way its backend has: IDLE for IMAP, a held event stream for JMAP, a poll for the backends with nothing else. Every backend SHALL offer the poll, whose interval MAY be given and otherwise takes what suits that backend. A backend asked for a method it cannot honour SHALL refuse to start, naming what it offers, rather than quietly using another one.
+
+#### Scenario: A server whose IDLE cannot be trusted
+- **GIVEN** an IMAP account whose server accepts IDLE and then never speaks
+- **WHEN** the account configures `watch.poll.interval`
+- **THEN** the watch re-reads the mailbox on that interval instead, reporting the same events
+
+#### Scenario: A method the backend does not have
+- **GIVEN** a Maildir account configuring `watch.idle`
+- **WHEN** the watch starts
+- **THEN** it fails, saying the maildir backend offers poll, rather than polling anyway
 
 #### Scenario: Watch everything
 - **GIVEN** a config with two accounts and no account flag

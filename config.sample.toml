@@ -6,165 +6,165 @@
 #   - $HOME/.config/mirador/config.toml
 #   - $HOME/.miradorrc
 #
-# Override with `mirador -c <PATH>` or `MIRADOR_CONFIG=<PATH>`. Multiple paths
-# can be passed at once, separated by `:`; the first one is the base and the
-# rest are deep-merged on top of it.
+# Override with `mirador -c <PATH>` or `MIRADOR_CONFIG=<PATH>`, both accepting a
+# `:`-delimited list: the first one is the base and the rest are deep-merged on
+# top of it.
 #
-# Copy this file to the first path, keep the account and the hooks you want,
-# delete the rest, then run `mirador watch`. There is no wizard: mirador bails
-# with a pointer to this file when no config file resolves.
-#
-# The `[accounts.<name>]` block uses the same schema as `himalaya` CLI v2 and
-# `himalaya-tui`. One TOML file can back all three binaries; mirador-only
-# fields (`mailbox`, the five `on-*` hook tables) coexist with the shared keys
-# without errors.
+# There is no wizard: copy this file, keep one backend and the hooks you want,
+# then delete the rest. The `[accounts.<name>]` block is the schema `himalaya`
+# CLI v2 and `himalaya-tui` read, so one file backs all three binaries; the
+# mirador-only fields (`collection`, `watch`, the `hooks.*` tables) are ignored
+# by them.
 # ================================================================================
 
-# --------------------------------------------------------------------------------
-# Account config
-# --------------------------------------------------------------------------------
-
-# Declare one section per account. Pick one with `-a/--account <NAME>` or let
-# mirador use the entry flagged `default = true`.
 [accounts.example]
 
 # Use this account when `-a/--account` is not passed.
 default = true
 
-# Mailbox watched by `mirador watch` when `-m/--mailbox` is omitted, defaulting
-# to "INBOX". JMAP matches the mailbox by name, case-insensitively, and falls
-# back to the special-use role for "INBOX", so a server naming its inbox in
-# another language still resolves. For Maildir the value resolves under the
-# backend root, "." naming the root itself. The dav backend ignores this: its
-# collection URL already names what to watch.
-mailbox = "INBOX"
+# What this account watches, and the only thing it watches: one account is one
+# backend is one collection. Required. Watching a second collection is a second
+# account, which is also how it gets its own hooks. `mailbox` still reads as the
+# former name of this key.
+#
+# IMAP takes the mailbox name. JMAP matches it by name, case-insensitively,
+# falling back to the special-use role for "INBOX". Maildir resolves it under
+# the backend root, "." naming the root itself. WebDAV reads it as a path under
+# `dav.server`, or as an absolute path when it starts with a slash.
+collection = "INBOX"
+
+# How this account learns about a change. Unset takes the best method the
+# backend has: idle for IMAP, push for JMAP, a poll for the two with nothing
+# else. A backend refuses a method it does not have rather than quietly using
+# another one.
+#
+#watch.idle = {}            # IMAP: hold a connection and let the server speak
+#watch.push.ping = 30       # JMAP: hold an event stream, seconds between pings
+#watch.poll.interval = 60   # any backend: ask again on an interval
+#
+# The poll interval is unset by default, each backend taking what suits it: a
+# couple of seconds for a local directory read, a minute for a remote one.
 
 # --------------------------------------------------------------------------------
 # Backend config
-#
-# Declare one or more of the `imap`, `jmap`, `maildir` blocks below. When more
-# than one is configured, `-b/--backend {imap,jmap,maildir}` selects the active
-# one; with `-b auto` (default) the priority order is IMAP, then JMAP, then
-# Maildir, and the first configured block wins.
 # --------------------------------------------------------------------------------
 
-# ---- IMAP backend (RFC 2177 IDLE) ----------------------------------------------
+# Declare one or more of the `imap`, `jmap`, `maildir` and `dav` blocks below.
+# With more than one, `-b/--backend` selects the active one; `-b auto`, the
+# default, takes the first configured among IMAP, JMAP, Maildir, WebDAV.
+#
+# Every secret below is either `raw = "..."` or `command = "..."`, the command
+# being a string handed to the platform shell or a [program, args...] list, and
+# its standard output the value.
 
-# IMAP server address. Either a bare authority (`imap.example.org[:port]`,
-# treated as `imaps://<authority>` by default), or a full URL with `imap://`
-# (cleartext, optionally upgraded via STARTTLS) or `imaps://` (implicit TLS)
-# scheme used verbatim.
+# ---- IMAP: an idle connection (RFC 2177) ---------------------------------------
+
+# Server address: a bare authority (`imap.example.org[:port]`, read as
+# `imaps://<authority>`), or a full `imap://` (cleartext, optionally upgraded
+# with STARTTLS) or `imaps://` (implicit TLS) URL used verbatim.
 imap.server = "imaps://imap.example.org"
-#imap.server = "imap.example.org"
-#imap.server = "imap://example.org:143"
 
-# Enable STARTTLS (only valid when the server resolves to `imap://`).
+# Upgrade a cleartext connection with STARTTLS.
 #imap.starttls = false
 
-# Force the RFC 4959 SASL-IR initial response on or off. Unset follows the
-# advertised SASL-IR capability, which Coremail (126.com, 163.com) advertises
-# and then rejects; set it to false there.
-#imap.sasl-ir = false
-
-# TLS provider, defaults to the first available at runtime.
-#imap.tls.provider = "rustls"
-#imap.tls.provider = "native-tls"
-#imap.tls.rustls.crypto = "ring"
-#imap.tls.rustls.crypto = "aws"
+# TLS options, defaulting to the first provider available at runtime.
+#imap.tls.provider = "rustls"     # or "native-tls"
+#imap.tls.rustls.crypto = "ring"  # or "aws"
 #imap.tls.cert = "/path/to/custom/cert.pem"
 
-# Pick exactly one SASL mechanism among `anonymous`, `login`, `plain`,
-# `oauthbearer`, `xoauth2`, `scram-sha-256`. Omit the whole `imap.sasl` table
-# to skip authentication entirely (no `AUTHENTICATE` command sent).
-
-# SASL PLAIN (https://www.iana.org/go/rfc4616)
+# Exactly one SASL mechanism among `plain`, `login`, `anonymous`,
+# `oauthbearer`, `xoauth2` and `scram-sha-256`. Omit the whole `imap.sasl`
+# table to skip authentication entirely, sending no `AUTHENTICATE` command.
 imap.sasl.plain.username = "user@example.org"
 imap.sasl.plain.password.raw = "REPLACE_ME"
-#imap.sasl.plain.authzid = "user@example.org"  # optional authorization identity
 #imap.sasl.plain.password.command = "pass show mirador/example"
-
-# SASL LOGIN (https://datatracker.ietf.org/doc/html/draft-murchison-sasl-login-00)
+#imap.sasl.plain.authzid = "user@example.org"
 #imap.sasl.login.username = "user@example.org"
-#imap.sasl.login.password.raw = "***"
-
-# SASL ANONYMOUS (https://www.iana.org/go/rfc4505)
+#imap.sasl.login.password.raw = "REPLACE_ME"
 #imap.sasl.anonymous.message = "mirador"
-
-# SASL OAUTHBEARER (https://www.iana.org/go/rfc7628). Host/port for the
-# GS2 header are derived from the IMAP server URL at connect time.
 #imap.sasl.oauthbearer.username = "user@example.org"
 #imap.sasl.oauthbearer.token.command = ["ortie", "token", "read", "example"]
-
-# SASL XOAUTH2 (Google's pre-standard OAuth 2.0 SASL).
 #imap.sasl.xoauth2.username = "user@example.org"
 #imap.sasl.xoauth2.token.command = "ortie token read gmail"
-
-# SASL SCRAM-SHA-256 (https://www.iana.org/go/rfc7677)
 #imap.sasl.scram-sha-256.username = "user@example.org"
-#imap.sasl.scram-sha-256.password.raw = "***"
+#imap.sasl.scram-sha-256.password.raw = "REPLACE_ME"
 
-# RFC 2971 ID extension. Some providers (mail.qq.com, fastmail) require an `ID`
-# exchange straight after authentication; set `auto = true` to opt in.
-# https://www.rfc-editor.org/rfc/rfc2971.html
+# Force the RFC 4959 SASL-IR initial response on or off. Unset follows the
+# advertised capability, which Coremail (126.com, 163.com) advertises and then
+# rejects: set it to false there.
+#imap.sasl-ir = false
+
+# RFC 2971 ID exchange, which some providers (mail.qq.com, fastmail) require
+# straight after authentication. Only the listed fields are sent: `true` sends
+# mirador's canned value for `name`, `version`, `vendor` and `support-url`,
+# `false` sends NIL, and an empty map sends `ID NIL`.
 #imap.id.auto = false
-
-# Per-field policy for the auto-ID command. Keys not listed here are NOT sent.
-# `true` substitutes mirador's canned value for the well-known keys (name,
-# version, vendor, support-url); unknown keys with `true` fall back to NIL with
-# a warning. `false` always sends NIL. An empty map sends `ID NIL`.
 #imap.id.fields = { name = true, version = true, vendor = true, support-url = true }
 
-# ---- JMAP backend (RFC 8621 Email/changes poll) --------------------------------
+# ---- JMAP: a changes poll (RFC 8621) -------------------------------------------
 
-# JMAP server address. Either a bare authority (auto-discovered via
-# `GET /.well-known/jmap`) or a full URL pointing directly at the session
-# endpoint.
+# Server address: a bare authority, discovered through `/.well-known/jmap`, or
+# a full URL naming the session endpoint.
 #jmap.server = "fastmail.com"
 #jmap.server = "https://api.fastmail.com/jmap/session"
 
-# TLS knobs mirror the imap.tls block above.
+# TLS options, same shape as `imap.tls`.
 #jmap.tls.provider = "rustls"
-#jmap.tls.rustls.crypto = "ring"
-#jmap.tls.cert = "/path/to/custom/cert.pem"
 
-# Pick exactly one of `header`, `bearer`, `basic`.
-
-# Raw `Authorization` header value, used verbatim.
-#jmap.auth.header.raw = "Bearer eyJhbGciOiJ..."
+# Exactly one of `header`, whose value is sent verbatim, `bearer` or `basic`.
 #jmap.auth.header.command = "pass show mirador/fastmail-token"
-
-# OAuth 2.0 / API token bearer.
 #jmap.auth.bearer.token.command = ["ortie", "token", "read", "fastmail"]
-
-# HTTP Basic.
 #jmap.auth.basic.username = "user@example.org"
 #jmap.auth.basic.password.command = "pass show mirador/example"
 
-# ---- Maildir backend (listing poll) -------------------------------------------
+# ---- Maildir: a listing poll ---------------------------------------------------
 
-# Root directory of the Maildir tree. Subfolders are real nested directories
-# (the layout himalaya uses); watch the root itself with mailbox = "." or
-# "INBOX", and a subfolder by its path, e.g. mailbox = "Archive".
+# Root of the Maildir tree, subfolders being real nested directories, the
+# layout himalaya uses. Watch the root itself with collection = "." or "INBOX",
+# and a subfolder by its path, e.g. collection = "Archive".
 #maildir.root = "~/Mail/example"
 
+# ---- WebDAV: a sync-collection poll (RFC 6578) ---------------------------------
+
+# The DAV server URL. What to watch under it is the account's `collection`,
+# read as a path: `collection = "calendars/alice/work/"` here. A CalDAV
+# calendar, a CardDAV addressbook and a plain DAV collection all configure the
+# same way.
+#dav.server = "https://dav.example.org/"
+
+# Omit for a collection readable without authentication.
+#dav.auth.basic.username = "alice"
+#dav.auth.basic.password.command = "pass show dav/example"
+#dav.auth.bearer.token.command = "ortie token read example"
+
+# TLS options, same shape as `imap.tls`.
+#dav.tls.provider = "rustls"
+
 # --------------------------------------------------------------------------------
-# Hooks: hooks.on-item-{added,removed,changed} and hooks.on-flags-{added,removed},
-# each with {notify,cmd}. `on-message-added` and `on-message-removed` still work
-# as the former names of the two item hooks. `cmd` is
-# either a string (handed to /bin/sh -c on Unix, cmd /C on Windows) or a
-# list [program, args...] spawned directly. Placeholders are exported as
-# environment variables on the spawned process: $id, $mailbox, $subject,
+# Hooks config
+# --------------------------------------------------------------------------------
+
+# One hook per event: `hooks.on-item-added`, `hooks.on-item-removed`,
+# `hooks.on-item-changed`, `hooks.on-flags-added` and `hooks.on-flags-removed`,
+# the first two also answering to their former `on-message-*` names. Each fires
+# a `notify` desktop notification, a `cmd`, or both, and a flag hook takes an
+# optional `flags` filter narrowing it to the flags it names.
+#
+# `cmd` is either a string handed to the platform shell (/bin/sh -c on Unix,
+# cmd /C on Windows) or a [program, args...] list spawned directly. Either way
+# the placeholders reach it as environment variables: $id, $collection, $subject,
 # $date, $sender, $sender_name, $sender_address, $recipient, $recipient_name,
-# $recipient_address, $flag, $flags.
+# $recipient_address, $flag, $flags. $mailbox still reaches it as the former
+# name of $collection.
 #
-# $id is the backend's own message id: an IMAP UID, a JMAP Email id, a Maildir
-# file name. The envelope variables ($subject, $date, $sender, $recipient) are
-# resolved on a second connection and only for on-item-added, over IMAP; the
-# other backends leave them unset.
+# $id is the backend's own id: an IMAP UID, a JMAP Email id, a Maildir file
+# name, a WebDAV href. The envelope variables ($subject, $date, $sender,
+# $recipient) are resolved on a second connection, over IMAP only, and only for
+# on-item-added.
 #
-# Flag names are normalised across backends, so one filter fires everywhere:
-# IMAP \Seen, JMAP $seen and the Maildir S letter all arrive as Seen.
-# --------------------------------------------------------------------------------
+# Flag names are the same whatever the backend: IMAP \Seen, JMAP $seen and the
+# Maildir S letter all arrive as Seen. WebDAV has no flags, and is the only
+# backend holding items mutable enough to report on-item-changed.
 
 hooks.on-item-added.notify.summary = "New mail from $sender"
 hooks.on-item-added.notify.body = "$subject"
@@ -172,27 +172,3 @@ hooks.on-item-added.cmd = 'echo "$id arrived" >> ~/.local/state/mirador.log'
 
 hooks.on-flags-added.flags = ["Seen"]
 hooks.on-flags-added.cmd = ["notify-send", "New flag on $id"]
-
-# ---- WebDAV backend (sync-collection poll) ------------------------------------
-
-# The collection URL: a CalDAV calendar, a CardDAV addressbook or a plain DAV
-# collection, path included. CalDAV and CardDAV are WebDAV, so all three
-# configure the same way.
-#dav.server = "https://dav.example.org/calendars/alice/work/"
-
-# Seconds between two sync-collection reports. Defaults to 60.
-#dav.poll = 60
-
-# Authentication. Omit for a collection readable without one.
-#dav.auth.basic.username = "alice"
-#dav.auth.basic.password.command = "pass show dav/example"
-#dav.auth.bearer.token.command = "ortie token read example"
-
-# TLS, same shape as the other backends.
-#dav.tls.provider = "rustls"
-#dav.tls.cert = "/path/to/custom/cert.pem"
-
-# WebDAV items are mutable, so this is the backend that fires
-# hooks.on-item-changed. It has no flags, so the flag hooks never fire for it,
-# and the report asks for etags only, so no envelope variables resolve either:
-# a hook that wants a contact's name reads the href itself.

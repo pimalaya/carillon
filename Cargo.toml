@@ -7,9 +7,8 @@ rust-version = "1.89"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 categories = ["command-line-utilities", "email"]
-keywords = ["cli", "email", "watch", "imap", "jmap"]
+keywords = ["cli", "watch", "imap", "jmap", "dav"]
 homepage = "https://pimalaya.org"
-documentation = "https://pimalaya.org/mirador/cli/latest"
 repository = "https://github.com/pimalaya/mirador"
 
 [package.metadata.docs.rs]

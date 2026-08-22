@@ -20,7 +20,12 @@ use crate::{
 
 /// Fires whichever hook `event` calls for, with `summary` filled in
 /// when an arrival was resolved.
-pub fn run(hooks: &HooksConfig, event: &WatchEvent, mailbox: &str, summary: Option<&ItemSummary>) {
+pub fn run(
+    hooks: &HooksConfig,
+    event: &WatchEvent,
+    collection: &str,
+    summary: Option<&ItemSummary>,
+) {
     trace!("dispatch event: {event:?}");
 
     match event {
@@ -28,31 +33,31 @@ pub fn run(hooks: &HooksConfig, event: &WatchEvent, mailbox: &str, summary: Opti
             let Some(hook) = &hooks.on_item_added else {
                 return;
             };
-            run_item_hook(hook, item_vars(id, mailbox, summary));
+            run_item_hook(hook, item_vars(id, collection, summary));
         }
         WatchEvent::ItemRemoved { id } => {
             let Some(hook) = &hooks.on_item_removed else {
                 return;
             };
-            run_item_hook(hook, item_vars(id, mailbox, None));
+            run_item_hook(hook, item_vars(id, collection, None));
         }
         WatchEvent::ItemChanged { id } => {
             let Some(hook) = &hooks.on_item_changed else {
                 return;
             };
-            run_item_hook(hook, item_vars(id, mailbox, None));
+            run_item_hook(hook, item_vars(id, collection, None));
         }
         WatchEvent::FlagsAdded { id, flags } => {
             let Some(hook) = &hooks.on_flags_added else {
                 return;
             };
-            run_flags_hook(hook, id, mailbox, flags);
+            run_flags_hook(hook, id, collection, flags);
         }
         WatchEvent::FlagsRemoved { id, flags } => {
             let Some(hook) = &hooks.on_flags_removed else {
                 return;
             };
-            run_flags_hook(hook, id, mailbox, flags);
+            run_flags_hook(hook, id, collection, flags);
         }
     }
 }
@@ -66,7 +71,7 @@ fn run_item_hook(hook: &ItemHook, vars: BTreeMap<&'static str, String>) {
 fn run_flags_hook(
     hook: &FlagsHook,
     id: &str,
-    mailbox: &str,
+    collection: &str,
     flags: &std::collections::BTreeSet<String>,
 ) {
     if !hook.flags.is_empty() && !flags.iter().any(|flag| matches_filter(&hook.flags, flag)) {
@@ -76,7 +81,10 @@ fn run_flags_hook(
 
     let mut vars = BTreeMap::new();
     vars.insert("id", id.to_string());
-    vars.insert("mailbox", mailbox.to_string());
+    vars.insert("collection", collection.to_string());
+    // NOTE: what the collection was called before it could be a
+    // calendar; kept so a hook written against it keeps working.
+    vars.insert("mailbox", collection.to_string());
     vars.insert("flags", flags.iter().cloned().collect::<Vec<_>>().join(","));
 
     if let Some(first) = flags.iter().next() {
@@ -90,12 +98,15 @@ fn run_flags_hook(
 /// ones are present only for a resolved arrival.
 fn item_vars(
     id: &str,
-    mailbox: &str,
+    collection: &str,
     summary: Option<&ItemSummary>,
 ) -> BTreeMap<&'static str, String> {
     let mut vars = BTreeMap::new();
     vars.insert("id", id.to_string());
-    vars.insert("mailbox", mailbox.to_string());
+    vars.insert("collection", collection.to_string());
+    // NOTE: what the collection was called before it could be a
+    // calendar; kept so a hook written against it keeps working.
+    vars.insert("mailbox", collection.to_string());
 
     let Some(summary) = summary else {
         return vars;

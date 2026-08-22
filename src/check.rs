@@ -128,15 +128,12 @@ fn check_maildir(
 }
 
 #[cfg(feature = "dav")]
-fn check_dav(
-    _account_config: &AccountConfig,
-    dav_config: crate::config::DavConfig,
-) -> BackendCheck {
+fn check_dav(account_config: &AccountConfig, dav_config: crate::config::DavConfig) -> BackendCheck {
     // NOTE: opening proves the transport, and one report proves the
     // credential and that the collection is really there, which is
     // what a watch would find out on its first poll.
     let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let result = crate::dav::probe(&dav_config, &shutdown);
+    let result = crate::dav::probe(&dav_config, &account_config.collection, &shutdown);
 
     BackendCheck::from("dav", result)
 }

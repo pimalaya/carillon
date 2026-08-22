@@ -53,6 +53,9 @@ use crate::{
 /// How long a watch waits for an event before checking the shutdown
 /// flag again.
 const POLL_TICK: Duration = Duration::from_millis(500);
+/// How long a polling watch waits between two re-reads, unless the
+/// config says otherwise.
+const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How long the watch worker, and the resolver, may sit in a read
 /// before looking at the shutdown flag again.
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
@@ -97,22 +100,51 @@ pub fn open(config: &ImapConfig) -> Result<(ImapClientStd, Vec<Capability<'stati
     Ok(ImapClientStd::connect(&server, &tls, sasl, opts)?)
 }
 
-/// Watches `mailbox` until the connection ends or `shutdown` is set,
-/// calling `on_event` for every change.
+/// Watches `collection` over a held IDLE, until the connection ends or
+/// `shutdown` is set.
 ///
 /// io-imap runs the watch on its own thread and hands events over a
 /// channel, so this loop stays free to notice a shutdown between them.
-pub fn watch(
+pub fn watch_idle(
     config: &ImapConfig,
-    mailbox: &str,
+    collection: &str,
+    shutdown: &Arc<AtomicBool>,
+    on_event: impl FnMut(WatchEvent),
+) -> Result<()> {
+    watch(config, collection, None, shutdown, on_event)
+}
+
+/// Watches `collection` the same way, but re-reading on an interval
+/// instead of holding IDLE.
+///
+/// For a server whose IDLE cannot be trusted: it costs a re-read per
+/// interval and notices a change that much later, which is why it is
+/// asked for rather than fallen back on.
+pub fn watch_poll(
+    config: &ImapConfig,
+    collection: &str,
+    interval: Option<Duration>,
+    shutdown: &Arc<AtomicBool>,
+    on_event: impl FnMut(WatchEvent),
+) -> Result<()> {
+    let interval = interval.unwrap_or(POLL_INTERVAL);
+
+    watch(config, collection, Some(interval), shutdown, on_event)
+}
+
+fn watch(
+    config: &ImapConfig,
+    collection: &str,
+    poll: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
     mut on_event: impl FnMut(WatchEvent),
 ) -> Result<()> {
     let (client, capability) = open(config)?;
-    let watched = Mailbox::try_from(mailbox.to_string())
-        .map_err(|err| anyhow!("invalid mailbox name `{mailbox}`: {err}"))?;
+    let watched = Mailbox::try_from(collection.to_string())
+        .map_err(|err| anyhow!("invalid mailbox name `{collection}`: {err}"))?;
     let opts = ImapMailboxWatchStreamOptions {
         shutdown_poll: READ_TIMEOUT,
+        poll,
     };
     let stream = client.watch_mailbox(watched, &capability, opts)?;
 

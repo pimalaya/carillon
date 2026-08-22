@@ -13,7 +13,7 @@
 ### v0.1.0 changes
 
 - **Deep rewrite on top of the I/O-free io-* ecosystem.** The CLI is synchronous, the binary is smaller, and each backend watches through the crate that speaks its own protocol.
-- **Four first-class backends behind one watch surface:** IMAP holds an idle connection (RFC 2177), JMAP polls for changes (RFC 8621), Maildir re-lists the mailbox, and WebDAV asks a collection what moved since a sync token (RFC 6578), which covers CalDAV and CardDAV.
+- **Four first-class backends behind one watch surface:** IMAP holds an idle connection (RFC 2177), JMAP is pushed to over an event-source stream (RFC 8620 §7.3), Maildir re-lists the mailbox, and WebDAV asks a collection what moved since a sync token (RFC 6578), which covers CalDAV and CardDAV.
 - **Shared configuration schema** with `himalaya` CLI v2 and `himalaya-tui` for the `[accounts.<name>]` block (`imap.*`, `jmap.*`, `maildir.*`, `dav.*` keys). One TOML file can back all three binaries.
 - **Five watch event hooks** (`on-item-added`, `on-item-removed`, `on-item-changed`, `on-flags-added`, `on-flags-removed`) with template placeholders shared across kinds. `on-message-added` and `on-message-removed` are accepted as the former names of the first two.
 - **Keyring moved out** to a shell command: any CLI that prints the secret to stdout works (`secret-tool lookup …`, `pass show …`, `security find-generic-password …`, etc.).
@@ -39,7 +39,7 @@ New in v0.1.0: `--log-file <PATH>` writes logs straight to a file, inherited fro
 
 | draft | v0.1.0 |
 |---|---|
-| `watch [ACCOUNT] [FOLDER]` (positional) | `watch [-m/--mailbox NAME]` (account is the global `-a` flag; `folder` → `mailbox`) |
+| `watch [ACCOUNT] [FOLDER]` (positional) | `watch` (account is the global `-a` flag; what is watched is the account's `collection`, so there is no flag for it) |
 | `doctor [ACCOUNT]` (aliases `check-up`, `checkup`, `check`) | `check` (validates the account against each configured backend; no aliases) |
 | `configure [ACCOUNT] [--reset/-r]` | (removed; hand-edit [config.sample.toml](./config.sample.toml)) |
 | `manual <SHELL>` (aliases `manuals`, `mans`) | `manuals <DIR>` (writes one man page per command) |
@@ -51,7 +51,7 @@ The full v0.1.0 schema lives in [config.sample.toml](./config.sample.toml). The 
 
 #### Backend block
 
-The single biggest shape change. The draft `[accounts.<name>.backend]` table is gone. v0.1.0 borrows the shape of [himalaya CLI v2](https://github.com/pimalaya/himalaya/blob/master/config.sample.toml): each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`, `dav.*`), declared as flat dotted entries directly under `[accounts.<name>]`. Declaring more than one is allowed; pick the active one with `-b/--backend {imap,jmap,maildir,dav}` (default `auto` picks IMAP, then JMAP, then Maildir, then WebDAV among the configured blocks).
+The single biggest shape change. The draft `[accounts.<name>.backend]` table is gone. v0.1.0 borrows the shape of [himalaya CLI v2](https://github.com/pimalaya/himalaya/blob/master/config.sample.toml): each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`, `dav.*`), declared as flat dotted entries directly under `[accounts.<name>]`. Declaring more than one is allowed; pick the active one with `-b/--backend {imap,jmap,maildir,dav}` (default `auto` picks IMAP, then JMAP, then Maildir, then WebDAV among the configured blocks). The mirador-only keys are `collection` (what the account watches, required) and `watch` (how it watches).
 
 | draft | v0.1.0 |
 |---|---|
@@ -72,7 +72,7 @@ The IMAP SASL config carries the mechanism name as the *key* under `sasl` (`imap
 | (no other event) | `hooks.on-item-removed.*`, `hooks.on-item-changed.*`, `hooks.on-flags-added.*`, `hooks.on-flags-removed.*` (same `notify` + `cmd` shape) |
 | (no flag filter) | `hooks.on-flags-{added,removed}.flags = ["Seen", …]` narrows firing to a specific IANA-classified flag |
 
-Placeholders use shell-style `$name` / `${name}` syntax in the notification `summary` / `body` (expanded with [subst](https://crates.io/crates/subst)) and are also exported as environment variables on the spawned `cmd` process. Available names: `id`, `mailbox`, `subject`, `date`, `sender`, `sender_name`, `sender_address`, `recipient`, `recipient_name`, `recipient_address`, `flag`, `flags`. The envelope ones resolve on `hooks.on-item-added` only, and only over IMAP, since that is the backend that reads one.
+Placeholders use shell-style `$name` / `${name}` syntax in the notification `summary` / `body` (expanded with [subst](https://crates.io/crates/subst)) and are also exported as environment variables on the spawned `cmd` process. Available names: `id`, `collection` (`mailbox` under its former name), `subject`, `date`, `sender`, `sender_name`, `sender_address`, `recipient`, `recipient_name`, `recipient_address`, `flag`, `flags`. The envelope ones resolve on `hooks.on-item-added` only, and only over IMAP, since that is the backend that reads one.
 
 The `cmd` field is decoded by [pimalaya-config](https://github.com/pimalaya/config) and accepts two TOML shapes: a **string** is handed to the platform shell (`/bin/sh -c <line>` on Unix, `cmd /C <line>` on Windows; quote placeholders as `"$subject"` so the shell expands them); a **list** `[program, args…]` is spawned directly with no shell (placeholders are still available as env vars to the spawned program).
 

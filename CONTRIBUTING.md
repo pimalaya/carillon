@@ -34,4 +34,4 @@ cargo build --no-default-features --features dav,rustls-aws
 
 ## Watching against a real server
 
-There is no test suite for a watch: it needs a server, a mailbox and something moving in it. A change to a backend is verified by hand against a real account, `mirador -a <account> check` first for the connection, then `mirador -a <account> watch` with the event provoked from another client. Report what you ran against in the change proposal, since providers disagree on what they advertise and on what they then honour.
+There is no test suite for a watch: it needs a server, a collection and something moving in it. A change to a backend is verified by hand against a real account, `mirador -a <account> check` first for the connection, then `mirador -a <account> watch` with the event provoked from another client. Report what you ran against in the change proposal, since providers disagree on what they advertise and on what they then honour.

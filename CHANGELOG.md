@@ -36,6 +36,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Added a fifth event, `on-item-changed`, and renamed the two message hooks to `on-item-added` and `on-item-removed`. WebDAV items are edited in place where a message is immutable, so the four mail-shaped events could not express what a calendar or an addressbook does. `on-message-added` and `on-message-removed` keep working as aliases, so an existing configuration needs no edit.
 
+- One account is one backend watching one collection, one way. `mailbox` became a required `collection` (the old name still reads), `-m/--mailbox` is gone since what an account watches is its config, and `dav.server` became the DAV root with the collection as its path. Watching a second collection is a second account, which is also how it gets its own hooks.
+
+- Added `watch`, naming how an account learns about a change: `watch.idle` for IMAP, `watch.push.ping` for JMAP, `watch.poll.interval` for any backend. Unset takes the best the backend has. A backend asked for a method it does not have refuses to start rather than quietly using another one.
+
+- JMAP is pushed to again, over the RFC 8620 event-source stream, asking the server to close after each state change so the same socket carries the `Email/changes` round that follows. This closes a regression: the poll that replaced it when io-email was removed is now one method among the others.
+
+- IMAP can poll, for a server whose idle cannot be trusted. It needed io-imap, where the watch coroutine now yields a wait for its driver to honour rather than holding a connection.
+
+- The hook variable naming what changed is `$collection`; `$mailbox` still reaches a hook under its former name.
+
 - Ctrl+C is now honoured within about a second on every path: idling, polling, backing off, or resolving an arrival's envelope. Each connection carries a short read deadline and hands back the not-ready failures instead of letting the transport retry them away for a minute, which is what the deadline is for. Needs the unreleased io-imap watch option, so [Cargo.toml](./Cargo.toml) patches io-imap to a local path until it ships.
 
 - Bumped every Pimalaya dependency: io-imap 0.5, io-jmap 0.3, io-maildir 0.3, pimalaya-stream 0.3, pimalaya-cli 0.2, pimalaya-config 0.1.4. SASL moved out of pimalaya-stream into its own io-sasl crate; the `imap.sasl.*` config shape is unchanged.

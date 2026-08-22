@@ -15,6 +15,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     path::PathBuf,
     process::Command,
+    time::Duration,
 };
 
 use anyhow::Result;
@@ -95,12 +96,20 @@ pub struct AccountConfig {
     #[serde(default)]
     pub default: bool,
 
-    /// Mailbox watched by `mirador watch` when `-m/--mailbox` is
-    /// omitted, defaulting to `INBOX`. For Maildir it resolves under
-    /// the backend `root`, `.` naming the root itself. The `dav`
-    /// backend ignores it, its collection URL naming what to watch.
+    /// What this account watches: an IMAP mailbox, a JMAP mailbox
+    /// name, a Maildir under the backend `root` (`.` naming the root
+    /// itself), a WebDAV collection path under `dav.server`.
+    ///
+    /// One account watches one collection. Watching a second one is a
+    /// second account, which is also how it gets its own hooks.
+    #[serde(alias = "mailbox")]
+    pub collection: String,
+
+    /// How this account learns about a change. Unset takes the best
+    /// method the backend has: IDLE for IMAP, push for JMAP, a poll
+    /// for the two that have nothing else.
     #[serde(default)]
-    pub mailbox: Option<String>,
+    pub watch: Option<WatchConfig>,
 
     #[cfg(feature = "imap")]
     #[serde(default)]
@@ -534,8 +543,8 @@ impl Clone for HookCmd {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DavConfig {
-    /// The collection URL, `http://` or `https://`, path included
-    /// (`https://dav.example.org/calendars/alice/work/`).
+    /// The DAV server URL, `http://` or `https://`. What to watch
+    /// under it is the account's `collection`, read as a path.
     pub server: String,
 
     #[serde(default)]
@@ -545,12 +554,6 @@ pub struct DavConfig {
     /// readable without it.
     #[serde(default)]
     pub auth: DavAuthConfig,
-
-    /// Seconds between two reports. A `sync-collection` costs one
-    /// request, so a short interval is affordable; the default is a
-    /// minute.
-    #[serde(default = "default_dav_poll")]
-    pub poll: u64,
 }
 
 /// The credential presented to the DAV server.
@@ -572,9 +575,83 @@ pub enum DavAuthConfig {
     Bearer { token: Secret },
 }
 
-/// A minute between reports, the interval a calendar or an addressbook
-/// changes slowly enough to live with.
-#[cfg(feature = "dav")]
-fn default_dav_poll() -> u64 {
-    60
+// ---- Watch method -------------------------------------------------
+
+/// How an account learns about a change.
+///
+/// Every backend can poll; some have better. The method is named by
+/// its key, the way a SASL mechanism and an HTTP auth scheme are, and
+/// a backend refuses a method it cannot honour rather than quietly
+/// falling back to one it can.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum WatchConfig {
+    /// IMAP only: hold an IDLE connection and let the server speak
+    /// first.
+    Idle(IdleWatchConfig),
+    /// JMAP only: hold an EventSource stream and let the server push.
+    Push(PushWatchConfig),
+    /// Ask again on an interval. Every backend can do this, and it is
+    /// the escape hatch when a server's IDLE or push misbehaves.
+    Poll(PollWatchConfig),
+}
+
+/// Options of the IDLE method.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct IdleWatchConfig {}
+
+/// Options of the push method.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct PushWatchConfig {
+    /// Seconds between the server's keep-alive pings on the stream. A
+    /// ping is also what proves the connection is still there.
+    #[serde(default = "default_push_ping")]
+    pub ping: u64,
+}
+
+/// Options of the poll method.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct PollWatchConfig {
+    /// Seconds between two rounds. Unset takes what suits the backend:
+    /// a couple of seconds for a local directory read, longer for a
+    /// remote collection.
+    #[serde(default)]
+    pub interval: Option<u64>,
+}
+
+impl WatchConfig {
+    /// The method's name, for a message a user has to act on.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Idle(_) => "idle",
+            Self::Push(_) => "push",
+            Self::Poll(_) => "poll",
+        }
+    }
+
+    /// The interval this config overrides the backend default with,
+    /// when it asks for a poll at all.
+    pub fn poll_interval(&self) -> Option<Duration> {
+        match self {
+            Self::Poll(poll) => poll.interval.map(Duration::from_secs),
+            _ => None,
+        }
+    }
+}
+
+impl Default for PushWatchConfig {
+    fn default() -> Self {
+        Self {
+            ping: default_push_ping(),
+        }
+    }
+}
+
+/// Half a minute between pings, short enough to notice a dead stream
+/// and long enough to be quiet.
+fn default_push_ping() -> u64 {
+    30
 }

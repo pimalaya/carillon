@@ -3,9 +3,8 @@
 //!
 //! Bare `watch` watches every configured account at once, one thread
 //! each under a single shared shutdown; `-a/--account` narrows it to
-//! one. Each account's mailbox comes from its own config, so accounts
-//! watching different mailboxes need no flag; `-m/--mailbox` overrides
-//! it when a single account is watched.
+//! one. What an account watches is its own `collection`, so there is
+//! nothing to override on the command line.
 
 use std::{
     path::PathBuf,
@@ -27,18 +26,12 @@ use crate::{
     driver,
 };
 
-/// The mailbox watched when neither the flag nor the account says.
-const DEFAULT_MAILBOX: &str = "INBOX";
-
 /// Watch accounts and fire their hooks on every change.
+///
+/// What each account watches is its own `collection`, so there is no
+/// flag to override it: watching something else is another account.
 #[derive(Debug, Parser)]
-pub struct WatchCommand {
-    /// Mailbox to watch. Overrides the account's `mailbox` setting;
-    /// falls back to `INBOX` when neither is provided. Only valid when
-    /// a single account is watched, since accounts watch their own.
-    #[arg(long, short)]
-    pub mailbox: Option<String>,
-}
+pub struct WatchCommand;
 
 impl WatchCommand {
     pub fn execute(
@@ -51,10 +44,6 @@ impl WatchCommand {
         let mut config = Config::load(config_paths)?;
         let selected = select_accounts(&mut config, account_name)?;
 
-        if self.mailbox.is_some() && selected.len() > 1 {
-            bail!("--mailbox needs a single account; narrow with --account");
-        }
-
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_for_ctrlc = shutdown.clone();
         ctrlc::set_handler(move || {
@@ -65,17 +54,12 @@ impl WatchCommand {
         let mut handles = Vec::with_capacity(selected.len());
 
         for (name, account) in selected {
-            let mailbox = self
-                .mailbox
-                .clone()
-                .or_else(|| account.mailbox.clone())
-                .unwrap_or_else(|| String::from(DEFAULT_MAILBOX));
             let shutdown = shutdown.clone();
 
-            info!("watching `{mailbox}` on account `{name}`");
+            info!("watching `{}` on account `{name}`", account.collection);
 
             let handle = thread::Builder::new().name(name.clone()).spawn(move || {
-                if let Err(err) = driver::run(&name, account, mailbox, backend, shutdown) {
+                if let Err(err) = driver::run(&name, account, backend, shutdown) {
                     error!("[{name}] watch stopped: {err:#}");
                 }
             })?;

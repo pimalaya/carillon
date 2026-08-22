@@ -28,7 +28,8 @@ use log::{debug, trace};
 
 use crate::{config::MaildirConfig, event::WatchEvent};
 
-/// How long the watch sleeps between two listings.
+/// How long the watch sleeps between two listings, unless the config
+/// says otherwise. A directory read is cheap, so it can be short.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// How long it sleeps at a time, so a shutdown is noticed promptly.
 const POLL_STEP: Duration = Duration::from_millis(200);
@@ -40,18 +41,20 @@ const POLL_STEP: Duration = Duration::from_millis(200);
 /// message already there is not news.
 pub fn watch(
     config: &MaildirConfig,
-    mailbox: &str,
+    collection: &str,
+    interval: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
     mut on_event: impl FnMut(WatchEvent),
 ) -> Result<()> {
     let client = MaildirClient::new(config.root.clone());
-    let maildir = resolve(&client, mailbox)?;
+    let maildir = resolve(&client, collection)?;
+    let interval = interval.unwrap_or(POLL_INTERVAL);
 
     let mut seen = list(&client, &maildir)?;
     debug!("watching maildir with {} entries", seen.len());
 
     while !shutdown.load(Ordering::SeqCst) {
-        if !sleep(POLL_INTERVAL, shutdown) {
+        if !sleep(interval, shutdown) {
             break;
         }
 
@@ -136,12 +139,12 @@ fn diff(
 
 /// Resolves the watched mailbox through the store, so the layout and
 /// the validation are io-maildir's rather than a hand-joined path.
-fn resolve(client: &MaildirClient, mailbox: &str) -> Result<Maildir> {
+fn resolve(client: &MaildirClient, collection: &str) -> Result<Maildir> {
     // NOTE: the empty path is the store root, which is the mailbox a
     // flat Maildir holds; `.` is how a config says so readably.
-    let name = match mailbox {
+    let name = match collection {
         "." | "INBOX" => MaildirPath::default(),
-        mailbox => MaildirPath::from(mailbox),
+        collection => MaildirPath::from(collection),
     };
 
     // NOTE: resolving through the client rather than joining the root
@@ -151,7 +154,7 @@ fn resolve(client: &MaildirClient, mailbox: &str) -> Result<Maildir> {
     // stays empty forever.
     client
         .load_maildir(name)
-        .with_context(|| format!("cannot open maildir `{mailbox}`"))
+        .with_context(|| format!("cannot open maildir `{collection}`"))
 }
 
 /// Renders Maildir flags under the names a hook filter matches, so a

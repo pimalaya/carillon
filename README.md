@@ -21,8 +21,9 @@ CLI to watch PIM collection changes, written in Rust
 
 ## Features
 
-- **Four backends**: IMAP idles, JMAP polls for changes, Maildir re-lists, WebDAV asks what moved.
-- **Not only mail**: a WebDAV collection is a CalDAV calendar or a CardDAV addressbook just as readily.
+- **Four backends**: IMAP idles, JMAP is pushed to, Maildir re-lists, WebDAV asks what moved.
+- **One account, one collection, one method**: what an account watches and how it watches are both its config, so nothing is passed on the command line and nothing is guessed. Any backend can poll instead, for a server whose idle or push cannot be trusted.
+- **Mail, contacts and calendars**: a WebDAV collection is a CalDAV calendar or a CardDAV addressbook just as readily.
 - **Every account at once**: one thread each, or `-a/--account` for a single one.
 - **Self-healing**: a dropped watch reopens with a capped backoff, reading the credential again each time.
 - **Five events**: an item added, removed or changed, flags added or removed. Flag names are the same on every backend, so a filter written once fires everywhere.
@@ -47,7 +48,7 @@ CLI to watch PIM collection changes, written in Rust
 | [4505]    | SASL anonymous, for servers accepting unauthenticated sessions |
 | [7677]    | SASL scram-sha-256, the challenge-response mechanism |
 | [7628]    | SASL oauthbearer, an OAuth 2.0 token issued by an external broker |
-| [8620]    | The JMAP core: session discovery, the changes and get method shapes, request batching |
+| [8620]    | The JMAP core: session discovery, the changes and get method shapes, request batching, and the event-source stream a push watch holds |
 | [8621]    | JMAP for mail: mailboxes, emails, and the change stream a watch polls |
 | [maildir] | The original Maildir layout, plus the Maildir++ subfolder convention |
 | [4918]    | WebDAV itself: the report a collection answers, and the etag that says an item moved |
@@ -127,6 +128,10 @@ A configuration is loaded from the first valid path among $XDG_CONFIG_HOME/mirad
 
 A watch opens exactly one connection, so an account declaring several backends picks one at startup: `-b/--backend {imap,jmap,maildir,dav}` pins it and fails when the block is absent, while `-b auto`, the default, takes the first configured among IMAP, JMAP, Maildir, WebDAV.
 
+### Watch method
+
+Unset, an account watches the best way its backend has: IMAP idles, JMAP holds an event stream, Maildir and WebDAV poll. `watch.poll.interval` asks any backend to ask again on an interval instead, which is the answer to a server whose idle or push cannot be trusted; `watch.idle` and `watch.push` name the other two. A backend refuses a method it does not have rather than quietly using another, since a watch silently downgraded to a poll is how someone ends up wondering why their mail arrives a minute late.
+
 ### Hooks
 
 Every event has its own hook under the `hooks.` namespace: `hooks.on-item-added`, `hooks.on-item-removed`, `hooks.on-item-changed`, `hooks.on-flags-added` and `hooks.on-flags-removed`. The earlier `on-message-*` names still work. Each fires a notification, a command, or both, and flag hooks take an optional `flags` filter. A hook that fails is logged and never stops the watch. The shapes and the full placeholder list are documented in [config.sample.toml](./config.sample.toml).
@@ -139,10 +144,10 @@ Watch every configured account, until interrupted:
 mirador watch
 ```
 
-Watch one account, on a mailbox other than the one it configures:
+Watch one account:
 
 ```sh
-mirador -a work watch -m Drafts
+mirador -a work watch
 ```
 
 Check that an account still connects and authenticates, on every backend it declares, before trusting a watch to keep running:

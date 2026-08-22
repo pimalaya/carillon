@@ -19,7 +19,9 @@
 
 let
   nativeTls = builtins.elem "native-tls" buildFeatures;
-  notify = !buildNoDefaultFeatures || builtins.elem "notify" buildFeatures;
+  # notify-rust is not behind a cargo feature here: a watch that cannot notify
+  # is not the tool, so the system dbus is linked in every build.
+  systemDbus = !stdenv.hostPlatform.isWindows;
 
   # dbus calls libgcc outline atomics that the static aarch64 link cannot
   # resolve (__aarch64_ldset4_sync & co), so inline them instead.
@@ -53,9 +55,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
   env = {
     # pkg-config hands the linker libdbus but no rpath, leaving a binary that
     # cannot find it: not in postInstall, which runs it, nor once installed.
-    NIX_LDFLAGS = lib.optionalString (notify && !stdenv.hostPlatform.isWindows) (
-      "-rpath " + lib.getLib dbus' + "/lib"
-    );
+    NIX_LDFLAGS = lib.optionalString systemDbus ("-rpath " + lib.getLib dbus' + "/lib");
 
     # openssl should not be provided by vendors, not even on windows
     OPENSSL_NO_VENDOR = 1;
@@ -69,12 +69,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
   buildInputs =
     lib.optional nativeTls openssl
     # dbus is provided by vendors on windows
-    ++ lib.optional (notify && !stdenv.hostPlatform.isWindows) dbus';
+    ++ lib.optional systemDbus dbus';
 
   buildFeatures =
     buildFeatures
     # dbus is provided by vendors on windows
-    ++ lib.optional (notify && stdenv.hostPlatform.isWindows) "vendored";
+    ++ lib.optional stdenv.hostPlatform.isWindows "vendored";
 
   postInstall =
     let
@@ -104,7 +104,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   meta = {
     description = "CLI to watch PIM collection changes";
-    mainProgram = "mailbox";
+    mainProgram = finalAttrs.pname;
     homepage = "https://github.com/pimalaya/${finalAttrs.pname}";
     changelog = "${finalAttrs.meta.homepage}/releases/tag/${finalAttrs.src.tag}";
     license = with lib.licenses; [

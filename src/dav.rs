@@ -39,6 +39,9 @@ use crate::{
     event::WatchEvent,
 };
 
+/// How long the watch waits between two reports, unless the config
+/// says otherwise.
+const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How long a poll may sit in a read before looking at the shutdown
 /// flag again.
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
@@ -48,20 +51,19 @@ const POLL_STEP: Duration = Duration::from_millis(200);
 /// Per-read scratch buffer.
 const READ_BUF: usize = 8 * 1024;
 
-/// Opens a connection to the configured collection.
+/// Opens a connection to the configured server.
 ///
 /// The stream carries a read deadline and hands back the failures that
 /// only mean "not ready yet", so a poll against a server that stopped
 /// answering ends at the next deadline instead of holding the thread
 /// for as long as the transport would.
-pub fn open(config: &DavConfig) -> Result<(WebdavClientStd, String)> {
+pub fn open(config: &DavConfig) -> Result<WebdavClientStd> {
     let url = Url::parse(&config.server)
-        .with_context(|| format!("invalid DAV collection URL `{}`", config.server))?;
+        .with_context(|| format!("invalid DAV server URL `{}`", config.server))?;
     let host = url
         .host_str()
-        .ok_or_else(|| anyhow!("DAV collection URL `{url}` has no host"))?
+        .ok_or_else(|| anyhow!("DAV server URL `{url}` has no host"))?
         .to_string();
-    let collection = url.path().to_string();
 
     let mut tls: Tls = config.tls.clone().into();
     tls.rustls.alpn = vec![String::from("http/1.1")];
@@ -90,11 +92,11 @@ pub fn open(config: &DavConfig) -> Result<(WebdavClientStd, String)> {
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
 
     debug!("opened dav connection");
-    trace!("collection: {url}");
+    trace!("server: {url}");
 
     let auth = auth(&config.auth)?;
 
-    Ok((WebdavClientStd::new(stream, auth, url), collection))
+    Ok(WebdavClientStd::new(stream, auth, url))
 }
 
 /// Watches the configured collection until `shutdown` is set, calling
@@ -105,11 +107,14 @@ pub fn open(config: &DavConfig) -> Result<(WebdavClientStd, String)> {
 /// read against that picture.
 pub fn watch(
     config: &DavConfig,
+    collection: &str,
+    interval: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
     mut on_event: impl FnMut(WatchEvent),
 ) -> Result<()> {
-    let (mut client, collection) = open(config)?;
-    let interval = Duration::from_secs(config.poll);
+    let mut client = open(config)?;
+    let collection = path(&client, collection);
+    let interval = interval.unwrap_or(POLL_INTERVAL);
 
     let (mut known, mut token) = baseline(&mut client, &collection, shutdown)?;
     debug!("watching dav collection with {} members", known.len());
@@ -310,9 +315,25 @@ fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
 /// Opens the collection and runs one report, which is what `check`
 /// needs: it proves the transport, the credential and that the
 /// collection is where the config says.
-pub fn probe(config: &DavConfig, shutdown: &Arc<AtomicBool>) -> Result<()> {
-    let (mut client, collection) = open(config)?;
+pub fn probe(config: &DavConfig, collection: &str, shutdown: &Arc<AtomicBool>) -> Result<()> {
+    let mut client = open(config)?;
+    let collection = path(&client, collection);
     sync(&mut client, &collection, None, shutdown)?;
 
     Ok(())
+}
+
+/// Resolves the account's collection into the request path.
+///
+/// An absolute path is taken as it stands; anything else is read under
+/// the server URL's own path, so `dav.server` names the DAV root and
+/// the collection names what to watch under it.
+fn path(client: &WebdavClientStd, collection: &str) -> String {
+    if collection.starts_with('/') {
+        return collection.to_string();
+    }
+
+    let base = client.base_url.path().trim_end_matches('/');
+
+    format!("{base}/{}", collection.trim_start_matches('/'))
 }

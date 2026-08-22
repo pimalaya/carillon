@@ -7,6 +7,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    io::{self, Read, Write},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -19,6 +20,11 @@ use anyhow::{Context, Result, anyhow};
 use base64::{Engine, prelude::BASE64_STANDARD};
 use io_jmap::{
     client::JmapClientStd,
+    coroutine::{JmapCoroutine, JmapCoroutineState},
+    rfc8620::event_source::{
+        JmapCloseAfter,
+        subscribe::{JmapEventSource, JmapEventSourceYield},
+    },
     rfc8621::{
         email::{
             JmapEmail, JmapEmailProperty,
@@ -40,6 +46,10 @@ use crate::{
 
 /// How long the watch waits between two polls.
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
+/// Per-read scratch buffer for the event stream.
+const READ_BUF: usize = 8 * 1024;
+/// The JMAP type a mail watch subscribes to.
+const EMAIL_TYPE: &str = "Email";
 /// How long it sleeps at a time, so a shutdown is noticed promptly.
 const POLL_STEP: Duration = Duration::from_millis(200);
 
@@ -98,93 +108,203 @@ pub fn parse_server(server: &str) -> Result<Url> {
     }
 }
 
-/// Watches `mailbox` until `shutdown` is set, calling `on_event` for
-/// every change.
+/// Watches `collection` by polling, until `shutdown` is set.
 ///
-/// JMAP has no held connection here: the watch polls `Email/changes`,
-/// which answers with the ids created, updated and destroyed since the
-/// state it last saw. A poll that finds the state unmoved costs one
-/// request and nothing else.
-///
-/// The mailbox is a filter, not a channel: `Email/changes` reports the
-/// whole account, so the ids it names are resolved through `Email/get`
-/// and kept only when they belong to the watched mailbox. That
-/// resolution also carries the keywords, which is what turns an update
-/// into a flag event.
-pub fn watch(
+/// Every round asks `Email/changes` what moved since the state it last
+/// saw; a round that finds the state unmoved costs one request.
+pub fn watch_poll(
     config: &JmapConfig,
-    mailbox: &str,
+    collection: &str,
+    interval: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
     mut on_event: impl FnMut(WatchEvent),
 ) -> Result<()> {
-    let (mut client, _url) = open(config)?;
-    let mailbox_id = resolve_mailbox(&mut client, mailbox)?;
-
-    let mut known = baseline(&mut client, &mailbox_id)?;
-    let mut state = client
-        .email_get(Vec::new(), get_options(false))
-        .context("cannot read the initial email state")?
-        .new_state;
-
-    debug!("watching jmap mailbox with {} messages", known.len());
+    let interval = interval.unwrap_or(POLL_INTERVAL);
+    let (mut client, mailbox_id, mut known, mut state) = arm(config, collection)?;
 
     while !shutdown.load(Ordering::SeqCst) {
-        if !sleep(POLL_INTERVAL, shutdown) {
+        if !sleep(interval, shutdown) {
             break;
         }
 
-        let changes = client
-            .email_changes(state.clone(), Default::default())
-            .context("cannot read email changes")?;
-
-        if changes.new_state == state {
-            continue;
-        }
-
-        trace!("jmap changes: {changes:?}");
-
-        for id in &changes.destroyed {
-            if known.remove(id).is_some() {
-                on_event(WatchEvent::ItemRemoved { id: id.clone() });
-            }
-        }
-
-        let touched: Vec<String> = changes
-            .created
-            .iter()
-            .chain(changes.updated.iter())
-            .cloned()
-            .collect();
-
-        if !touched.is_empty() {
-            let fetched = client
-                .email_get(touched, get_options(true))
-                .context("cannot resolve changed emails")?;
-
-            for email in fetched.emails {
-                for event in reconcile(&mut known, &mailbox_id, email) {
-                    on_event(event);
-                }
-            }
-        }
-
-        state = changes.new_state;
+        round(
+            &mut client,
+            &mailbox_id,
+            &mut known,
+            &mut state,
+            &mut on_event,
+        )?;
     }
 
     Ok(())
 }
 
+/// Watches `collection` over an EventSource stream, until `shutdown`
+/// is set.
+///
+/// The server is asked to close the stream after the first state
+/// change (RFC 8620 §7.3 `closeafter=state`), which frees the socket
+/// for the `Email/changes` round that follows and leaves the loop
+/// looking like an IMAP IDLE: subscribe, wait, read what moved,
+/// subscribe again.
+pub fn watch_push(
+    config: &JmapConfig,
+    collection: &str,
+    ping: u64,
+    shutdown: &Arc<AtomicBool>,
+    mut on_event: impl FnMut(WatchEvent),
+) -> Result<()> {
+    let (mut client, mailbox_id, mut known, mut state) = arm(config, collection)?;
+
+    while !shutdown.load(Ordering::SeqCst) {
+        if !subscribe(&mut client, ping, shutdown)? {
+            continue;
+        }
+
+        round(
+            &mut client,
+            &mailbox_id,
+            &mut known,
+            &mut state,
+            &mut on_event,
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Opens the session and reads the collection as it stands, which is
+/// what a later change is a change against.
+fn arm(config: &JmapConfig, collection: &str) -> Result<(JmapClientStd, String, Known, String)> {
+    let (mut client, _url) = open(config)?;
+    let mailbox_id = resolve_mailbox(&mut client, collection)?;
+
+    let known = baseline(&mut client, &mailbox_id)?;
+    let state = client
+        .email_get(Vec::new(), get_options(false))
+        .context("cannot read the initial email state")?
+        .new_state;
+
+    debug!("watching jmap collection with {} messages", known.len());
+
+    Ok((client, mailbox_id, known, state))
+}
+
+/// Reads what moved since `state`, reports it, and advances `state`.
+fn round(
+    client: &mut JmapClientStd,
+    mailbox_id: &str,
+    known: &mut Known,
+    state: &mut String,
+    on_event: &mut impl FnMut(WatchEvent),
+) -> Result<()> {
+    let changes = client
+        .email_changes(state.clone(), Default::default())
+        .context("cannot read email changes")?;
+
+    if changes.new_state == *state {
+        return Ok(());
+    }
+
+    trace!("jmap changes: {changes:?}");
+
+    for id in &changes.destroyed {
+        if known.remove(id).is_some() {
+            on_event(WatchEvent::ItemRemoved { id: id.clone() });
+        }
+    }
+
+    let touched: Vec<String> = changes
+        .created
+        .iter()
+        .chain(changes.updated.iter())
+        .cloned()
+        .collect();
+
+    if !touched.is_empty() {
+        let fetched = client
+            .email_get(touched, get_options(true))
+            .context("cannot resolve changed emails")?;
+
+        for email in fetched.emails {
+            for event in reconcile(known, mailbox_id, email) {
+                on_event(event);
+            }
+        }
+    }
+
+    *state = changes.new_state;
+
+    Ok(())
+}
+
+/// Holds an EventSource subscription until the server reports a state
+/// change, and says whether one arrived.
+///
+/// A frame with an empty `changed` map is the server's keep-alive, and
+/// a read that times out is the wakeup this loop arms to look at the
+/// shutdown flag: neither is news.
+fn subscribe(client: &mut JmapClientStd, ping: u64, shutdown: &Arc<AtomicBool>) -> Result<bool> {
+    let session = client
+        .session()
+        .ok_or_else(|| anyhow!("the JMAP session was not read"))?;
+    let mut coroutine = JmapEventSource::new(
+        session,
+        &client.http_auth,
+        &[EMAIL_TYPE],
+        ping,
+        JmapCloseAfter::State,
+        shutdown.clone(),
+    )?;
+
+    let mut buf = [0u8; READ_BUF];
+    let mut arg: Option<Vec<u8>> = None;
+    let mut changed = false;
+
+    loop {
+        match coroutine.resume(arg.take().as_deref()) {
+            JmapCoroutineState::Yielded(JmapEventSourceYield::Frame(frame)) => {
+                if !frame.changed.is_empty() {
+                    trace!("jmap state change: {frame:?}");
+                    changed = true;
+                }
+            }
+            JmapCoroutineState::Yielded(JmapEventSourceYield::WantsRead) => {
+                if shutdown.load(Ordering::SeqCst) {
+                    return Ok(false);
+                }
+
+                match client.stream.read(&mut buf) {
+                    Ok(0) => return Ok(changed),
+                    Ok(read) => arg = Some(buf[..read].to_vec()),
+                    Err(err) if is_timeout(&err) => continue,
+                    Err(err) => return Err(err).context("read failed"),
+                }
+            }
+            JmapCoroutineState::Yielded(JmapEventSourceYield::WantsWrite(bytes)) => {
+                client.stream.write_all(&bytes).context("write failed")?;
+            }
+            JmapCoroutineState::Complete(Ok(())) => return Ok(changed),
+            JmapCoroutineState::Complete(Err(err)) => return Err(err.into()),
+        }
+    }
+}
+
+/// Whether an I/O error is the read deadline expiring, which on a
+/// quiet stream is a wakeup rather than a failure.
+fn is_timeout(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    )
+}
 /// Reconciles one resolved email against what the watch knows, and
 /// reports what moved.
 ///
 /// A message leaving the watched mailbox is a removal here, the same
 /// way an IMAP move out of the mailbox is: the watch reports what the
 /// mailbox holds, not what the account holds.
-fn reconcile(
-    known: &mut BTreeMap<String, BTreeSet<String>>,
-    mailbox_id: &str,
-    email: JmapEmail,
-) -> Vec<WatchEvent> {
+fn reconcile(known: &mut Known, mailbox_id: &str, email: JmapEmail) -> Vec<WatchEvent> {
     let Some(id) = email.id else {
         return Vec::new();
     };
@@ -227,10 +347,7 @@ fn reconcile(
 
 /// Lists what the watched mailbox holds, so a later change has
 /// something to be a change against.
-fn baseline(
-    client: &mut JmapClientStd,
-    mailbox_id: &str,
-) -> Result<BTreeMap<String, BTreeSet<String>>> {
+fn baseline(client: &mut JmapClientStd, mailbox_id: &str) -> Result<Known> {
     let filter = JmapEmailFilter {
         in_mailbox: Some(mailbox_id.to_string()),
         ..Default::default()
@@ -337,3 +454,7 @@ fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
 
     !shutdown.load(Ordering::SeqCst)
 }
+
+/// What the watch knows of the collection: a message id to its
+/// keywords.
+type Known = BTreeMap<String, BTreeSet<String>>;
