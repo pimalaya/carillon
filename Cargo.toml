@@ -2,7 +2,7 @@
 name = "carillon"
 description = "CLI to watch PIM collection changes"
 version = "0.1.0"
-authors = ["Clément DOUIN (soywod) <clement.douin@posteo.net>"]
+authors = ["Clément DOUIN (soywod) <pimalaya.org@posteo.net>"]
 rust-version = "1.89"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -10,10 +10,6 @@ categories = ["command-line-utilities", "email"]
 keywords = ["cli", "watch", "imap", "jmap", "dav"]
 homepage = "https://pimalaya.org"
 repository = "https://github.com/pimalaya/carillon"
-
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["rustls-ring", "imap", "jmap", "maildir", "dav"]
@@ -44,13 +40,13 @@ anyhow = "1"
 base64 = { version = "0.23", optional = true }
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 ctrlc = { version = "3", features = ["termination"] }
+io-http = { version = "0.5", default-features = false, optional = true }
 io-imap = { version = "0.6", default-features = false, optional = true }
 io-jmap = { version = "0.3", default-features = false, optional = true }
-io-http = { version = "0.5", default-features = false, optional = true }
 io-maildir = { version = "0.3", default-features = false, optional = true }
 io-pim-discovery = { version = "0.7", default-features = false, features = ["autoconfig", "pacc", "rfc6186", "rfc6764", "rfc8620"], optional = true }
-io-webdav = { version = "0.2", default-features = false, optional = true }
 io-sasl = { version = "0.1", default-features = false, features = ["scram"] }
+io-webdav = { version = "0.2", default-features = false, optional = true }
 log = "0.4"
 notify-rust = { version = "4", default-features = false, features = ["d"] }
 pimalaya-cli = { version = "0.2", default-features = false, features = ["terminal", "prompt", "spinner", "wizard"] }

@@ -90,7 +90,7 @@ pub enum DavKind {
 /// for as long as the transport would.
 pub fn open(config: DavServer<'_>) -> Result<WebdavClientStd> {
     let url = Url::parse(config.server)
-        .with_context(|| format!("invalid DAV server URL `{}`", config.server))?;
+        .with_context(|| format!("Invalid DAV server URL `{}`", config.server))?;
     let host = url
         .host_str()
         .ok_or_else(|| anyhow!("DAV server URL `{url}` has no host"))?
@@ -117,7 +117,7 @@ pub fn open(config: DavServer<'_>) -> Result<WebdavClientStd> {
             };
             Stream::connect_tls(&host, port, opts)?
         }
-        scheme => bail!("unsupported DAV scheme `{scheme}`, expected http or https"),
+        scheme => bail!("Unsupported DAV scheme `{scheme}`, expected http or https"),
     };
 
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
@@ -549,11 +549,11 @@ where
         match coroutine.resume(arg.take().as_deref()) {
             WebdavCoroutineState::Yielded(WebdavYield::WantsRead) => loop {
                 if shutdown.load(Ordering::SeqCst) {
-                    bail!("shutting down");
+                    bail!("Shutting down");
                 }
 
                 match client.stream.read(&mut buf) {
-                    Ok(0) => bail!("connection closed by peer"),
+                    Ok(0) => bail!("Connection closed by peer"),
                     Ok(read) => {
                         arg = Some(buf[..read].to_vec());
                         break;

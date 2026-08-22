@@ -157,7 +157,7 @@ impl Config {
         for (name, account) in &config.accounts {
             account
                 .validate()
-                .with_context(|| format!("account `{name}` is misconfigured"))?;
+                .with_context(|| format!("Account `{name}` is misconfigured"))?;
         }
 
         Ok(Some(config))
@@ -220,7 +220,7 @@ impl AccountConfig {
         };
         let rendered = pimalaya_config::toml::to_string(&document)?;
 
-        // The emitter writes the header itself, and everything below
+        // NOTE: the emitter writes the header itself, and everything below
         // it is one dotted key per line.
         let (header, body) = match rendered.split_once('\n') {
             Some((header, body)) => (header, body),
@@ -252,7 +252,7 @@ impl AccountConfig {
                 document.push('\n');
             }
 
-            // A backend reads the way it is explained: what it watches,
+            // NOTE: a backend reads the way it is explained: what it watches,
             // where, who it authenticates as, then everything the
             // account only adjusts.
             lines.sort_by_key(|line| backend_rank(&key, line));
@@ -298,8 +298,6 @@ impl AccountConfig {
         Ok(())
     }
 }
-
-// ---- IMAP ---------------------------------------------------------
 
 #[cfg(feature = "imap")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -421,8 +419,6 @@ fn canned_imap_id_value(key: &str) -> Option<&'static str> {
     }
 }
 
-// ---- JMAP ---------------------------------------------------------
-
 #[cfg(feature = "jmap")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -469,8 +465,6 @@ pub enum JmapAuthConfig {
     },
 }
 
-// ---- Maildir ------------------------------------------------------
-
 #[cfg(feature = "maildir")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -491,8 +485,6 @@ pub struct MaildirConfig {
     #[serde(default, alias = "hooks")]
     pub hook: MaildirHookConfig,
 }
-
-// ---- TLS ----------------------------------------------------------
 
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -546,8 +538,6 @@ impl From<TlsConfig> for Tls {
         }
     }
 }
-
-// ---- SASL (IMAP) --------------------------------------------------
 
 #[cfg(feature = "imap")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -731,8 +721,6 @@ impl CarddavConfig {
         }
     }
 }
-
-// ---- Hooks --------------------------------------------------------
 
 // NOTE: the hooks live under their backend, and each backend declares
 // only the events it reports, so a hook it cannot fire is refused when
@@ -1165,8 +1153,6 @@ impl Clone for HookCmd {
     }
 }
 
-// ---- WebDAV -------------------------------------------------------
-
 // NOTE: CalDAV and CardDAV are WebDAV, so the transport half is one
 // shape; what differs is the domain the collection holds, and that is
 // what names the events. Three blocks rather than one is what lets a
@@ -1287,8 +1273,6 @@ impl DavAuthConfig {
         matches!(self, Self::None)
     }
 }
-
-// ---- Watch method -------------------------------------------------
 
 // NOTE: the method lives under its backend, and each backend declares
 // only the methods it has, so asking IMAP to push or Maildir to idle

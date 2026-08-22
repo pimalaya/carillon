@@ -342,7 +342,7 @@ mod tests {
         assert!(tasks.on_event_added.is_none());
         assert!(tasks.on_task_added.is_some());
 
-        // A calendar declaring no restriction accepts any component.
+        // NOTE: a calendar declaring no restriction accepts any component.
         let both = caldav_hook(&[]);
         assert!(both.on_event_added.is_some());
         assert!(both.on_task_added.is_some());

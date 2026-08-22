@@ -20,44 +20,55 @@ CLI to watch PIM collection changes, written in Rust
 
 ## Features
 
-- **Five backends**, mail and not only mail: IMAP idles, JMAP is pushed to, Maildir re-lists, and CalDAV and CardDAV each ask a collection what moved.
-- **One account, one collection, one method**: all three are its config, so nothing is passed on the command line. Each backend names the collection it watches in its own word (`imap.mailbox`, `caldav.calendar`, `carddav.addressbook`), and a hook templates against that same word. Any backend can poll instead, for a server whose idle or push cannot be trusted.
-- **Events named after what they carry**: mail fires `on-message-*`, an addressbook `on-card-*`, a calendar `on-event-*` and `on-task-*`, and anything with flags `on-flag-*`, once per flag. Flag names are the same on every backend, so a filter written once fires everywhere.
-- **Hooks under their backend**: a desktop notification, a shell command, or both, with the event's fields as placeholders. Each backend takes only the events it can report, and each hook only the variables its event carries, so a hook that could never fire is refused when the file is read.
-- **Every account at once**, one thread each, reopening a dropped watch with a capped backoff and reading the credential again each time.
-- **Familiar configuration**: the account block keeps the shape `himalaya` and `himalaya-tui` read, and secrets come from your own password manager.
-- **One prompt to a working account**: `carillon configure` turns an email address into a discovered service, a tested connection and the best watch method its server supports, then writes the account where the loader reads it.
+- **Watch mail, calendars and contacts**: **IMAP**, **JMAP**, **Maildir**, **CalDAV**, **CardDAV**
+- **Desktop notifications**, **shell commands**, or both, on every change
+- **Instant where the protocol allows it**: IMAP idle, JMAP push, a poll everywhere else
+- **Every account at once**, each reconnecting on its own when its server drops it
+- **One prompt setup**: `carillon configure` turns your email address into a tested account
+- **Secrets from your own password manager**, never written into the configuration
+
+> [!TIP]
+> Carillon is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
+
 ## Coverage
 
-| Spec      | What is covered |
-|-----------|-----------------|
-| [2177]    | IMAP idle: the held connection a watch waits on, woken by the server on every change |
-| [7162]    | Quick mailbox resynchronization: server-named deltas where the server offers them, a local re-read and diff where it does not |
-| [4959]    | SASL initial response, forced on or off for providers that advertise it and then refuse it |
-| [2971]    | IMAP identification, required by some providers right after authentication |
-| [4616]    | SASL plain, the password mechanism |
-| [4505]    | SASL anonymous, for servers accepting unauthenticated sessions |
-| [7677]    | SASL scram-sha-256, the challenge-response mechanism |
-| [7628]    | SASL oauthbearer, an OAuth 2.0 token issued by an external broker |
-| [8620]    | The JMAP core: session discovery, the changes and get method shapes, request batching, and the event-source stream a push watch holds |
-| [8621]    | JMAP for mail: mailboxes, emails, and the change stream a watch polls |
-| [maildir] | The original Maildir layout, plus the Maildir++ subfolder convention |
-| [4918]    | WebDAV itself: the report a collection answers, and the etag that says an item moved |
-| [6578]    | Collection synchronization: the token a poll carries, what changed since it, and what to do when the server refuses it |
+| Spec         | What is covered |
+|--------------|-----------------|
+| [2177]       | IMAP idle: the held connection a watch waits on, woken by the server on every change |
+| [2971]       | IMAP identification, required by some providers right after authentication |
+| [4505]       | SASL anonymous, for servers accepting unauthenticated sessions |
+| [4616]       | SASL plain, the password mechanism |
+| [4918]       | WebDAV itself: the report a collection answers, and the etag that says an item moved |
+| [4959]       | SASL initial response, forced on or off for providers that advertise it and then refuse it |
+| [6186]       | Mail service SRV records, one of the ways the wizard finds a server from an address |
+| [6578]       | Collection synchronization: the token a poll carries, what changed since it, and what to do when the server refuses it |
+| [6764]       | CalDAV and CardDAV bootstrapping, how the wizard finds a calendar or an addressbook |
+| [7162]       | Quick mailbox resynchronization: server-named deltas where the server offers them, a local re-read and diff where it does not |
+| [7628]       | SASL oauthbearer, an OAuth 2.0 token issued by an external broker |
+| [7677]       | SASL scram-sha-256, the challenge-response mechanism |
+| [8620]       | The JMAP core: session discovery, the changes and get method shapes, request batching, and the event-source stream a push watch holds |
+| [8621]       | JMAP for mail: mailboxes, emails, and the change stream a watch polls |
+| [autoconfig] | Thunderbird autoconfiguration, the widest-published source of provider settings |
+| [maildir]    | The original Maildir layout, plus the Maildir++ subfolder convention |
+| [pacc]       | Provider account configuration, the successor the wizard prefers when a domain publishes one |
 
 [2177]: https://www.rfc-editor.org/rfc/rfc2177
-[7162]: https://www.rfc-editor.org/rfc/rfc7162
-[4959]: https://www.rfc-editor.org/rfc/rfc4959
 [2971]: https://www.rfc-editor.org/rfc/rfc2971
-[4616]: https://www.rfc-editor.org/rfc/rfc4616
 [4505]: https://www.rfc-editor.org/rfc/rfc4505
-[7677]: https://www.rfc-editor.org/rfc/rfc7677
+[4616]: https://www.rfc-editor.org/rfc/rfc4616
+[4918]: https://www.rfc-editor.org/rfc/rfc4918
+[4959]: https://www.rfc-editor.org/rfc/rfc4959
+[6186]: https://www.rfc-editor.org/rfc/rfc6186
+[6578]: https://www.rfc-editor.org/rfc/rfc6578
+[6764]: https://www.rfc-editor.org/rfc/rfc6764
+[7162]: https://www.rfc-editor.org/rfc/rfc7162
 [7628]: https://www.rfc-editor.org/rfc/rfc7628
+[7677]: https://www.rfc-editor.org/rfc/rfc7677
 [8620]: https://www.rfc-editor.org/rfc/rfc8620
 [8621]: https://www.rfc-editor.org/rfc/rfc8621
+[autoconfig]: https://wiki.mozilla.org/Thunderbird:Autoconfiguration
 [maildir]: https://cr.yp.to/proto/maildir.html
-[4918]: https://www.rfc-editor.org/rfc/rfc4918
-[6578]: https://www.rfc-editor.org/rfc/rfc6578
+[pacc]: https://datatracker.ietf.org/doc/html/draft-ietf-mailmaint-pacc
 
 ## Installation
 
@@ -107,7 +118,15 @@ Run `carillon` with no command: it offers to generate an account discovered from
 
 Everything discovery does not cover is written by hand: copy the annotated [config.sample.toml](./config.sample.toml), keep one backend and the hooks you want, delete the rest. It documents every key.
 
-A configuration is read from `$XDG_CONFIG_HOME/carillon/config.toml`, `$HOME/.config/carillon/config.toml` or `$HOME/.carillonrc`, overridden by `-c <PATH>` or `CARILLON_CONFIG=<PATH>`. Those are the paths [himalaya](https://github.com/pimalaya/himalaya) and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) read too, and an account block is written the same way, but one file does not load in all three: every backend block is strict on each side and carries keys the others do not know.
+A configuration is loaded from the first valid path among:
+
+- $XDG_CONFIG_HOME/carillon/config.toml
+- $HOME/.config/carillon/config.toml
+- $HOME/.carillonrc
+
+Override the path with `-c <PATH>` or `CARILLON_CONFIG=<PATH>`. Multiple paths can be passed at once, separated by `:`. The first one is the base and the rest are deep-merged on top. The full field reference lives in [config.sample.toml](./config.sample.toml).
+
+Those are the paths [himalaya](https://github.com/pimalaya/himalaya) and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) read too, and an account block is written the same way, but one file does not load in all three: every backend block is strict on each side and carries keys the others do not know.
 
 An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`) carrying everything that backend needs: the collection it watches under its own name, how it watches (`watch`), and what it fires (`hook`). Declaring several backends is allowed; `-b/--backend` then picks one.
 

@@ -165,7 +165,7 @@ fn resolve(client: &MaildirClient, collection: &str) -> Result<Maildir> {
     // stays empty forever.
     client
         .load_maildir(name)
-        .with_context(|| format!("cannot open maildir `{collection}`"))
+        .with_context(|| format!("Cannot open maildir `{collection}`"))
 }
 
 /// Renders Maildir flags under the names a hook filter matches, so a

@@ -8,9 +8,13 @@
 //! The frontend: main dispatches, cli declares the parser and meets
 //! the invocations that find no configuration, config parses the TOML
 //! accounts and renders a generated one back, watch, check and
-//! configure are the three commands, driver supervises one account
-//! (backend selection, reconnect backoff, credential per attempt),
-//! hook fires the notification and the command.
+//! configure are the three commands, hook fires the notification and
+//! the command.
+//!
+//! watch carries the runtime: it selects the accounts, spawns one
+//! thread each, and each thread opens the session its backend calls
+//! for, forwards what it reports to the hooks, and reopens it after a
+//! capped backoff, resolving the credential again on every attempt.
 //!
 //! The wizard: one prompt takes an email address, io-pim-discovery
 //! turns it into the services reachable from it, and the module of the
@@ -34,13 +38,21 @@
 //! both the backend's; what reaches hook is the one hook an event
 //! resolved to, so the runner stays one shape.
 
+// NOTE: a build enabling no backend still compiles the change
+// vocabulary and the hook runner that no backend then feeds. It
+// watches nothing, and gating every item of both on the four backend
+// features would cost more noise than the dead code it removes.
+#![cfg_attr(
+    not(backend),
+    allow(dead_code, unused_imports, unused_mut, unused_variables)
+)]
+
 mod backend;
 mod check;
 mod cli;
 mod config;
 #[cfg(feature = "dav")]
 mod dav;
-mod driver;
 mod event;
 mod hook;
 #[cfg(feature = "imap")]

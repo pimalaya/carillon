@@ -82,7 +82,7 @@ pub fn open(config: &ImapConfig) -> Result<(ImapClientStd, Vec<Capability<'stati
         .map(|sasl| {
             let host = server
                 .host_str()
-                .ok_or_else(|| anyhow!("cannot derive host from IMAP server `{server}`"))?;
+                .ok_or_else(|| anyhow!("Cannot derive host from IMAP server `{server}`"))?;
             // NOTE: url does not know the imap(s) default ports, so fall
             // back to the same scheme defaults io-imap connects with.
             let port = server.port().unwrap_or(default_port(server.scheme()));
@@ -145,7 +145,7 @@ fn watch(
 ) -> Result<()> {
     let (client, capability) = open(config)?;
     let watched = Mailbox::try_from(collection.to_string())
-        .map_err(|err| anyhow!("invalid mailbox name `{collection}`: {err}"))?;
+        .map_err(|err| anyhow!("Invalid mailbox name `{collection}`: {err}"))?;
     let opts = ImapMailboxWatchStreamOptions {
         shutdown_poll: READ_TIMEOUT,
         idle_timeout,
@@ -267,13 +267,13 @@ impl<'a> Resolver<'a> {
 
     fn fetch(&mut self, uid: &str) -> Result<ItemSummary> {
         let mailbox = Mailbox::try_from(self.mailbox.to_string())
-            .map_err(|err| anyhow!("invalid mailbox name `{}`: {err}", self.mailbox))?;
+            .map_err(|err| anyhow!("Invalid mailbox name `{}`: {err}", self.mailbox))?;
 
         let parsed = uid
             .parse::<u32>()
             .ok()
             .and_then(NonZeroU32::new)
-            .ok_or_else(|| anyhow!("invalid UID `{uid}`"))?;
+            .ok_or_else(|| anyhow!("Invalid UID `{uid}`"))?;
 
         if self.client.is_none() {
             let (mut client, _capability) = open(self.config)?;
@@ -309,7 +309,7 @@ impl<'a> Resolver<'a> {
         let items = fetched
             .into_values()
             .next()
-            .ok_or_else(|| anyhow!("no envelope returned for UID `{uid}`"))?;
+            .ok_or_else(|| anyhow!("No envelope returned for UID `{uid}`"))?;
 
         Ok(summarize(items.into_inner()))
     }
@@ -337,11 +337,11 @@ where
         match coroutine.resume(&mut client.fragmentizer, arg.take().as_deref()) {
             ImapCoroutineState::Yielded(ImapYield::WantsRead) => loop {
                 if shutdown.load(Ordering::SeqCst) {
-                    bail!("shutting down");
+                    bail!("Shutting down");
                 }
 
                 match client.stream.read(&mut buf) {
-                    Ok(0) => bail!("connection closed by peer"),
+                    Ok(0) => bail!("Connection closed by peer"),
                     Ok(read) => {
                         arg = Some(buf[..read].to_vec());
                         break;

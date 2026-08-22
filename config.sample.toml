@@ -72,9 +72,6 @@ default = true
 # Every secret below is either `raw = "..."` or `command = "..."`, the command
 # being a string handed to the platform shell or a [program, args...] list, and
 # its standard output the value.
-# Every secret below is either `raw = "..."` or `command = "..."`, the command
-# being a string handed to the platform shell or a [program, args...] list, and
-# its standard output the value.
 
 # ---- IMAP: an idle connection (RFC 2177) ---------------------------------------
 
@@ -144,6 +141,8 @@ imap.hook.on-message-added.cmd = 'echo "$id arrived" >> ~/.local/state/carillon.
 imap.hook.on-flag-added.flags = ["Seen"]
 imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #imap.hook.on-flag-removed.notify.summary = "$flag cleared on $id"
+
+
 # ---- JMAP: a changes poll (RFC 8621) -------------------------------------------
 
 # The mailbox this account watches, matched by name and case-insensitively,

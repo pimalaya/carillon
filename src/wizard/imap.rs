@@ -63,7 +63,7 @@ pub fn configure_discovered(
     let login_hint = discovered.login_default(email);
     let mut config = config(endpoint, None);
 
-    // The server is the only authority on what it accepts: discovery
+    // NOTE: the server is the only authority on what it accepts: discovery
     // reports a provider's password and OAuth policy, not its mechanism
     // list, so it would offer SCRAM-SHA-256 to a Gmail that has never
     // implemented it. What the probe cannot read falls back to
@@ -154,7 +154,7 @@ fn prompt_mechanism(caps: AuthCaps, probed: Option<&[SaslMechanism]>) -> Result<
         prompt::item("SASL mechanism:", labels, None)?
     };
 
-    // Labels are unique, so the chosen one maps back to exactly one
+    // NOTE: labels are unique, so the chosen one maps back to exactly one
     // mechanism.
     Ok(mechanisms
         .into_iter()
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn the_server_decides_the_menu_and_discovery_only_stands_in() {
-        // The Gmail shape: a provider whose policy names a password and
+        // NOTE: the Gmail shape: a provider whose policy names a password and
         // an OAuth grant, on a server that has never implemented SCRAM.
         // What it advertises is the menu, so SCRAM is not in it.
         let gmail = AuthCaps {
@@ -343,7 +343,7 @@ mod tests {
         assert_eq!(offered(gmail, Some(&advertised)), advertised);
         assert!(discovered_mechanisms(gmail).contains(&SaslMechanism::ScramSha256));
 
-        // A probe that read nothing, or nothing usable, falls back to
+        // NOTE: a probe that read nothing, or nothing usable, falls back to
         // the discovered list rather than leaving the menu empty.
         assert_eq!(offered(gmail, None), discovered_mechanisms(gmail));
         assert_eq!(offered(gmail, Some(&[])), discovered_mechanisms(gmail));
@@ -383,7 +383,7 @@ mod tests {
             [SaslMechanism::OAuthBearer, SaslMechanism::XOAuth2]
         );
 
-        // Nothing advertised offers everything, so a service naming no
+        // NOTE: nothing advertised offers everything, so a service naming no
         // method is still configurable.
         assert_eq!(discovered_mechanisms(AuthCaps::default()).len(), 6);
     }

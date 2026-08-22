@@ -372,7 +372,7 @@ mod tests {
         let document = imap_account().render("posteo").expect("render the account");
         let lines: Vec<&str> = document.lines().collect();
 
-        // What the account is, then what it watches, then where, then
+        // NOTE: what the account is, then what it watches, then where, then
         // the credential authenticating against it.
         assert_eq!(lines[0], "[accounts.posteo]");
         assert_eq!(lines[1], "default = true");
@@ -381,7 +381,7 @@ mod tests {
         assert_eq!(lines[4], "imap.server = \"imaps://posteo.de:993\"");
         assert!(lines[5].starts_with("imap.sasl.plain."));
 
-        // The secret renders as the command it is read from, never as
+        // NOTE: the secret renders as the command it is read from, never as
         // a value, and the whole thing parses back.
         assert!(
             document.contains(
@@ -393,7 +393,7 @@ mod tests {
             .validate()
             .expect("the generated hooks name only what they carry");
 
-        // A default the config already holds is written, and the
+        // NOTE: a default the config already holds is written, and the
         // untouched quirks are not.
         assert!(!document.contains("starttls"));
         assert!(!document.contains("imap.id"));
@@ -418,13 +418,13 @@ mod tests {
             Some(".")
         );
 
-        // Every other field is left at its default, so none of them is
+        // NOTE: every other field is left at its default, so none of them is
         // written: a generated document holds what was configured.
         assert!(!document.contains("imap"));
         assert!(!document.contains("watch"));
         assert!(!document.contains("hook"));
 
-        // The account name heads the block, `default` reads before the
+        // NOTE: the account name heads the block, `default` reads before the
         // backend it qualifies, and the collection heads its own group.
         let lines: Vec<&str> = document.lines().collect();
         assert_eq!(lines[0], "[accounts.perso]");
@@ -437,7 +437,7 @@ mod tests {
     fn an_appended_account_keeps_the_existing_one() {
         let path = config_path();
 
-        // No trailing newline, the shape an appended block has to
+        // NOTE: no trailing newline, the shape an appended block has to
         // survive without merging into the last line.
         fs::write(
             &path,
@@ -464,7 +464,7 @@ mod tests {
 
         assert_eq!(config.accounts.len(), 2);
 
-        // Exactly one default, and the comment is still there.
+        // NOTE: exactly one default, and the comment is still there.
         let defaults = config
             .accounts
             .values()

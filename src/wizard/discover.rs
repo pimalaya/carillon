@@ -101,7 +101,7 @@ fn configure_discovered(
     input: &str,
     mut account: AccountConfig,
 ) -> Result<AccountConfig> {
-    // A `scheme://host` URL discovers from its host, and its scheme
+    // NOTE: a `scheme://host` URL discovers from its host, and its scheme
     // narrows the results; an email or bare domain discovers from the
     // domain with no scheme filter.
     let (email, scheme) = if input.contains("://") {
@@ -298,10 +298,10 @@ mod tests {
 
     #[test]
     fn account_name_defaults_to_the_first_domain_label() {
-        // Email: the domain's first label, never the local part.
+        // NOTE: an email keeps the domain's first label, never the local part.
         assert_eq!(default_account_name("clement.douin@posteo.net"), "posteo");
         assert_eq!(default_account_name("alice@mail.example.co.uk"), "mail");
-        // Bare domain (as discovery synthesizes it) and plain domain.
+        // NOTE: a bare domain (as discovery synthesizes it) and plain domain.
         assert_eq!(default_account_name("@posteo.net"), "posteo");
         assert_eq!(default_account_name("posteo.net"), "posteo");
     }
@@ -354,7 +354,7 @@ mod tests {
         retain_scheme(&mut found, "imap").expect("retain imap");
         assert_eq!(found.len(), 1);
 
-        // `imaps` asks for implicit TLS, which the STARTTLS endpoint is
+        // NOTE: `imaps` asks for implicit TLS, which the STARTTLS endpoint is
         // not.
         let mut found = all();
         retain_scheme(&mut found, "imaps").expect("retain imaps");

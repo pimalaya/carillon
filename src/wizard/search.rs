@@ -1,4 +1,4 @@
-//! Email-driven service discovery for the wizard.
+//! Service discovery for the wizard, from one email address.
 //!
 //! The typed address feeds io-pim-discovery's parallel discovery (fixed
 //! provider rules, PACC, Mozilla autoconfig, RFC 6186 SRV, RFC 6764
@@ -69,9 +69,9 @@ pub struct TcpEndpoint {
 }
 
 /// The authentication capabilities a service advertised, folded across
-/// all its discovered methods. It drives the per-service auth prompt:
-/// which SASL mechanisms or HTTP schemes to offer, and whether the
-/// OAuth token brokers appear. carillon reads a token an external
+/// all its discovered methods. It decides what the per-service auth
+/// prompt offers: which SASL mechanisms or HTTP schemes, and whether
+/// the OAuth token brokers appear. carillon reads a token an external
 /// manager (such as Ortie) issues but never runs a grant itself, so
 /// OAuth is not a method of its own here: it only unlocks the brokers
 /// behind the API token flow (see [`super::secret`]).

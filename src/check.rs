@@ -44,9 +44,11 @@ impl CheckCommand {
     ) -> Result<()> {
         let mut config = load_config(printer, config_paths)?;
 
-        let (name, account_config) = config
-            .take_account(account_name)?
-            .ok_or_else(|| anyhow!("Cannot find account"))?;
+        let (name, account_config) = config.take_account(account_name)?.ok_or_else(|| {
+            anyhow!(
+                "No default account found, name one with `-a <NAME>` or mark one with `default = true`"
+            )
+        })?;
 
         let mut report = CheckReport {
             account: name,

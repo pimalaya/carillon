@@ -343,7 +343,7 @@ fn subscribe(
 ) -> Result<bool> {
     let session = client
         .session()
-        .ok_or_else(|| anyhow!("the JMAP session was not read"))?;
+        .ok_or_else(|| anyhow!("The JMAP session was not read"))?;
     let mut coroutine = JmapEventSource::new(
         session,
         &client.http_auth,
@@ -508,7 +508,7 @@ fn resolve_mailbox(client: &mut JmapClientStd, mailbox: &str) -> Result<String> 
 
     found
         .and_then(|mailbox| mailbox.id.clone())
-        .ok_or_else(|| anyhow!("mailbox `{mailbox}` not found on the JMAP server"))
+        .ok_or_else(|| anyhow!("Mailbox `{mailbox}` not found on the JMAP server"))
 }
 
 /// The `Email/get` properties each call needs: ids only for a state
