@@ -1,10 +1,10 @@
 [Unit]
-Description=Mirador CLI watcher service
+Description=Carillon CLI watcher service
 After=network.target
 
 [Service]
 Type=exec
-ExecStart=%install_dir%/mirador watch --account %i
+ExecStart=%install_dir%/carillon watch --account %i
 ExecSearchPath=/bin
 Restart=always
 RestartSec=10

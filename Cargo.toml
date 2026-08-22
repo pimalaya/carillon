@@ -1,5 +1,5 @@
 [package]
-name = "mirador"
+name = "carillon"
 description = "CLI to watch PIM collection changes"
 version = "0.1.0"
 authors = ["Clément DOUIN (soywod) <clement.douin@posteo.net>"]
@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 categories = ["command-line-utilities", "email"]
 keywords = ["cli", "watch", "imap", "jmap", "dav"]
 homepage = "https://pimalaya.org"
-repository = "https://github.com/pimalaya/mirador"
+repository = "https://github.com/pimalaya/carillon"
 
 [package.metadata.docs.rs]
 all-features = true

@@ -1,6 +1,6 @@
 # Contributing guide
 
-Thank you for investing your time in contributing to Mirador.
+Thank you for investing your time in contributing to Carillon.
 
 Whether you are a human or an AI agent, read these in order before touching the code:
 
@@ -13,7 +13,7 @@ Everything below documents only what differs from the Pimalaya standards.
 
 ## Where changes belong
 
-Mirador owns no protocol code. It supervises watches, reads the configuration and fires the hooks, and everything on the wire belongs to the crate that speaks that protocol. Triage before patching:
+Carillon owns no protocol code. It supervises watches, reads the configuration and fires the hooks, and everything on the wire belongs to the crate that speaks that protocol. Triage before patching:
 
 - how a change is learned belongs to the protocol crate: [io-imap](https://github.com/pimalaya/io-imap) for the idle watch, [io-jmap](https://github.com/pimalaya/io-jmap) for the changes poll, [io-maildir](https://github.com/pimalaya/io-maildir) for the listing poll, [io-webdav](https://github.com/pimalaya/io-webdav) for the collection poll;
 - the shared TOML shape, since one file backs three binaries, is settled with [himalaya](https://github.com/pimalaya/himalaya) rather than here;
@@ -34,4 +34,4 @@ cargo build --no-default-features --features dav,rustls-aws
 
 ## Watching against a real server
 
-There is no test suite for a watch: it needs a server, a collection and something moving in it. A change to a backend is verified by hand against a real account, `mirador -a <account> check` first for the connection, then `mirador -a <account> watch` with the event provoked from another client. Report what you ran against in the change proposal, since providers disagree on what they advertise and on what they then honour.
+There is no test suite for a watch: it needs a server, a collection and something moving in it. A change to a backend is verified by hand against a real account, `carillon -a <account> check` first for the connection, then `carillon -a <account> watch` with the event provoked from another client. Report what you ran against in the change proposal, since providers disagree on what they advertise and on what they then honour.

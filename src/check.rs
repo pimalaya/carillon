@@ -1,4 +1,4 @@
-//! `mirador check` command: opens the configured backend(s) so
+//! `carillon check` command: opens the configured backend(s) so
 //! credential and connectivity errors surface before the first real
 //! `watch` run. Mirrors `himalaya account check`: each backend
 //! allowed by `--backend` is tried in turn, and the result is

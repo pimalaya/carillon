@@ -1,19 +1,19 @@
 # ================================================================================
-# `mirador` configuration file.
+# `carillon` configuration file.
 #
 # Loaded from the first valid path among:
-#   - $XDG_CONFIG_HOME/mirador/config.toml
-#   - $HOME/.config/mirador/config.toml
-#   - $HOME/.miradorrc
+#   - $XDG_CONFIG_HOME/carillon/config.toml
+#   - $HOME/.config/carillon/config.toml
+#   - $HOME/.carillonrc
 #
-# Override with `mirador -c <PATH>` or `MIRADOR_CONFIG=<PATH>`, both accepting a
+# Override with `carillon -c <PATH>` or `CARILLON_CONFIG=<PATH>`, both accepting a
 # `:`-delimited list: the first one is the base and the rest are deep-merged on
 # top of it.
 #
 # There is no wizard: copy this file, keep one backend and the hooks you want,
 # then delete the rest. The `[accounts.<name>]` block is the schema `himalaya`
 # CLI v2 and `himalaya-tui` read, so one file backs all three binaries; the
-# mirador-only fields (`collection`, `watch`, the `hooks.*` tables) are ignored
+# carillon-only fields (`collection`, `watch`, the `hooks.*` tables) are ignored
 # by them.
 # ================================================================================
 
@@ -77,11 +77,11 @@ imap.server = "imaps://imap.example.org"
 # table to skip authentication entirely, sending no `AUTHENTICATE` command.
 imap.sasl.plain.username = "user@example.org"
 imap.sasl.plain.password.raw = "REPLACE_ME"
-#imap.sasl.plain.password.command = "pass show mirador/example"
+#imap.sasl.plain.password.command = "pass show carillon/example"
 #imap.sasl.plain.authzid = "user@example.org"
 #imap.sasl.login.username = "user@example.org"
 #imap.sasl.login.password.raw = "REPLACE_ME"
-#imap.sasl.anonymous.message = "mirador"
+#imap.sasl.anonymous.message = "carillon"
 #imap.sasl.oauthbearer.username = "user@example.org"
 #imap.sasl.oauthbearer.token.command = ["ortie", "token", "read", "example"]
 #imap.sasl.xoauth2.username = "user@example.org"
@@ -96,7 +96,7 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 
 # RFC 2971 ID exchange, which some providers (mail.qq.com, fastmail) require
 # straight after authentication. Only the listed fields are sent: `true` sends
-# mirador's canned value for `name`, `version`, `vendor` and `support-url`,
+# carillon's canned value for `name`, `version`, `vendor` and `support-url`,
 # `false` sends NIL, and an empty map sends `ID NIL`.
 #imap.id.auto = false
 #imap.id.fields = { name = true, version = true, vendor = true, support-url = true }
@@ -112,10 +112,10 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #jmap.tls.provider = "rustls"
 
 # Exactly one of `header`, whose value is sent verbatim, `bearer` or `basic`.
-#jmap.auth.header.command = "pass show mirador/fastmail-token"
+#jmap.auth.header.command = "pass show carillon/fastmail-token"
 #jmap.auth.bearer.token.command = ["ortie", "token", "read", "fastmail"]
 #jmap.auth.basic.username = "user@example.org"
-#jmap.auth.basic.password.command = "pass show mirador/example"
+#jmap.auth.basic.password.command = "pass show carillon/example"
 
 # ---- Maildir: a listing poll ---------------------------------------------------
 
@@ -168,7 +168,7 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 
 hooks.on-item-added.notify.summary = "New mail from $sender"
 hooks.on-item-added.notify.body = "$subject"
-hooks.on-item-added.cmd = 'echo "$id arrived" >> ~/.local/state/mirador.log'
+hooks.on-item-added.cmd = 'echo "$id arrived" >> ~/.local/state/carillon.log'
 
 hooks.on-flags-added.flags = ["Seen"]
 hooks.on-flags-added.cmd = ["notify-send", "New flag on $id"]

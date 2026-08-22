@@ -1,4 +1,4 @@
-//! `mirador watch` command: watches accounts and fires their hooks on
+//! `carillon watch` command: watches accounts and fires their hooks on
 //! every change until Ctrl+C.
 //!
 //! Bare `watch` watches every configured account at once, one thread

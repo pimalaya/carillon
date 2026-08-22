@@ -1,10 +1,10 @@
-//! Mirador configuration.
+//! Carillon configuration.
 //!
 //! The `[accounts.<name>]` block mirrors the schema used by
 //! [himalaya CLI v2] and [himalaya TUI]: each backend lives under its
 //! own protocol key (`imap`, `jmap`, `maildir`); declaring more than
 //! one is allowed and the runtime picks the active one via
-//! `-b/--backend`. Mirador-only fields (`mailbox`, the `hooks.on-*`
+//! `-b/--backend`. Carillon-only fields (`mailbox`, the `hooks.on-*`
 //! tables) coexist with the shared keys and are silently ignored by
 //! the other binaries.
 //!
@@ -69,15 +69,15 @@ impl TomlConfig for Config {
 
 impl Config {
     /// Loads the config from `config_paths`, bailing when no file
-    /// resolves. Mirador has no interactive wizard; point the user at
+    /// resolves. Carillon has no interactive wizard; point the user at
     /// the sample so they can hand-edit one.
     pub fn load(config_paths: &[PathBuf]) -> Result<Config> {
         match Config::from_paths_or_default(config_paths)? {
             Some(config) => Ok(config),
             None => anyhow::bail!(
                 "No configuration found. Copy `config.sample.toml` to \
-                 `$XDG_CONFIG_HOME/mirador/config.toml`, edit it, then \
-                 re-run mirador"
+                 `$XDG_CONFIG_HOME/carillon/config.toml`, edit it, then \
+                 re-run carillon"
             ),
         }
     }
@@ -88,7 +88,7 @@ impl Config {
 /// `deny_unknown_fields` is intentionally omitted so the same TOML file
 /// can be shared with `himalaya` CLI v2 and `himalaya-tui`. Their
 /// extra fields (`smtp`, `m2dir`, `display-name`, `signature`, …)
-/// coexist silently with the mirador-only ones (`mailbox`, the
+/// coexist silently with the carillon-only ones (`mailbox`, the
 /// `hooks.on-*` tables).
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -175,7 +175,7 @@ pub struct ImapIdConfig {
     pub auto: bool,
 
     /// Parameters sent with the auto-ID command. Empty (default)
-    /// sends `ID NIL`. For each entry: `true` substitutes mirador's
+    /// sends `ID NIL`. For each entry: `true` substitutes carillon's
     /// canned value for the well-known keys (`name`, `version`,
     /// `vendor`, `support-url`) or `NIL` for unknown keys; `false`
     /// always sends `NIL`. Keys absent from this map are not
@@ -188,7 +188,7 @@ pub struct ImapIdConfig {
 /// passed to the io-imap auth coroutines.
 ///
 /// [`None`] when `auto = false`; otherwise a vec where each entry
-/// maps the user-supplied key to either mirador's canned value
+/// maps the user-supplied key to either carillon's canned value
 /// (when the user set `true` and the key is well-known) or `NIL`.
 /// Unknown keys with `true` log a warning and fall back to `NIL`.
 #[cfg(feature = "imap")]
@@ -232,7 +232,7 @@ fn canned_imap_id_value(key: &str) -> Option<&'static str> {
         "name" => Some(env!("CARGO_PKG_NAME")),
         "version" => Some(env!("CARGO_PKG_VERSION")),
         "vendor" => Some("Pimalaya"),
-        "support-url" => Some("https://github.com/pimalaya/mirador"),
+        "support-url" => Some("https://github.com/pimalaya/carillon"),
         _ => None,
     }
 }

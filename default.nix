@@ -4,7 +4,7 @@
 }@args:
 
 let
-  mirador = import ./default.nix (
+  carillon = import ./default.nix (
     removeAttrs args [
       "crossPkgs"
       "isStatic"
@@ -30,7 +30,7 @@ pimalaya.mkDefault (
       pkgs.callPackage ./package.nix {
         inherit lib rustPlatform;
         buildPackages = buildPackages // {
-          inherit mirador;
+          inherit carillon;
         };
         installShellCompletions = false;
         installManPages = false;

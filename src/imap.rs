@@ -4,7 +4,7 @@
 //! The watch is io-imap's `ImapMailboxWatch`, which holds IDLE and
 //! reports UID-keyed deltas, named by the server under QRESYNC and
 //! diffed locally without it. This module only translates them, so
-//! mirador owns no watcher.
+//! carillon owns no watcher.
 //!
 //! A delta names a UID, never a subject, so [`Resolver`] reads the
 //! envelope on a second connection.
@@ -180,7 +180,7 @@ fn drain(
     Ok(())
 }
 
-/// Maps one io-imap delta onto mirador's vocabulary.
+/// Maps one io-imap delta onto carillon's vocabulary.
 fn translate(event: ImapMailboxWatchEvent) -> Option<WatchEvent> {
     let event = match event {
         ImapMailboxWatchEvent::EnvelopeAdded { uid, .. } => WatchEvent::ItemAdded {

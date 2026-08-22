@@ -1,10 +1,30 @@
 # Migration guide
 
+## From mirador to carillon
+
+The project was renamed. It is the same tool with the same history, watching the same way; what moved is everything that carried the old name.
+
+| mirador | carillon |
+|---|---|
+| `mirador` binary | `carillon` |
+| `$XDG_CONFIG_HOME/mirador/config.toml`, `$HOME/.config/mirador/config.toml`, `$HOME/.miradorrc` | the same paths under `carillon`, and `$HOME/.carillonrc` |
+| `MIRADOR_CONFIG` | `CARILLON_CONFIG` |
+| `mirador@.service` | `carillon@.service` |
+| `github.com/pimalaya/mirador` | `github.com/pimalaya/carillon` |
+
+Nothing inside the configuration file changed with the rename, so moving it is the whole migration:
+
+```sh
+mv ~/.config/mirador ~/.config/carillon
+```
+
+A systemd unit needs reinstalling under the new name, and any script setting `MIRADOR_CONFIG` needs the new variable. The `-c/--config` flag is unchanged.
+
 ## From draft to v0.1.0
 
 ### draft issues
 
-- **Async runtime overkill for a single watch loop.** Mirador draft pulled in `tokio` for what is in practice one long-lived watch loop per process. The runtime cost (binary size, build time, dependency surface) was high for very little benefit.
+- **Async runtime overkill for a single watch loop.** Carillon draft pulled in `tokio` for what is in practice one long-lived watch loop per process. The runtime cost (binary size, build time, dependency surface) was high for very little benefit.
 - **Single backend abstraction was too rigid.** draft reused the legacy `email-lib` watch trait, which assumed every backend behaves like IMAP IDLE + a refetch. JMAP push (`Email/state` deltas) and Maildir filesystem events did not fit naturally.
 - **Configuration drifted from the rest of the ecosystem.** The `backend.host` + `backend.port` + `backend.encryption` triple did not match the URL-based shape `himalaya` CLI v2 and `himalaya-tui` settled on.
 - **Hook surface was thin.** Only `on-message-added` was wired; expunges and flag toggles were silent.
@@ -35,7 +55,7 @@ New in v0.1.0: `--log-file <PATH>` writes logs straight to a file, inherited fro
 
 #### Subcommands
 
-`-a/--account NAME` is now a global flag (placed before the subcommand: `mirador -a work watch`).
+`-a/--account NAME` is now a global flag (placed before the subcommand: `carillon -a work watch`).
 
 | draft | v0.1.0 |
 |---|---|
@@ -51,7 +71,7 @@ The full v0.1.0 schema lives in [config.sample.toml](./config.sample.toml). The 
 
 #### Backend block
 
-The single biggest shape change. The draft `[accounts.<name>.backend]` table is gone. v0.1.0 borrows the shape of [himalaya CLI v2](https://github.com/pimalaya/himalaya/blob/master/config.sample.toml): each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`, `dav.*`), declared as flat dotted entries directly under `[accounts.<name>]`. Declaring more than one is allowed; pick the active one with `-b/--backend {imap,jmap,maildir,dav}` (default `auto` picks IMAP, then JMAP, then Maildir, then WebDAV among the configured blocks). The mirador-only keys are `collection` (what the account watches, required) and `watch` (how it watches).
+The single biggest shape change. The draft `[accounts.<name>.backend]` table is gone. v0.1.0 borrows the shape of [himalaya CLI v2](https://github.com/pimalaya/himalaya/blob/master/config.sample.toml): each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`, `dav.*`), declared as flat dotted entries directly under `[accounts.<name>]`. Declaring more than one is allowed; pick the active one with `-b/--backend {imap,jmap,maildir,dav}` (default `auto` picks IMAP, then JMAP, then Maildir, then WebDAV among the configured blocks). The carillon-only keys are `collection` (what the account watches, required) and `watch` (how it watches).
 
 | draft | v0.1.0 |
 |---|---|
@@ -82,15 +102,15 @@ Every `*.passwd` / `*.token` field accepts either a raw literal (`{ raw = "…" 
 
 ### Suggested steps
 
-1. Copy [config.sample.toml](./config.sample.toml) to ~/.config/mirador/config.toml (next to the draft file).
+1. Copy [config.sample.toml](./config.sample.toml) to ~/.config/carillon/config.toml (next to the draft file).
 2. Port your account: rewrite the `backend.*` block per the table above, point your secret command at the same source your draft keyring entry was, and copy the draft `on-message-added` block over verbatim.
-3. `mirador -a <account> check` to validate the connection (auth + handshake per configured backend).
-4. `mirador -a <account> watch` once to confirm the watch starts cleanly.
+3. `carillon -a <account> check` to validate the connection (auth + handshake per configured backend).
+4. `carillon -a <account> watch` once to confirm the watch starts cleanly.
 5. Drop the draft config when you are happy with the v0.1.0 one.
 
 ### Looking for a feature that is gone?
 
-- **Interactive `configure` wizard**: removed. Edit the configuration by hand using [config.sample.toml](./config.sample.toml) as a template. A Pimalaya-wide wizard rewrite will eventually be plugged in elsewhere; mirador will consume it if/when it lands, but does not ship one itself.
+- **Interactive `configure` wizard**: removed. Edit the configuration by hand using [config.sample.toml](./config.sample.toml) as a template. A Pimalaya-wide wizard rewrite will eventually be plugged in elsewhere; carillon will consume it if/when it lands, but does not ship one itself.
 - **In-binary keyring**: out. Point a shell `command = "…"` at any CLI that prints the secret to stdout (`secret-tool`, `security`, `cmdkey`, `pass`, `gopass`, or your own script).
 - **In-binary OAuth 2 client**: out. Use [pimalaya/ortie](https://github.com/pimalaya/ortie) or any other broker, then point a `command = "..."` at the token.
 - **Per-provider preset (Gmail, Outlook, iCloud, Proton Bridge)**: gone from the binary; the [Configuration](./README.md#configuration) section of the README will document a per-provider snippet table once the v0.1.0 series stabilises.

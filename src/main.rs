@@ -1,4 +1,4 @@
-//! # mirador
+//! # carillon
 //!
 //! Watches PIM accounts and fires local hooks on every change. One
 //! account is one thread; nothing is stored between runs.

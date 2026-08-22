@@ -30,7 +30,7 @@ pub struct Cli {
     ///
     /// Paths are shell-expanded then canonicalized; multiple paths
     /// may be delimited by `:` and are merged left-to-right.
-    #[arg(short, long = "config", global = true, env = "MIRADOR_CONFIG")]
+    #[arg(short, long = "config", global = true, env = "CARILLON_CONFIG")]
     #[arg(value_name = "PATH", value_parser = path_parser, value_delimiter = ':')]
     pub config_paths: Vec<PathBuf>,
 
@@ -39,7 +39,7 @@ pub struct Cli {
 
     /// Force a specific backend.
     ///
-    /// Mirador only opens one connection per `watch`, so when more
+    /// Carillon only opens one connection per `watch`, so when more
     /// than one of `imap`, `jmap`, `maildir`, `dav` is declared on the
     /// account this flag picks which one is used. With `auto`
     /// (default), the priority order is IMAP, then JMAP, then

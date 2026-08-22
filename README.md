@@ -1,9 +1,9 @@
-# 🔭 Mirador [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya) [![Sponsor](https://img.shields.io/badge/sponsor-pink?style=flat&logo=github-sponsors&logoColor=white)](https://pimalaya.org/sponsor/)
+# 🔔 carillon [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya) [![Sponsor](https://img.shields.io/badge/sponsor-pink?style=flat&logo=github-sponsors&logoColor=white)](https://pimalaya.org/sponsor/)
 
 CLI to watch PIM collection changes, written in Rust
 
 > [!CAUTION]
-> Mirador is in active development and currently shipped as `v0.1.x`. Expect breaking changes between releases until stabilization. See the [migration guide](./MIGRATION.md) if you ran a pre-v0.1.0 build.
+> Carillon is in active development and currently shipped as `v0.1.x`. Expect breaking changes between releases until stabilization. See the [migration guide](./MIGRATION.md) if you ran a pre-v0.1.0 build.
 
 ## Table of contents
 
@@ -34,7 +34,7 @@ CLI to watch PIM collection changes, written in Rust
 - **TLS**: [rustls](https://crates.io/crates/rustls) with ring (`rustls-ring`, default) or aws (`rustls-aws`) crypto, or [native-tls](https://crates.io/crates/native-tls) (`native-tls`).
 
 > [!TIP]
-> Mirador is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
+> Carillon is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
 
 ## Coverage
 
@@ -72,7 +72,7 @@ CLI to watch PIM collection changes, written in Rust
 
 ### Pre-built binary
 
-Mirador is not released yet. Until it is, check out the [releases](https://github.com/pimalaya/mirador/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section. These pre-built binaries are built from the master branch.
+Carillon is not released yet. Until it is, check out the [releases](https://github.com/pimalaya/carillon/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section. These pre-built binaries are built from the master branch.
 
 > [!NOTE]
 > Such binaries are built with the default cargo features. If you need specific features, please use another installation method.
@@ -80,13 +80,13 @@ Mirador is not released yet. Until it is, check out the [releases](https://githu
 ### Cargo
 
 ```sh
-cargo install --locked --git https://github.com/pimalaya/mirador.git
+cargo install --locked --git https://github.com/pimalaya/carillon.git
 ```
 
 With IMAP support only, which drops the JMAP, Maildir and WebDAV backends:
 
 ```sh
-cargo install --locked --git https://github.com/pimalaya/mirador.git \
+cargo install --locked --git https://github.com/pimalaya/carillon.git \
   --no-default-features \
   --features imap,rustls-ring
 ```
@@ -96,30 +96,30 @@ cargo install --locked --git https://github.com/pimalaya/mirador.git \
 If you have the [Flakes](https://nixos.wiki/wiki/Flakes) feature enabled:
 
 ```sh
-nix profile install github:pimalaya/mirador
+nix profile install github:pimalaya/carillon
 ```
 
 Or run without installing:
 
 ```sh
-nix run github:pimalaya/mirador
+nix run github:pimalaya/carillon
 ```
 
 ### Sources
 
 ```sh
-git clone https://github.com/pimalaya/mirador
-cd mirador
+git clone https://github.com/pimalaya/carillon
+cd carillon
 nix run
 ```
 
 ## Configuration
 
-Mirador ships no wizard: copy the annotated [config.sample.toml](./config.sample.toml), keep the account and the hooks you want, and delete the rest.
+Carillon ships no wizard: copy the annotated [config.sample.toml](./config.sample.toml), keep the account and the hooks you want, and delete the rest.
 
-A configuration is loaded from the first valid path among $XDG_CONFIG_HOME/mirador/config.toml, $HOME/.config/mirador/config.toml and $HOME/.miradorrc. Override it with `-c <PATH>` or `MIRADOR_CONFIG=<PATH>`, `:`-separated to deep-merge several files on top of the first.
+A configuration is loaded from the first valid path among $XDG_CONFIG_HOME/carillon/config.toml, $HOME/.config/carillon/config.toml and $HOME/.carillonrc. Override it with `-c <PATH>` or `CARILLON_CONFIG=<PATH>`, `:`-separated to deep-merge several files on top of the first.
 
-[himalaya](https://github.com/pimalaya/himalaya) and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) read those same paths, so one file backs all three binaries. Each backend is a protocol key (`imap`, `jmap`, `maildir`, `dav`) written as dotted entries under `[accounts.<name>]`, and the keys only mirador reads sit next to the shared ones, ignored by the others.
+[himalaya](https://github.com/pimalaya/himalaya) and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) read those same paths, so one file backs all three binaries. Each backend is a protocol key (`imap`, `jmap`, `maildir`, `dav`) written as dotted entries under `[accounts.<name>]`, and the keys only carillon reads sit next to the shared ones, ignored by the others.
 
 > [!WARNING]
 > A pre-v0.1.0 configuration is not compatible with `v0.1.0`, since the schema differs. Read the [migration guide](./MIGRATION.md) first, or rewrite the file from [config.sample.toml](./config.sample.toml).
@@ -141,40 +141,40 @@ Every event has its own hook under the `hooks.` namespace: `hooks.on-item-added`
 Watch every configured account, until interrupted:
 
 ```sh
-mirador watch
+carillon watch
 ```
 
 Watch one account:
 
 ```sh
-mirador -a work watch
+carillon -a work watch
 ```
 
 Check that an account still connects and authenticates, on every backend it declares, before trusting a watch to keep running:
 
 ```sh
-mirador -a work check
+carillon -a work check
 ```
 
 Force a backend on an account declaring several:
 
 ```sh
-mirador -b jmap watch
+carillon -b jmap watch
 ```
 
-Every command and every flag is documented behind `--help`. Man pages and shell completions are generated by `mirador manuals <DIR>` and `mirador completions <DIR>`.
+Every command and every flag is documented behind `--help`. Man pages and shell completions are generated by `carillon manuals <DIR>` and `carillon completions <DIR>`.
 
 Logs go to stderr, so they can be redirected to a file while the command output stays on stdout:
 
 ```sh
-mirador watch --log-level debug 2>/tmp/mirador.log
+carillon watch --log-level debug 2>/tmp/carillon.log
 ```
 
 Use `--log-file <PATH>` to append them to a file directly. When `--log-level` is omitted the `RUST_LOG` environment variable is consulted, and `RUST_BACKTRACE=1` adds the full error backtrace.
 
 ## Interfaces
 
-Mirador is one of several front-ends to the Pimalaya libraries. See [pimalaya/himalaya#interfaces](https://github.com/pimalaya/himalaya#interfaces) for the full list.
+Carillon is one of several front-ends to the Pimalaya libraries. See [pimalaya/himalaya#interfaces](https://github.com/pimalaya/himalaya#interfaces) for the full list.
 
 ## License
 

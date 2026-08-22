@@ -8,4 +8,4 @@
 
 ## Reporting a Vulnerability
 
-https://github.com/pimalaya/mirador/issues
+https://github.com/pimalaya/carillon/issues

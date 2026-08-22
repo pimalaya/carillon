@@ -12,5 +12,5 @@ jobs:
     uses: pimalaya/nix/.github/workflows/releases.yml@master
     secrets: inherit
     with:
-      project: mirador
+      project: carillon
       nixpkgs: nixos-25.11

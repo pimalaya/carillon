@@ -9,16 +9,16 @@ die() {
 
 DESTDIR="${DESTDIR:-}"
 PREFIX="${PREFIX:-"$DESTDIR/usr/local"}"
-RELEASES_URL="https://github.com/soywod/mirador/releases"
+RELEASES_URL="https://github.com/soywod/carillon/releases"
 
-binary=mirador
+binary=carillon
 system=$(uname -s | tr [:upper:] [:lower:])
 machine=$(uname -m | tr [:upper:] [:lower:])
 
 case $system in
     msys*|mingw*|cygwin*|win*)
 	target=x86_64-windows
-	binary=mirador.exe;;
+	binary=carillon.exe;;
 
     linux|freebsd)
 	case $machine in
@@ -42,11 +42,11 @@ tmpdir=$(mktemp -d) || die "Cannot create temporary directory"
 trap "rm -rf $tmpdir" EXIT
 
 echo "Downloading latest $system release…"
-curl -sLo "$tmpdir/mirador.tgz" \
-     "$RELEASES_URL/latest/download/mirador.$target.tgz"
+curl -sLo "$tmpdir/carillon.tgz" \
+     "$RELEASES_URL/latest/download/carillon.$target.tgz"
 
 echo "Installing binary…"
-tar -xzf "$tmpdir/mirador.tgz" -C "$tmpdir"
+tar -xzf "$tmpdir/carillon.tgz" -C "$tmpdir"
 
 mkdir -p "$PREFIX/bin"
 cp -f -- "$tmpdir/$binary" "$PREFIX/bin/$binary"

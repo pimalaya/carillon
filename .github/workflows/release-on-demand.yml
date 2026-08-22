@@ -43,7 +43,7 @@ jobs:
     uses: pimalaya/nix/.github/workflows/release-on-demand.yml@master
     secrets: inherit
     with:
-      project: mirador
+      project: carillon
       nixpkgs: ${{ inputs.nixpkgs }}
       nix-info: ${{ inputs.nix-info }}
       os: ${{ inputs.os }}

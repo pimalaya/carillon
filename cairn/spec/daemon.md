@@ -6,9 +6,9 @@ status: current
 
 # The watch daemon
 
-mirador watches PIM accounts and fires local hooks on every change. It reads a TOML config of named accounts, watches each one on its own thread, and runs on one machine with no server apparatus: no HTTP listener, datastore, auth, custody, metering or billing.
+carillon watches PIM accounts and fires local hooks on every change. It reads a TOML config of named accounts, watches each one on its own thread, and runs on one machine with no server apparatus: no HTTP listener, datastore, auth, custody, metering or billing.
 
-It watches; it never syncs. A change is reported as it is seen (an item arrived, one left, one was edited, flags moved) and nothing is stored between runs. What a hook wants beyond that, mirador goes and reads on demand.
+It watches; it never syncs. A change is reported as it is seen (an item arrived, one left, one was edited, flags moved) and nothing is stored between runs. What a hook wants beyond that, carillon goes and reads on demand.
 
 Each backend brings its own way of learning about a change, and the daemon translates all of them into one vocabulary, so a hook is written once: IMAP holds IDLE and reports UID-keyed deltas, JMAP polls `Email/changes`, Maildir re-lists the mailbox, WebDAV reports what a collection did since a sync token. Mail is not the boundary: a WebDAV collection is a CalDAV calendar or a CardDAV addressbook just as readily. The protocol crates own the protocols (io-imap, io-jmap, io-maildir, io-webdav); this repository owns the config, the hooks and the supervision.
 
@@ -21,7 +21,17 @@ The daemon SHALL read its accounts from a TOML config file, resolved from an exp
 - **THEN** a desktop notification fires, with no network delivery and no account with any service
 
 ### Requirement: Every configured account, or a chosen one
-Bare `mirador watch` SHALL watch every configured account at once, one thread each under a single shared shutdown. `-a/--account` SHALL narrow the watch to that account, and an unknown name SHALL be an error. One account's watch failure SHALL be logged and retried on its own without stalling the others.
+Bare `carillon watch` SHALL watch every configured account at once, one thread each under a single shared shutdown. `-a/--account` SHALL narrow the watch to that account, and an unknown name SHALL be an error. One account's watch failure SHALL be logged and retried on its own without stalling the others.
+
+#### Scenario: Watch everything
+- **GIVEN** a config with two accounts and no account flag
+- **WHEN** `carillon watch` runs
+- **THEN** both accounts are watched at once, each on its own collection, and Ctrl+C stops them together
+
+#### Scenario: One account's server is unreachable
+- **GIVEN** two watched accounts, one of whose servers refuses connections
+- **WHEN** that watch fails
+- **THEN** the failure is logged and retried for that account alone, and the other account keeps watching
 
 ### Requirement: An account watches one collection, one way
 An account SHALL name the one collection it watches, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection is a second account, which is also how it gets its own hooks. Every backend SHALL read the collection the same way, the DAV one included, whose `server` names the DAV root and whose collection is the path under it.
@@ -43,16 +53,6 @@ The watch method SHALL be named by its mechanism (`watch.idle`, `watch.push`, `w
 - **GIVEN** a Maildir account configuring `watch.idle`
 - **WHEN** the watch starts
 - **THEN** it fails, saying the maildir backend offers poll, rather than polling anyway
-
-#### Scenario: Watch everything
-- **GIVEN** a config with two accounts and no account flag
-- **WHEN** `mirador watch` runs
-- **THEN** both accounts are watched at once, each on its configured mailbox, and Ctrl+C stops them together
-
-#### Scenario: One account's server is unreachable
-- **GIVEN** two watched accounts, one of whose servers refuses connections
-- **WHEN** that watch fails
-- **THEN** the failure is logged and retried for that account alone, and the other account keeps watching
 
 ### Requirement: The daemon owns the connection lifecycle
 The daemon SHALL own reconnection: a session that ends, for any reason other than a requested shutdown, SHALL be reopened after a capped exponential backoff, and a session that stayed up long enough to look healthy SHALL reset that backoff. Credentials SHALL be resolved per attempt rather than held, so a rotated secret is picked up by the next reconnect and residency stays minimal.
@@ -113,9 +113,9 @@ A hook SHALL be a desktop notification, a shell command, or both. Its templates 
 - **THEN** the failure is logged and the watch keeps running
 
 ### Requirement: The account can be checked before it is watched
-`mirador check` SHALL open each backend the account declares and report per backend whether it worked, so a credential or connectivity error surfaces before a watch is started rather than in the middle of one.
+`carillon check` SHALL open each backend the account declares and report per backend whether it worked, so a credential or connectivity error surfaces before a watch is started rather than in the middle of one.
 
 #### Scenario: A wrong password
 - **GIVEN** an account whose IMAP password is wrong
-- **WHEN** `mirador check` runs
+- **WHEN** `carillon check` runs
 - **THEN** the imap backend is reported as failed with the server's reason, and the process exits non-zero

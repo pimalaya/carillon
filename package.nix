@@ -41,7 +41,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   inherit buildNoDefaultFeatures;
 
-  pname = "mirador";
+  pname = "carillon";
   version = "0.1.0";
   cargoHash = "";
 
