@@ -15,7 +15,7 @@ use clap::Parser;
 /// Backend selector for the `-b/--backend` CLI flag.
 #[derive(Clone, Copy, Debug, Default, Parser, PartialEq, Eq)]
 pub enum Backend {
-    /// First configured block wins (priority: IMAP, JMAP, Maildir).
+    /// First configured block wins (priority: IMAP, JMAP, Maildir, DAV).
     #[default]
     Auto,
     /// Force IMAP; bail when the account has no `imap` block.
@@ -24,6 +24,8 @@ pub enum Backend {
     Jmap,
     /// Force Maildir; bail when the account has no `maildir` block.
     Maildir,
+    /// Force WebDAV; bail when the account has no `dav` block.
+    Dav,
 }
 
 #[allow(unused)]
@@ -39,6 +41,10 @@ impl Backend {
     pub fn allows_maildir(self) -> bool {
         matches!(self, Self::Auto | Self::Maildir)
     }
+
+    pub fn allows_dav(self) -> bool {
+        matches!(self, Self::Auto | Self::Dav)
+    }
 }
 
 impl FromStr for Backend {
@@ -50,6 +56,7 @@ impl FromStr for Backend {
             "imap" => Ok(Self::Imap),
             "jmap" => Ok(Self::Jmap),
             "maildir" => Ok(Self::Maildir),
+            "dav" => Ok(Self::Dav),
             backend => bail!("Invalid backend {backend}"),
         }
     }
@@ -62,6 +69,7 @@ impl fmt::Display for Backend {
             Self::Imap => write!(f, "imap"),
             Self::Jmap => write!(f, "jmap"),
             Self::Maildir => write!(f, "maildir"),
+            Self::Dav => write!(f, "dav"),
         }
     }
 }

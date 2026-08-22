@@ -10,9 +10,9 @@
 # can be passed at once, separated by `:`; the first one is the base and the
 # rest are deep-merged on top of it.
 #
-# Run `mirador watch` once with no config file on disk to bootstrap this
-# template at the first path, then edit the resulting file (set up at least
-# one backend and a hook) and re-run `mirador watch`.
+# Copy this file to the first path, keep the account and the hooks you want,
+# delete the rest, then run `mirador watch`. There is no wizard: mirador bails
+# with a pointer to this file when no config file resolves.
 #
 # The `[accounts.<name>]` block uses the same schema as `himalaya` CLI v2 and
 # `himalaya-tui`. One TOML file can back all three binaries; mirador-only
@@ -114,7 +114,7 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 # a warning. `false` always sends NIL. An empty map sends `ID NIL`.
 #imap.id.fields = { name = true, version = true, vendor = true, support-url = true }
 
-# ---- JMAP backend (RFC 8620 §7.2 EventSource push) -----------------------------
+# ---- JMAP backend (RFC 8621 Email/changes poll) --------------------------------
 
 # JMAP server address. Either a bare authority (auto-discovered via
 # `GET /.well-known/jmap`) or a full URL pointing directly at the session
@@ -148,7 +148,9 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #maildir.root = "~/Mail/example"
 
 # --------------------------------------------------------------------------------
-# Hooks: hooks.on-{message,flags}-{added,removed}.{notify,cmd}. `cmd` is
+# Hooks: hooks.on-item-{added,removed,changed} and hooks.on-flags-{added,removed},
+# each with {notify,cmd}. `on-message-added` and `on-message-removed` still work
+# as the former names of the two item hooks. `cmd` is
 # either a string (handed to /bin/sh -c on Unix, cmd /C on Windows) or a
 # list [program, args...] spawned directly. Placeholders are exported as
 # environment variables on the spawned process: $id, $mailbox, $subject,
@@ -157,16 +159,40 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #
 # $id is the backend's own message id: an IMAP UID, a JMAP Email id, a Maildir
 # file name. The envelope variables ($subject, $date, $sender, $recipient) are
-# resolved on a second connection and only for on-message-added, over IMAP; the
+# resolved on a second connection and only for on-item-added, over IMAP; the
 # other backends leave them unset.
 #
 # Flag names are normalised across backends, so one filter fires everywhere:
 # IMAP \Seen, JMAP $seen and the Maildir S letter all arrive as Seen.
 # --------------------------------------------------------------------------------
 
-hooks.on-message-added.notify.summary = "New mail from $sender"
-hooks.on-message-added.notify.body = "$subject"
-hooks.on-message-added.cmd = 'echo "$id arrived" >> ~/.local/state/mirador.log'
+hooks.on-item-added.notify.summary = "New mail from $sender"
+hooks.on-item-added.notify.body = "$subject"
+hooks.on-item-added.cmd = 'echo "$id arrived" >> ~/.local/state/mirador.log'
 
 hooks.on-flags-added.flags = ["Seen"]
 hooks.on-flags-added.cmd = ["notify-send", "New flag on $id"]
+
+# ---- WebDAV backend (sync-collection poll) ------------------------------------
+
+# The collection URL: a CalDAV calendar, a CardDAV addressbook or a plain DAV
+# collection, path included. CalDAV and CardDAV are WebDAV, so all three
+# configure the same way.
+#dav.server = "https://dav.example.org/calendars/alice/work/"
+
+# Seconds between two sync-collection reports. Defaults to 60.
+#dav.poll = 60
+
+# Authentication. Omit for a collection readable without one.
+#dav.auth.basic.username = "alice"
+#dav.auth.basic.password.command = "pass show dav/example"
+#dav.auth.bearer.token.command = "ortie token read example"
+
+# TLS, same shape as the other backends.
+#dav.tls.provider = "rustls"
+#dav.tls.cert = "/path/to/custom/cert.pem"
+
+# WebDAV items are mutable, so this is the backend that fires
+# hooks.on-item-changed. It has no flags, so the flag hooks never fire for it,
+# and the report asks for etags only, so no envelope variables resolve either:
+# a hook that wants a contact's name reads the href itself.

@@ -4,7 +4,7 @@
 
 ### draft issues
 
-- **Async runtime overkill for a single watch loop.** Mirador draft pulled in `tokio` for what is in practice one long-lived IDLE / fsnotify loop per process. The runtime cost (binary size, build time, dependency surface) was high for very little benefit.
+- **Async runtime overkill for a single watch loop.** Mirador draft pulled in `tokio` for what is in practice one long-lived watch loop per process. The runtime cost (binary size, build time, dependency surface) was high for very little benefit.
 - **Single backend abstraction was too rigid.** draft reused the legacy `email-lib` watch trait, which assumed every backend behaves like IMAP IDLE + a refetch. JMAP push (`Email/state` deltas) and Maildir filesystem events did not fit naturally.
 - **Configuration drifted from the rest of the ecosystem.** The `backend.host` + `backend.port` + `backend.encryption` triple did not match the URL-based shape `himalaya` CLI v2 and `himalaya-tui` settled on.
 - **Hook surface was thin.** Only `on-message-added` was wired; expunges and flag toggles were silent.
@@ -12,8 +12,8 @@
 
 ### v0.1.0 changes
 
-- **Deep rewrite on top of the I/O-free `io-*` ecosystem.** The CLI is synchronous (`std::net`), the binary is smaller, and the same shared `EmailClientStd::watch_mailbox` API drives all three backends.
-- **Three first-class backends behind one watch surface:** IMAP IDLE (RFC 2177), JMAP EventSource push (RFC 8620 §7.2) and Maildir filesystem notifications.
+- **Deep rewrite on top of the I/O-free io-* ecosystem.** The CLI is synchronous, the binary is smaller, and each backend watches through the crate that speaks its own protocol.
+- **Three first-class backends behind one watch surface:** IMAP holds an idle connection (RFC 2177), JMAP polls for changes (RFC 8621) and Maildir re-lists the mailbox.
 - **Shared configuration schema** with `himalaya` CLI v2 and `himalaya-tui` for the `[accounts.<name>]` block (`imap.*`, `jmap.*`, `maildir.*` keys). One TOML file can back all three binaries.
 - **Four watch event hooks** (`on-message-added`, `on-message-removed`, `on-flags-added`, `on-flags-removed`) with template placeholders shared across kinds.
 - **Keyring moved out** to a shell command: any CLI that prints the secret to stdout works (`secret-tool lookup …`, `pass show …`, `security find-generic-password …`, etc.).
@@ -74,7 +74,7 @@ The IMAP SASL config carries the mechanism name as the *key* under `sasl` (`imap
 
 Placeholders use shell-style `$name` / `${name}` syntax in the notification `summary` / `body` (expanded with [subst](https://crates.io/crates/subst)) and are also exported as environment variables on the spawned `cmd` process. Available names: `id`, `mailbox`, `subject`, `sender`, `sender_name`, `sender_address`, `recipient`, `recipient_name`, `recipient_address`, `flag`, `flags`. Sender / recipient / subject only resolve on `hooks.on-message-added`.
 
-The `cmd` field is decoded by [`pimalaya_config::command`](https://github.com/pimalaya/config) and accepts two TOML shapes: a **string** is handed to the platform shell (`/bin/sh -c <line>` on Unix, `cmd /C <line>` on Windows; quote placeholders as `"$subject"` so the shell expands them); a **list** `[program, args…]` is spawned directly with no shell (placeholders are still available as env vars to the spawned program).
+The `cmd` field is decoded by [pimalaya-config](https://github.com/pimalaya/config) and accepts two TOML shapes: a **string** is handed to the platform shell (`/bin/sh -c <line>` on Unix, `cmd /C <line>` on Windows; quote placeholders as `"$subject"` so the shell expands them); a **list** `[program, args…]` is spawned directly with no shell (placeholders are still available as env vars to the spawned program).
 
 #### Secrets
 
@@ -82,15 +82,15 @@ Every `*.passwd` / `*.token` field accepts either a raw literal (`{ raw = "…" 
 
 ### Suggested steps
 
-1. Copy [config.sample.toml](./config.sample.toml) to `~/.config/mirador/config.toml` (next to the draft file).
+1. Copy [config.sample.toml](./config.sample.toml) to ~/.config/mirador/config.toml (next to the draft file).
 2. Port your account: rewrite the `backend.*` block per the table above, point your secret command at the same source your draft keyring entry was, and copy the draft `on-message-added` block over verbatim.
 3. `mirador -a <account> check` to validate the connection (auth + handshake per configured backend).
-4. `mirador -a <account> watch` once to confirm the IDLE / SSE / fsnotify loop starts cleanly.
+4. `mirador -a <account> watch` once to confirm the watch starts cleanly.
 5. Drop the draft config when you are happy with the v0.1.0 one.
 
 ### Looking for a feature that is gone?
 
-- **Interactive `configure` wizard**: removed. Edit `config.toml` by hand using [config.sample.toml](./config.sample.toml) as a template. A Pimalaya-wide wizard rewrite will eventually be plugged in elsewhere; mirador will consume it if/when it lands, but does not ship one itself.
+- **Interactive `configure` wizard**: removed. Edit the configuration by hand using [config.sample.toml](./config.sample.toml) as a template. A Pimalaya-wide wizard rewrite will eventually be plugged in elsewhere; mirador will consume it if/when it lands, but does not ship one itself.
 - **In-binary keyring**: out. Point a shell `command = "…"` at any CLI that prints the secret to stdout (`secret-tool`, `security`, `cmdkey`, `pass`, `gopass`, or your own script).
 - **In-binary OAuth 2 client**: out. Use [pimalaya/ortie](https://github.com/pimalaya/ortie) or any other broker, then point a `command = "..."` at the token.
 - **Per-provider preset (Gmail, Outlook, iCloud, Proton Bridge)**: gone from the binary; the [Configuration](./README.md#configuration) section of the README will document a per-provider snippet table once the v0.1.0 series stabilises.

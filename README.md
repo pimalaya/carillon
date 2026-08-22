@@ -2,68 +2,89 @@
 
 CLI to watch mailbox changes, written in Rust
 
-![screenshot](./screenshot.jpeg)
-
 > [!CAUTION]
-> Mirador is in active development and currently shipped as `v0.1.x`. Expect breaking changes between releases until stabilization. See [MIGRATION.md](./MIGRATION.md) if you ran a pre-v0.1.0 build.
+> Mirador is in active development and currently shipped as `v0.1.x`. Expect breaking changes between releases until stabilization. See the [migration guide](./MIGRATION.md) if you ran a pre-v0.1.0 build.
 
 ## Table of contents
 
 - [Features](#features)
+- [Coverage](#coverage)
 - [Installation](#installation)
-  - [Pre-built binary](#pre-built-binary)
-  - [Cargo](#cargo)
-  - [Nix](#nix)
-  - [Sources](#sources)
 - [Configuration](#configuration)
-  - [Backend selection](#backend-selection)
-  - [Hooks](#hooks)
 - [Usage](#usage)
-- [Migration](#migration)
 - [Interfaces](#interfaces)
-- [License](#license)
 - [AI policy](https://github.com/pimalaya/.github/blob/master/AI_POLICY.md)
+- [License](#license)
 - [Social](#social)
-- [Contributing](https://github.com/pimalaya/.github/blob/master/CONTRIBUTING.md)
+- [Contributing](./CONTRIBUTING.md)
 - [Sponsoring](#sponsoring)
 
 ## Features
 
-- Remote backends: **IMAP** via [RFC 2177 IDLE](https://datatracker.ietf.org/doc/html/rfc2177) with [RFC 7162 QRESYNC](https://datatracker.ietf.org/doc/html/rfc7162) deltas where the server offers them, **JMAP** via an [RFC 8620 §5.2 `Email/changes`](https://datatracker.ietf.org/doc/html/rfc8620#section-5.2) poll
-- Local backend: **Maildir** <sup>[specs](https://cr.yp.to/proto/maildir.html)</sup> via a listing poll
-- Watch every configured account at once (one thread each), or narrow to one with `-a/--account`; a dropped connection is reopened with a capped backoff
-- Watch events: **`on-message-added`**, **`on-message-removed`**, **`on-flags-added`**, **`on-flags-removed`** (flag hooks accept an optional `flags = [...]` filter)
-- Hook actions: **system notification** via [notify-rust](https://crates.io/crates/notify-rust) and **shell command** (TOML string handed to `/bin/sh -c` on Unix / `cmd /C` on Windows; or a TOML `[program, args…]` list spawned directly with no shell)
-- Shell-style placeholders (`$name` / `${name}`) in hook strings: `id`, `mailbox`, `subject`, `date`, `sender`, `sender_name`, `sender_address`, `recipient`, `recipient_name`, `recipient_address`, `flag`, `flags`. Shell-command hooks receive them as environment variables, so the shell's own expansion does the substitution: write `"$subject"` (quoted) for safe whitespace handling.
-- **Simple auth** support for IMAP: anonymous, login, plain, oauthbearer, xoauth2, scram-sha-256
-- **HTTP auth** support for JMAP: basic, bearer
-- **TLS** support:
-  - [Rustls](https://crates.io/crates/rustls) with ring crypto
-  - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
-  - [Native TLS](https://crates.io/crates/native-tls) (requires `native-tls` feature)
-- **Shared configuration file** with `himalaya` and `himalaya-tui`: the same `[accounts.<name>]` block loads on all three binaries (see [Configuration](#configuration))
+- **Four backends**: IMAP idles, JMAP polls for changes, Maildir re-lists, WebDAV asks what moved.
+- **Not only mail**: a WebDAV collection is a CalDAV calendar or a CardDAV addressbook just as readily.
+- **Every account at once**: one thread each, or `-a/--account` for a single one.
+- **Self-healing**: a dropped watch reopens with a capped backoff, reading the credential again each time.
+- **Five events**: an item added, removed or changed, flags added or removed. Flag names are the same on every backend, so a filter written once fires everywhere.
+- **Hooks**: a desktop notification, a shell command, or both, with the event's fields as placeholders.
+- **Shared configuration**: the same `[accounts.<name>]` block backs `himalaya` and `himalaya-tui`.
+- **Authentication**: SASL for IMAP, basic and bearer for JMAP and WebDAV, secrets read from your own password manager.
+- **JSON output**: `--json` on every data command, for scripts.
+- **TLS**: [rustls](https://crates.io/crates/rustls) with ring (`rustls-ring`, default) or aws (`rustls-aws`) crypto, or [native-tls](https://crates.io/crates/native-tls) (`native-tls`).
 
 > [!TIP]
 > Mirador is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
+
+## Coverage
+
+| Spec      | What is covered |
+|-----------|-----------------|
+| [2177]    | IMAP idle: the held connection a watch waits on, woken by the server on every change |
+| [7162]    | Quick mailbox resynchronization: server-named deltas where the server offers them, a local re-read and diff where it does not |
+| [4959]    | SASL initial response, forced on or off for providers that advertise it and then refuse it |
+| [2971]    | IMAP identification, required by some providers right after authentication |
+| [4616]    | SASL plain, the password mechanism |
+| [4505]    | SASL anonymous, for servers accepting unauthenticated sessions |
+| [7677]    | SASL scram-sha-256, the challenge-response mechanism |
+| [7628]    | SASL oauthbearer, an OAuth 2.0 token issued by an external broker |
+| [8620]    | The JMAP core: session discovery, the changes and get method shapes, request batching |
+| [8621]    | JMAP for mail: mailboxes, emails, and the change stream a watch polls |
+| [maildir] | The original Maildir layout, plus the Maildir++ subfolder convention |
+| [4918]    | WebDAV itself: the report a collection answers, and the etag that says an item moved |
+| [6578]    | Collection synchronization: the token a poll carries, what changed since it, and what to do when the server refuses it |
+
+[2177]: https://www.rfc-editor.org/rfc/rfc2177
+[7162]: https://www.rfc-editor.org/rfc/rfc7162
+[4959]: https://www.rfc-editor.org/rfc/rfc4959
+[2971]: https://www.rfc-editor.org/rfc/rfc2971
+[4616]: https://www.rfc-editor.org/rfc/rfc4616
+[4505]: https://www.rfc-editor.org/rfc/rfc4505
+[7677]: https://www.rfc-editor.org/rfc/rfc7677
+[7628]: https://www.rfc-editor.org/rfc/rfc7628
+[8620]: https://www.rfc-editor.org/rfc/rfc8620
+[8621]: https://www.rfc-editor.org/rfc/rfc8621
+[maildir]: https://cr.yp.to/proto/maildir.html
+[4918]: https://www.rfc-editor.org/rfc/rfc4918
+[6578]: https://www.rfc-editor.org/rfc/rfc6578
 
 ## Installation
 
 ### Pre-built binary
 
-Mirador is not yet released; the only way to get a pre-built binary today is to check out the [releases](https://github.com/pimalaya/mirador/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section.
+Mirador is not released yet. Until it is, check out the [releases](https://github.com/pimalaya/mirador/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section. These pre-built binaries are built from the master branch.
 
 > [!NOTE]
 > Such binaries are built with the default cargo features. If you need specific features, please use another installation method.
 
 ### Cargo
 
-```
+```sh
 cargo install --locked --git https://github.com/pimalaya/mirador.git
 ```
 
-With only IMAP support:
+With IMAP support only, which drops the JMAP, Maildir and WebDAV backends:
 
-```
+```sh
 cargo install --locked --git https://github.com/pimalaya/mirador.git \
   --no-default-features \
   --features imap,rustls-ring
@@ -73,19 +94,19 @@ cargo install --locked --git https://github.com/pimalaya/mirador.git \
 
 If you have the [Flakes](https://nixos.wiki/wiki/Flakes) feature enabled:
 
-```
+```sh
 nix profile install github:pimalaya/mirador
 ```
 
 Or run without installing:
 
-```
+```sh
 nix run github:pimalaya/mirador
 ```
 
 ### Sources
 
-```
+```sh
 git clone https://github.com/pimalaya/mirador
 cd mirador
 nix run
@@ -93,67 +114,62 @@ nix run
 
 ## Configuration
 
-Copy [config.sample.toml](./config.sample.toml) to `$XDG_CONFIG_HOME/mirador/config.toml` and edit it. Mirador does not ship an interactive wizard; the sample documents every backend block and hook with inline comments.
+Mirador ships no wizard: copy the annotated [config.sample.toml](./config.sample.toml), keep the account and the hooks you want, and delete the rest.
 
-A persistent configuration is loaded from the first valid path among:
+A configuration is loaded from the first valid path among $XDG_CONFIG_HOME/mirador/config.toml, $HOME/.config/mirador/config.toml and $HOME/.miradorrc. Override it with `-c <PATH>` or `MIRADOR_CONFIG=<PATH>`, `:`-separated to deep-merge several files on top of the first.
 
-- `$XDG_CONFIG_HOME/mirador/config.toml`
-- `$HOME/.config/mirador/config.toml`
-- `$HOME/.miradorrc`
-
-These are the same paths the [himalaya](https://github.com/pimalaya/himalaya) CLI and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) look at: one TOML file backs all three binaries, **starting from himalaya CLI v2**. Each backend lives under its own protocol key (`imap.*`, `jmap.*`, `maildir.*`), declared as flat dotted entries under `[accounts.<name>]`. Mirador-only fields (`mailbox`, the `hooks.on-*` tables) coexist with the shared keys and are silently ignored by the other binaries.
+[himalaya](https://github.com/pimalaya/himalaya) and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) read those same paths, so one file backs all three binaries. Each backend is a protocol key (`imap`, `jmap`, `maildir`, `dav`) written as dotted entries under `[accounts.<name>]`, and the keys only mirador reads sit next to the shared ones, ignored by the others.
 
 > [!WARNING]
-> A pre-v0.1.0 mirador configuration file is **not** compatible with `v0.1.0`: the schema differs. See [MIGRATION.md](./MIGRATION.md) (or rewrite the file using [config.sample.toml](./config.sample.toml) as a template) before pointing `v0.1.0` at it.
-
-Override the path with `-c <PATH>` or `MIRADOR_CONFIG=<PATH>`; multiple paths can be passed at once, separated by `:`. The first one is the base and the rest are deep-merged on top.
+> A pre-v0.1.0 configuration is not compatible with `v0.1.0`, since the schema differs. Read the [migration guide](./MIGRATION.md) first, or rewrite the file from [config.sample.toml](./config.sample.toml).
 
 ### Backend selection
 
-An account may declare more than one of the `imap`, `jmap`, `maildir` blocks (so the same TOML file can drive `mirador` and `himalaya` against different backends). Mirador opens exactly one connection per `watch`, so the active backend is picked at startup:
-
-- `-b/--backend imap | jmap | maildir` pins the active backend; the command bails when the account has no matching block.
-- `-b auto` (default) picks the first configured block in this order: IMAP, then JMAP, then Maildir.
+A watch opens exactly one connection, so an account declaring several backends picks one at startup: `-b/--backend {imap,jmap,maildir,dav}` pins it and fails when the block is absent, while `-b auto`, the default, takes the first configured among IMAP, JMAP, Maildir, WebDAV.
 
 ### Hooks
 
-Mirador fires zero or more hooks per [watch event kind](#features). Each hook config can declare a system notification, a shell command, or both:
-
-```toml
-# String `cmd`: handed to /bin/sh -c on Unix, cmd /C on Windows.
-# Placeholders are env vars; the shell does the expansion.
-hooks.on-message-added.notify = { summary = "New mail from $sender", body = "$subject" }
-hooks.on-message-added.cmd = 'echo "$id arrived" >> ~/.local/state/mirador.log'
-
-# List `cmd`: [program, args...] spawned directly. Flag hooks accept
-# an optional `flags = [...]` filter (IANA flag name, case-insensitive).
-hooks.on-flags-added.flags = ["Seen"]
-hooks.on-flags-added.cmd = ["notify-send", "New flag on $id"]
-```
-
-Both `cmd` shapes are decoded by [`pimalaya_config::command`](https://github.com/pimalaya/config). Notifications use [notify-rust](https://crates.io/crates/notify-rust) (D-Bus / `NSUserNotification` / Windows toast). Failures are logged at `warn` so a broken hook never crashes the watcher.
+Every event has its own hook under the `hooks.` namespace: `hooks.on-item-added`, `hooks.on-item-removed`, `hooks.on-item-changed`, `hooks.on-flags-added` and `hooks.on-flags-removed`. The earlier `on-message-*` names still work. Each fires a notification, a command, or both, and flag hooks take an optional `flags` filter. A hook that fails is logged and never stops the watch. The shapes and the full placeholder list are documented in [config.sample.toml](./config.sample.toml).
 
 ## Usage
 
-```
-mirador watch                  # watch the default account's mailbox
-mirador -a work watch          # watch the `work` account
-mirador watch -m Drafts        # watch a specific mailbox
-mirador -b jmap watch          # force JMAP when several backends are configured
-mirador check                  # validate the account against each configured backend
-mirador completions bash ./out # generate shell completions
-mirador manuals ./out          # generate man pages
+Watch every configured account, until interrupted:
+
+```sh
+mirador watch
 ```
 
-The watch loop runs until `Ctrl+C`; the IMAP / JMAP / Maildir driver winds down cleanly (sends `IDLE DONE`, closes the SSE socket, drops the notify watcher) before the binary exits.
+Watch one account, on a mailbox other than the one it configures:
 
-## Migration
+```sh
+mirador -a work watch -m Drafts
+```
 
-Coming from a pre-v0.1.0 (draft) mirador build? Read [MIGRATION.md](./MIGRATION.md). The `v0.1.0` configuration schema is incompatible with the earlier `[accounts.<name>.backend]` shape, which is now replaced by parallel `imap.*` / `jmap.*` / `maildir.*` dotted keys aligned with himalaya CLI v2.
+Check that an account still connects and authenticates, on every backend it declares, before trusting a watch to keep running:
+
+```sh
+mirador -a work check
+```
+
+Force a backend on an account declaring several:
+
+```sh
+mirador -b jmap watch
+```
+
+Every command and every flag is documented behind `--help`. Man pages and shell completions are generated by `mirador manuals <DIR>` and `mirador completions <DIR>`.
+
+Logs go to stderr, so they can be redirected to a file while the command output stays on stdout:
+
+```sh
+mirador watch --log-level debug 2>/tmp/mirador.log
+```
+
+Use `--log-file <PATH>` to append them to a file directly. When `--log-level` is omitted the `RUST_LOG` environment variable is consulted, and `RUST_BACKTRACE=1` adds the full error backtrace.
 
 ## Interfaces
 
-Mirador is one of several front-ends to the Pimalaya libraries. See [pimalaya/himalaya#interfaces](https://github.com/pimalaya/himalaya#interfaces) for the full list (CLI, TUI, Vim, Emacs, Raycast).
+Mirador is one of several front-ends to the Pimalaya libraries. See [pimalaya/himalaya#interfaces](https://github.com/pimalaya/himalaya#interfaces) for the full list.
 
 ## License
 

@@ -154,10 +154,10 @@ fn drain(
 /// Maps one io-imap delta onto mirador's vocabulary.
 fn translate(event: ImapMailboxWatchEvent) -> Option<WatchEvent> {
     let event = match event {
-        ImapMailboxWatchEvent::EnvelopeAdded { uid, .. } => WatchEvent::MessageAdded {
+        ImapMailboxWatchEvent::EnvelopeAdded { uid, .. } => WatchEvent::ItemAdded {
             id: uid.to_string(),
         },
-        ImapMailboxWatchEvent::EnvelopeRemoved { uid } => WatchEvent::MessageRemoved {
+        ImapMailboxWatchEvent::EnvelopeRemoved { uid } => WatchEvent::ItemRemoved {
             id: uid.to_string(),
         },
         ImapMailboxWatchEvent::FlagsAdded { uid, flags } => WatchEvent::FlagsAdded {

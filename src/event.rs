@@ -1,44 +1,68 @@
 //! The change vocabulary every backend speaks.
 //!
-//! A watch reports what changed in a watched mailbox, keyed by the
-//! backend's own message id: a message arrived, one left, flags were
-//! set or cleared. Nothing here is protocol-specific, so a hook is
-//! written once and fires the same way whether the change came from an
-//! IMAP IDLE, a JMAP push or a Maildir poll.
+//! A watch reports what changed in a watched collection, keyed by the
+//! backend's own id: an item arrived, one left, one was edited, flags
+//! moved. Nothing here is protocol-specific, so a hook is written once
+//! and fires the same way whether the change came from an IMAP IDLE, a
+//! JMAP poll, a Maildir listing or a WebDAV sync-collection.
+//!
+//! Not every backend can report every event, and that is a property of
+//! the protocol rather than a gap: mail is immutable, so nothing mail
+//! reports an edit, and WebDAV has no flags.
 //!
 //! An arrival carries no envelope: an IMAP watch learns of a new UID
 //! without its subject, and reading one costs a fetch. The watcher
-//! reports the arrival, and [`crate::resolve`] fills the envelope in
-//! only when a hook asks for it.
+//! reports the arrival, and the backend fills the envelope in only
+//! when a hook asks for it.
 
 use std::collections::BTreeSet;
 
-/// A change in a watched mailbox, keyed by the backend's message id.
+/// A change in a watched collection, keyed by the backend's own id.
+///
+/// The vocabulary is deliberately not mail-shaped: an item is a
+/// message, a contact or a calendar event depending on the backend
+/// reporting it, and a hook is written once for all of them.
+// NOTE: which variants exist is the vocabulary's business; which of
+// them can be constructed depends on the backends compiled in, so a
+// reduced feature set leaves some unused by construction.
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WatchEvent {
-    /// A message arrived.
-    MessageAdded {
-        /// The backend's id for the message: an IMAP UID, a JMAP
-        /// `Email` id, a Maildir file name.
+    /// An item appeared in the collection.
+    ItemAdded {
+        /// The backend's id: an IMAP UID, a JMAP `Email` id, a Maildir
+        /// file name, a WebDAV href.
         id: String,
     },
-    /// A message left the mailbox, expunged or moved away.
-    MessageRemoved {
-        /// The backend's id for the message.
+    /// An item left the collection, deleted or moved away.
+    ItemRemoved {
+        /// The backend's id for the item.
         id: String,
     },
-    /// Flags were set on a message.
+    /// An item's content changed where it stands.
+    ///
+    /// Only a backend holding mutable items reports this: a message is
+    /// immutable, so IMAP, JMAP and Maildir never do, while a WebDAV
+    /// contact or event is edited in place and its etag moves.
+    ItemChanged {
+        /// The backend's id for the item.
+        id: String,
+    },
+    /// Flags were set on an item.
+    ///
+    /// Only a backend that has flags reports this, which WebDAV does
+    /// not.
     FlagsAdded {
-        /// The backend's id for the message.
+        /// The backend's id for the item.
         id: String,
-        /// The flags that appeared, as the backend spells them.
+        /// The flags that appeared, under their shared names.
         flags: BTreeSet<String>,
     },
-    /// Flags were cleared on a message.
+    /// Flags were cleared on an item.
     FlagsRemoved {
-        /// The backend's id for the message.
+        /// The backend's id for the item.
         id: String,
-        /// The flags that disappeared, as the backend spells them.
+        /// The flags that disappeared, under their shared names.
         flags: BTreeSet<String>,
     },
 }

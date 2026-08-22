@@ -72,6 +72,13 @@ impl CheckCommand {
                 .push(check_maildir(&account_config, maildir_config));
         }
 
+        #[cfg(feature = "dav")]
+        if backend.allows_dav()
+            && let Some(dav_config) = account_config.dav.clone()
+        {
+            report.backends.push(check_dav(&account_config, dav_config));
+        }
+
         if report.backends.is_empty() {
             bail!("No backend matching `{backend}` is configured for this account");
         }
@@ -118,6 +125,20 @@ fn check_maildir(
     })();
 
     BackendCheck::from("maildir", result)
+}
+
+#[cfg(feature = "dav")]
+fn check_dav(
+    _account_config: &AccountConfig,
+    dav_config: crate::config::DavConfig,
+) -> BackendCheck {
+    // NOTE: opening proves the transport, and one report proves the
+    // credential and that the collection is really there, which is
+    // what a watch would find out on its first poll.
+    let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let result = crate::dav::probe(&dav_config, &shutdown);
+
+    BackendCheck::from("dav", result)
 }
 
 #[derive(Clone, Debug, Serialize)]

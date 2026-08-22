@@ -6,8 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-First public release of mirador. The CLI is synchronous (`std::net` end to end) and watches over IMAP IDLE, a JMAP `Email/changes` poll, or a Maildir listing poll. See [MIGRATION.md](./MIGRATION.md) if you ran a pre-v0.1.0 build.
-
 ### Added
 
 - Watch every configured account at once. Bare `mirador watch` watches all of them concurrently (one thread each, shared Ctrl+C shutdown); `-a/--account` narrows it to one. Each account's mailbox comes from its own config, so `-m/--mailbox` is refused when more than one account is watched.
@@ -34,13 +32,17 @@ First public release of mirador. The CLI is synchronous (`std::net` end to end) 
 
 - The Maildir mailbox is resolved through io-maildir's store rather than by joining the configured root with the mailbox name. Joining by hand bypassed the layout, so on a Maildir++ store a subfolder resolved to a directory that does not exist and the watch reported nothing, forever, without ever erroring. Resolving through the store also checks that `cur`, `new` and `tmp` are there, so a wrong mailbox name fails at startup; `.` and `INBOX` both name the root.
 
-- Ctrl+C is now honoured within about a second on every path: idling, polling, backing off, or resolving an arrival's envelope. Each connection carries a short read deadline and hands back the not-ready failures instead of letting the transport retry them away for a minute, which is what the deadline is for. Needs the unreleased io-imap watch option, so `Cargo.toml` patches io-imap to a local path until it ships.
+- Added a WebDAV backend, which covers CalDAV and CardDAV alike: `dav.server` is the collection URL, `dav.auth` is basic, bearer or nothing, and `dav.poll` the interval between two RFC 6578 `sync-collection` reports (a minute by default). The report asks for etags only, so a poll never carries a contact or an event. Behind a `dav` cargo feature, on by default.
+
+- Added a fifth event, `on-item-changed`, and renamed the two message hooks to `on-item-added` and `on-item-removed`. WebDAV items are edited in place where a message is immutable, so the four mail-shaped events could not express what a calendar or an addressbook does. `on-message-added` and `on-message-removed` keep working as aliases, so an existing configuration needs no edit.
+
+- Ctrl+C is now honoured within about a second on every path: idling, polling, backing off, or resolving an arrival's envelope. Each connection carries a short read deadline and hands back the not-ready failures instead of letting the transport retry them away for a minute, which is what the deadline is for. Needs the unreleased io-imap watch option, so [Cargo.toml](./Cargo.toml) patches io-imap to a local path until it ships.
 
 - Bumped every Pimalaya dependency: io-imap 0.5, io-jmap 0.3, io-maildir 0.3, pimalaya-stream 0.3, pimalaya-cli 0.2, pimalaya-config 0.1.4. SASL moved out of pimalaya-stream into its own io-sasl crate; the `imap.sasl.*` config shape is unchanged.
 
 - Switched hook placeholder syntax to shell-style `$name` / `${name}`. Notification summary/body are expanded with [subst](https://crates.io/crates/subst). Sender / recipient sub-fields are exposed as `sender_name` / `sender_address` / `recipient_name` / `recipient_address` so they form valid environment-variable names.
 
-- Hook `cmd` is decoded by [`pimalaya_config::command`](https://github.com/pimalaya/config) and accepts both TOML shapes: a string handed to the platform shell (`/bin/sh -c` on Unix, `cmd /C` on Windows; quote placeholders as `"$subject"` so the shell expands them) or a `[program, args…]` list spawned directly with no shell. Template vars are exported as environment variables on the spawned process in both shapes.
+- Hook `cmd` is decoded by [pimalaya-config](https://github.com/pimalaya/config) and accepts both TOML shapes: a string handed to the platform shell (`/bin/sh -c` on Unix, `cmd /C` on Windows; quote placeholders as `"$subject"` so the shell expands them) or a `[program, args…]` list spawned directly with no shell. Template vars are exported as environment variables on the spawned process in both shapes.
 - Dual-licensed under `MIT OR Apache-2.0`, aligning with the rest of the Pimalaya ecosystem (early prototypes were MIT-only).
 - Switched to Rust edition 2024 (MSRV 1.89).
 - Rewrote the CLI on top of [pimalaya-cli](https://github.com/pimalaya/cli), [pimalaya-config](https://github.com/pimalaya/config) and the [io-*](https://github.com/pimalaya/) coroutine crates. Replaced `tokio` with `std::thread`, `color-eyre` with `anyhow` + `pimalaya_cli::error::ErrorReport`, `tracing` with `log` + `pimalaya_cli::log::Logger`, hand-rolled `clap_complete` / `clap_mangen` with `pimalaya-cli/build`.

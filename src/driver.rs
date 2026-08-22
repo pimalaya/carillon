@@ -135,9 +135,22 @@ fn watch_once(
         }
     }
 
+    #[cfg(feature = "dav")]
+    if backend.allows_dav() {
+        if let Some(dav) = &config.dav {
+            info!("[{account}] watching `{}` over dav", dav.server);
+            let mut on_event = |event: WatchEvent| hook::run(hooks, &event, mailbox, None);
+            return crate::dav::watch(dav, shutdown, &mut on_event);
+        }
+
+        if backend == Backend::Dav {
+            bail!("account has no `dav` config block");
+        }
+    }
+
     bail!(
-        "account has no usable backend block (expected one of `imap`, `jmap`, `maildir`); \
-         use `-b/--backend` to pin a specific one"
+        "account has no usable backend block (expected one of `imap`, `jmap`, `maildir`, \
+         `dav`); use `-b/--backend` to pin a specific one"
     )
 }
 
@@ -151,11 +164,11 @@ fn resolve_added(
     event: &WatchEvent,
     resolver: &mut crate::imap::Resolver<'_>,
 ) -> Option<crate::event::MessageSummary> {
-    let WatchEvent::MessageAdded { id } = event else {
+    let WatchEvent::ItemAdded { id } = event else {
         return None;
     };
 
-    hooks.on_message_added.as_ref()?;
+    hooks.on_item_added.as_ref()?;
 
     match resolver.summary(id) {
         Ok(summary) => Some(summary),

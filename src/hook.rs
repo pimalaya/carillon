@@ -14,7 +14,7 @@ use log::{trace, warn};
 use notify_rust::Notification;
 
 use crate::{
-    config::{FlagsHook, HookCmd, HooksConfig, MessageHook, NotifyConfig},
+    config::{FlagsHook, HookCmd, HooksConfig, ItemHook, NotifyConfig},
     event::{MessageSummary, WatchEvent},
 };
 
@@ -29,17 +29,23 @@ pub fn run(
     trace!("dispatch event: {event:?}");
 
     match event {
-        WatchEvent::MessageAdded { id } => {
-            let Some(hook) = &hooks.on_message_added else {
+        WatchEvent::ItemAdded { id } => {
+            let Some(hook) = &hooks.on_item_added else {
                 return;
             };
-            run_message_hook(hook, message_vars(id, mailbox, summary));
+            run_item_hook(hook, item_vars(id, mailbox, summary));
         }
-        WatchEvent::MessageRemoved { id } => {
-            let Some(hook) = &hooks.on_message_removed else {
+        WatchEvent::ItemRemoved { id } => {
+            let Some(hook) = &hooks.on_item_removed else {
                 return;
             };
-            run_message_hook(hook, message_vars(id, mailbox, None));
+            run_item_hook(hook, item_vars(id, mailbox, None));
+        }
+        WatchEvent::ItemChanged { id } => {
+            let Some(hook) = &hooks.on_item_changed else {
+                return;
+            };
+            run_item_hook(hook, item_vars(id, mailbox, None));
         }
         WatchEvent::FlagsAdded { id, flags } => {
             let Some(hook) = &hooks.on_flags_added else {
@@ -56,8 +62,8 @@ pub fn run(
     }
 }
 
-/// Fires a message-level hook.
-fn run_message_hook(hook: &MessageHook, vars: BTreeMap<&'static str, String>) {
+/// Fires an item-level hook.
+fn run_item_hook(hook: &ItemHook, vars: BTreeMap<&'static str, String>) {
     fire(hook.notify.as_ref(), hook.cmd.as_ref(), &vars);
 }
 
@@ -85,9 +91,9 @@ fn run_flags_hook(
     fire(hook.notify.as_ref(), hook.cmd.as_ref(), &vars);
 }
 
-/// The variables a message-level hook templates against. The envelope
+/// The variables an item-level hook templates against. The envelope
 /// ones are present only for a resolved arrival.
-fn message_vars(
+fn item_vars(
     id: &str,
     mailbox: &str,
     summary: Option<&MessageSummary>,

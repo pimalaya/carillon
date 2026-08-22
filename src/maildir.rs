@@ -108,13 +108,13 @@ fn diff(
 
     for id in before.keys() {
         if !after.contains_key(id) {
-            events.push(WatchEvent::MessageRemoved { id: id.clone() });
+            events.push(WatchEvent::ItemRemoved { id: id.clone() });
         }
     }
 
     for (id, flags) in after {
         let Some(before) = before.get(id) else {
-            events.push(WatchEvent::MessageAdded { id: id.clone() });
+            events.push(WatchEvent::ItemAdded { id: id.clone() });
             continue;
         };
 
@@ -232,10 +232,10 @@ mod tests {
 
         assert_eq!(
             vec![
-                WatchEvent::MessageRemoved {
+                WatchEvent::ItemRemoved {
                     id: String::from("gone")
                 },
-                WatchEvent::MessageAdded {
+                WatchEvent::ItemAdded {
                     id: String::from("new")
                 },
             ],

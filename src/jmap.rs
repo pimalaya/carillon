@@ -147,7 +147,7 @@ pub fn watch(
 
         for id in &changes.destroyed {
             if known.remove(id).is_some() {
-                on_event(WatchEvent::MessageRemoved { id: id.clone() });
+                on_event(WatchEvent::ItemRemoved { id: id.clone() });
             }
         }
 
@@ -198,7 +198,7 @@ fn reconcile(
 
     if !inside {
         return match known.remove(&id) {
-            Some(_) => vec![WatchEvent::MessageRemoved { id }],
+            Some(_) => vec![WatchEvent::ItemRemoved { id }],
             None => Vec::new(),
         };
     }
@@ -206,7 +206,7 @@ fn reconcile(
     let keywords = render_keywords(email.keywords.as_ref());
 
     let Some(before) = known.insert(id.clone(), keywords.clone()) else {
-        return vec![WatchEvent::MessageAdded { id }];
+        return vec![WatchEvent::ItemAdded { id }];
     };
 
     let mut events = Vec::new();

@@ -32,10 +32,10 @@ use io_sasl::{
     rfc7628::oauthbearer::SaslOauthbearerCreds, xoauth2::SaslXoauth2Creds,
 };
 use pimalaya_config::command;
-#[cfg(feature = "imap")]
+#[cfg(any(feature = "imap", feature = "dav"))]
 use pimalaya_config::secret::Secret;
 use pimalaya_config::toml::TomlConfig;
-#[cfg(any(feature = "imap", feature = "jmap"))]
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 use pimalaya_stream::tls::{Rustls, RustlsCrypto, Tls, TlsProvider};
 use serde::{Deserialize, Serialize};
 
@@ -111,6 +111,9 @@ pub struct AccountConfig {
     #[cfg(feature = "maildir")]
     #[serde(default)]
     pub maildir: Option<MaildirConfig>,
+    #[cfg(feature = "dav")]
+    #[serde(default)]
+    pub dav: Option<DavConfig>,
 
     #[serde(default)]
     pub hooks: HooksConfig,
@@ -271,7 +274,7 @@ pub struct MaildirConfig {
 
 // ---- TLS ----------------------------------------------------------
 
-#[cfg(any(feature = "imap", feature = "jmap"))]
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TlsConfig {
@@ -281,7 +284,7 @@ pub struct TlsConfig {
     pub cert: Option<PathBuf>,
 }
 
-#[cfg(any(feature = "imap", feature = "jmap"))]
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum TlsProviderConfig {
@@ -289,14 +292,14 @@ pub enum TlsProviderConfig {
     NativeTls,
 }
 
-#[cfg(any(feature = "imap", feature = "jmap"))]
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RustlsConfig {
     pub crypto: Option<RustlsCryptoConfig>,
 }
 
-#[cfg(any(feature = "imap", feature = "jmap"))]
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum RustlsCryptoConfig {
@@ -304,7 +307,7 @@ pub enum RustlsCryptoConfig {
     Ring,
 }
 
-#[cfg(any(feature = "imap", feature = "jmap"))]
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 impl From<TlsConfig> for Tls {
     fn from(config: TlsConfig) -> Self {
         Tls {
@@ -442,21 +445,37 @@ impl SaslConfig {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct HooksConfig {
-    pub on_message_added: Option<MessageHook>,
-    pub on_message_removed: Option<MessageHook>,
+    /// Fires when an item appears in the watched collection.
+    ///
+    /// `on-message-added` is the name this hook shipped under, kept
+    /// working for every config already written; the item spelling is
+    /// the one that also reads right for a contact or an event.
+    #[serde(alias = "on-message-added")]
+    pub on_item_added: Option<ItemHook>,
+    /// Fires when an item leaves the watched collection.
+    #[serde(alias = "on-message-removed")]
+    pub on_item_removed: Option<ItemHook>,
+    /// Fires when an item's content is edited where it stands. Only a
+    /// backend holding mutable items reports it, so mail never does.
+    pub on_item_changed: Option<ItemHook>,
+    /// Fires when flags are set on an item. WebDAV has no flags, so
+    /// that backend never reports it.
     pub on_flags_added: Option<FlagsHook>,
+    /// Fires when flags are cleared on an item.
     pub on_flags_removed: Option<FlagsHook>,
 }
 
-/// Hook that fires for envelope-level events (added or removed).
+/// Hook that fires for item-level events: added, removed, changed.
+///
 /// Placeholders use shell-style `$name` / `${name}` syntax in the
-/// notification summary/body. Available names: `id`, `mailbox`, and
-/// (for `on-message-added` only) `subject`, `sender`, `sender_name`,
+/// notification summary and body. Always available: `id`, `mailbox`.
+/// The envelope names (`subject`, `date`, `sender`, `sender_name`,
 /// `sender_address`, `recipient`, `recipient_name`,
-/// `recipient_address`.
+/// `recipient_address`) are resolved only for an arrival, and only by
+/// a backend that can read one.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub struct MessageHook {
+pub struct ItemHook {
     pub notify: Option<NotifyConfig>,
     pub cmd: Option<HookCmd>,
 }
@@ -501,4 +520,61 @@ impl Clone for HookCmd {
         new.args(self.0.get_args());
         Self(new)
     }
+}
+
+// ---- WebDAV -------------------------------------------------------
+
+/// WebDAV configuration: one watched collection, polled through RFC
+/// 6578 `sync-collection`.
+///
+/// CalDAV and CardDAV are WebDAV, so a calendar, an addressbook and a
+/// plain collection all configure the same way: point `server` at the
+/// collection URL.
+#[cfg(feature = "dav")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct DavConfig {
+    /// The collection URL, `http://` or `https://`, path included
+    /// (`https://dav.example.org/calendars/alice/work/`).
+    pub server: String,
+
+    #[serde(default)]
+    pub tls: TlsConfig,
+
+    /// Authentication. Defaults to none, for a collection that is
+    /// readable without it.
+    #[serde(default)]
+    pub auth: DavAuthConfig,
+
+    /// Seconds between two reports. A `sync-collection` costs one
+    /// request, so a short interval is affordable; the default is a
+    /// minute.
+    #[serde(default = "default_dav_poll")]
+    pub poll: u64,
+}
+
+/// The credential presented to the DAV server.
+#[cfg(feature = "dav")]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum DavAuthConfig {
+    /// No `Authorization` header at all.
+    #[default]
+    None,
+    /// HTTP Basic (RFC 7617), what most CalDAV and CardDAV servers ask
+    /// for.
+    Basic {
+        #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_string")]
+        username: String,
+        password: Secret,
+    },
+    /// HTTP Bearer (RFC 6750), for a server behind OAuth.
+    Bearer { token: Secret },
+}
+
+/// A minute between reports, the interval a calendar or an addressbook
+/// changes slowly enough to live with.
+#[cfg(feature = "dav")]
+fn default_dav_poll() -> u64 {
+    60
 }

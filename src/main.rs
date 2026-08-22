@@ -5,6 +5,8 @@ mod backend;
 mod check;
 mod cli;
 mod config;
+#[cfg(feature = "dav")]
+mod dav;
 mod driver;
 mod event;
 mod hook;

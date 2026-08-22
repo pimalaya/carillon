@@ -17,13 +17,14 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["rustls-ring", "imap", "jmap", "maildir"]
+default = ["rustls-ring", "imap", "jmap", "maildir", "dav"]
 imap = ["dep:io-imap", "io-imap/client", "pimalaya-cli/imap"]
 jmap = ["dep:base64", "dep:io-jmap", "io-jmap/client", "pimalaya-cli/jmap"]
 maildir = ["dep:io-maildir", "io-maildir/client", "io-maildir/parser"]
-native-tls = ["pimalaya-stream/native-tls", "io-imap?/native-tls", "io-jmap?/native-tls"]
-rustls-aws = ["pimalaya-stream/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws"]
-rustls-ring = ["pimalaya-stream/rustls-ring", "io-imap?/rustls-ring", "io-jmap?/rustls-ring"]
+dav = ["dep:io-http", "dep:io-webdav", "io-webdav/client"]
+native-tls = ["pimalaya-stream/native-tls", "io-imap?/native-tls", "io-jmap?/native-tls", "io-webdav?/native-tls"]
+rustls-aws = ["pimalaya-stream/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws", "io-webdav?/rustls-aws"]
+rustls-ring = ["pimalaya-stream/rustls-ring", "io-imap?/rustls-ring", "io-jmap?/rustls-ring", "io-webdav?/rustls-ring"]
 vendored = ["pimalaya-stream/vendored", "notify-rust/d_vendored"]
 
 [profile.release]
@@ -45,7 +46,9 @@ clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 ctrlc = { version = "3", features = ["termination"] }
 io-imap = { version = "0.5", default-features = false, optional = true }
 io-jmap = { version = "0.3", default-features = false, optional = true }
+io-http = { version = "0.5", default-features = false, optional = true }
 io-maildir = { version = "0.3", default-features = false, optional = true }
+io-webdav = { version = "0.2", default-features = false, optional = true }
 io-sasl = { version = "0.1", default-features = false, features = ["scram"] }
 log = "0.4"
 notify-rust = { version = "4", default-features = false, features = ["d"] }
