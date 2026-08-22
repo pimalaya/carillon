@@ -572,7 +572,7 @@ where
 }
 
 /// Builds the credential presented on every request.
-fn auth(config: &DavAuthConfig) -> Result<WebdavAuth> {
+pub fn auth(config: &DavAuthConfig) -> Result<WebdavAuth> {
     Ok(match config {
         DavAuthConfig::None => WebdavAuth::None,
         DavAuthConfig::Basic { username, password } => WebdavAuth::Basic(HttpAuthBasic {

@@ -22,6 +22,7 @@ use pimalaya_cli::printer::Printer;
 
 use crate::{
     backend::Backend,
+    cli::load_config,
     config::{AccountConfig, Config},
     driver,
 };
@@ -36,12 +37,12 @@ pub struct WatchCommand;
 impl WatchCommand {
     pub fn execute(
         self,
-        _printer: &mut impl Printer,
+        printer: &mut impl Printer,
         config_paths: &[PathBuf],
         account_name: Option<&str>,
         backend: Backend,
     ) -> Result<()> {
-        let mut config = Config::load(config_paths)?;
+        let mut config = load_config(printer, config_paths)?;
         let selected = select_accounts(&mut config, account_name)?;
 
         let shutdown = Arc::new(AtomicBool::new(false));

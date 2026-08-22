@@ -26,6 +26,7 @@ CLI to watch PIM collection changes, written in Rust
 - **Hooks under their backend**: a desktop notification, a shell command, or both, with the event's fields as placeholders. Each backend takes only the events it can report, and each hook only the variables its event carries, so a hook that could never fire is refused when the file is read.
 - **Every account at once**, one thread each, reopening a dropped watch with a capped backoff and reading the credential again each time.
 - **Familiar configuration**: the account block keeps the shape `himalaya` and `himalaya-tui` read, and secrets come from your own password manager.
+- **One prompt to a working account**: `carillon configure` turns an email address into a discovered service, a tested connection and the best watch method its server supports, then writes the account where the loader reads it.
 ## Coverage
 
 | Spec      | What is covered |
@@ -102,13 +103,21 @@ nix run
 
 ## Configuration
 
-Copy the annotated [config.sample.toml](./config.sample.toml), keep one backend and the hooks you want, delete the rest. It documents every key.
+Run `carillon` with no command: it offers to generate an account discovered from your email address, which `carillon configure` does again later. The wizard searches the services your provider publishes, asks which one to watch and how to authenticate, picks the best watch method the server supports, tests the connection, then saves the account, appends it to the configuration already there, or prints it for you to place by hand.
+
+Everything discovery does not cover is written by hand: copy the annotated [config.sample.toml](./config.sample.toml), keep one backend and the hooks you want, delete the rest. It documents every key.
 
 A configuration is read from `$XDG_CONFIG_HOME/carillon/config.toml`, `$HOME/.config/carillon/config.toml` or `$HOME/.carillonrc`, overridden by `-c <PATH>` or `CARILLON_CONFIG=<PATH>`. Those are the paths [himalaya](https://github.com/pimalaya/himalaya) and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) read too, and an account block is written the same way, but one file does not load in all three: every backend block is strict on each side and carries keys the others do not know.
 
 An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`) carrying everything that backend needs: the collection it watches under its own name, how it watches (`watch`), and what it fires (`hook`). Declaring several backends is allowed; `-b/--backend` then picks one.
 
 ## Usage
+
+Generate an account:
+
+```sh
+carillon configure
+```
 
 Watch every configured account, until interrupted:
 

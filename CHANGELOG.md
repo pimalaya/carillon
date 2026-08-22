@@ -10,6 +10,14 @@ Renamed from mirador. The binary, the config directory, the `CARILLON_CONFIG` va
 
 ### Added
 
+- Added `carillon configure` (alias `wizard`), which generates an account from one prompt: it discovers the IMAP, JMAP, CalDAV and CardDAV services reachable from an email address (or a bare domain, a `scheme://` URL, or a local folder path for Maildir), asks which one to watch and how to authenticate against it, collects the credential through the shared keyring and OAuth-broker picker, and tests the connection before writing anything. The watch method is not asked: the account takes the best one its backend has and only writes one when the server cannot serve it, an IMAP server not advertising IDLE and a JMAP session with no event-source URL both falling back to an explicit poll. A DAV account is completed from the server: the calendars or addressbooks under the home-set are listed and the chosen one becomes `caldav.calendar` or `carddav.addressbook`, with hooks for the components that calendar advertises. The generated account carries a notify hook on arrival, and is saved to the configuration file, appended to the one already there, or printed on stdout.
+
+  The IMAP mechanism menu comes from the server: an unauthenticated session reads its `CAPABILITY` first, so only the mechanisms it advertises are offered (Gmail is never asked for SCRAM-SHA-256). What discovery reported stands in when that probe cannot be read.
+
+- A bare `carillon`, and any command finding no configuration, now offers to run that wizard rather than pointing at the sample. The welcome names the file that is missing; a non-interactive caller (no terminal, or `--json`) is never prompted and fails naming the file and the command that would create it.
+
+- Added the shared `--help` footer, pointing at the bug tracker and the sponsoring page.
+
 - Watch every configured account at once. Bare `carillon watch` watches all of them concurrently (one thread each, shared Ctrl+C shutdown); `-a/--account` narrows it to one. Each account's mailbox comes from its own config, so `-m/--mailbox` is refused when more than one account is watched.
 
 - Reopen a watch that ends. A session lost to a dropped connection is retried with a capped exponential backoff that a healthy session resets, and the credential is resolved again on every attempt rather than held, so a rotated secret is picked up by the next reconnect.

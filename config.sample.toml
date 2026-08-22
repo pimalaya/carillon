@@ -10,11 +10,16 @@
 # `:`-delimited list: the first one is the base and the rest are deep-merged on
 # top of it.
 #
-# There is no wizard: copy this file, keep one backend and the hooks you want,
-# then delete the rest. The `[accounts.<name>]` block keeps the shape `himalaya`
-# CLI v2 and `himalaya-tui` read, so an account is recognisable across the three;
-# a whole file is not portable between them, every backend block being strict on
-# each side and carrying keys the others do not know.
+# `carillon configure` generates an account from your email address: it discovers
+# the services your provider publishes, asks which one to watch and how to
+# authenticate, tests the connection, and writes the account here. Everything it
+# does not cover is written by hand, which is what this file documents: copy it,
+# keep one backend and the hooks you want, then delete the rest.
+#
+# The `[accounts.<name>]` block keeps the shape `himalaya` CLI v2 and
+# `himalaya-tui` read, so an account is recognisable across the three; a whole
+# file is not portable between them, every backend block being strict on each
+# side and carrying keys the others do not know.
 # ================================================================================
 
 [accounts.example]

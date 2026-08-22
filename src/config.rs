@@ -27,7 +27,7 @@ use std::{
 
 #[cfg(feature = "imap")]
 use anyhow::anyhow;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 #[cfg(feature = "imap")]
 use io_imap::types::{
     IntoStatic,
@@ -54,6 +54,62 @@ use crate::{
     event::WatchEvent,
     hook::{self, HookCollection, Vocabulary},
 };
+
+/// The documented sample configuration, pointed at wherever a
+/// configuration is missing and wherever the wizard stops short.
+pub const CONFIG_SAMPLE_URL: &str =
+    "https://github.com/pimalaya/carillon/blob/master/config.sample.toml";
+
+/// The order a rendered account groups its keys in, most defining
+/// first: whether the account is the default, then the backend it
+/// watches.
+///
+/// A key outside this list still renders, after the ones listed, so a
+/// field added to [`AccountConfig`] can never go missing from a
+/// generated document just because nobody updated this table.
+const RENDER_ORDER: [&str; 6] = ["default", "imap", "jmap", "maildir", "caldav", "carddav"];
+
+/// The keys a backend group leads with, in reading order: the
+/// collection it watches (under whichever name its domain uses), the
+/// server it watches it on, then the credential it authenticates with.
+/// Everything else follows alphabetically, since it only adjusts what
+/// those three state.
+const BACKEND_ORDER: [&str; 6] = [
+    "mailbox",
+    "calendar",
+    "addressbook",
+    "root",
+    "server",
+    "auth",
+];
+
+/// Whether a value is what its type defaults to, which is what keeps a
+/// generated document down to what was actually configured.
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
+/// Ranks one dotted line inside its backend group, `imap.server = …`
+/// being ranked on `server`. The SASL table is the IMAP spelling of
+/// `auth`, so it ranks with it.
+fn backend_rank(group: &str, line: &str) -> usize {
+    let Some(key) = line
+        .split_once(" = ")
+        .map(|(key, _)| key)
+        .and_then(|key| key.strip_prefix(group))
+        .and_then(|key| key.strip_prefix('.'))
+    else {
+        return BACKEND_ORDER.len();
+    };
+
+    let key = key.split('.').next().unwrap_or(key);
+    let key = if key == "sasl" { "auth" } else { key };
+
+    BACKEND_ORDER
+        .iter()
+        .position(|known| *known == key)
+        .unwrap_or(BACKEND_ORDER.len())
+}
 
 /// Root configuration: a map of named accounts.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -83,16 +139,15 @@ impl TomlConfig for Config {
 }
 
 impl Config {
-    /// Loads the config from `config_paths`, bailing when no file
-    /// resolves. Carillon has no interactive wizard; point the user at
-    /// the sample so they can hand-edit one.
-    pub fn load(config_paths: &[PathBuf]) -> Result<Config> {
+    /// Loads the config from `config_paths`, or [`None`] when no file
+    /// resolves.
+    ///
+    /// A missing file is not an error here: what to do about it is the
+    /// caller's, and for an interactive one that is to offer the
+    /// wizard (see [`crate::cli::load_config`]).
+    pub fn load(config_paths: &[PathBuf]) -> Result<Option<Config>> {
         let Some(config) = Config::from_paths_or_default(config_paths)? else {
-            bail!(
-                "No configuration found. Copy `config.sample.toml` to \
-                 `$XDG_CONFIG_HOME/carillon/config.toml`, edit it, then \
-                 re-run carillon"
-            );
+            return Ok(None);
         };
 
         // NOTE: what a hook's notification may name is as fixed as
@@ -105,7 +160,7 @@ impl Config {
                 .with_context(|| format!("account `{name}` is misconfigured"))?;
         }
 
-        Ok(config)
+        Ok(Some(config))
     }
 }
 
@@ -119,7 +174,7 @@ impl Config {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct AccountConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub default: bool,
 
     #[cfg(feature = "imap")]
@@ -140,6 +195,77 @@ pub struct AccountConfig {
 }
 
 impl AccountConfig {
+    /// Renders this account as an `[accounts.<name>]` block, ready to
+    /// be written to a configuration file or appended to one.
+    ///
+    /// The serializer decides what is written, so a field left at its
+    /// default is omitted and nothing has to be listed here twice.
+    /// What this adds is reading order: the flattened dotted keys come
+    /// out alphabetically, which buries `imap.server` under the
+    /// credentials that authenticate against it and runs every group
+    /// together. The groups are reordered, the endpoint is lifted to
+    /// the top of its own, and a blank line separates them.
+    pub fn render(&self, name: &str) -> Result<String> {
+        // NOTE: borrowed rather than built into a `Config`, which
+        // would mean cloning the account to render it. The emitter
+        // only looks for an `accounts` table, so any shape carrying
+        // one will do.
+        #[derive(Serialize)]
+        struct AccountDocument<'a> {
+            accounts: HashMap<&'a str, &'a AccountConfig>,
+        }
+
+        let document = AccountDocument {
+            accounts: HashMap::from([(name, self)]),
+        };
+        let rendered = pimalaya_config::toml::to_string(&document)?;
+
+        // The emitter writes the header itself, and everything below
+        // it is one dotted key per line.
+        let (header, body) = match rendered.split_once('\n') {
+            Some((header, body)) => (header, body),
+            None => return Ok(rendered),
+        };
+
+        let mut groups: Vec<(String, Vec<&str>)> = Vec::new();
+
+        for line in body.lines().filter(|line| !line.trim().is_empty()) {
+            let key = line.split(['.', ' ']).next().unwrap_or(line).to_string();
+
+            match groups.iter_mut().find(|(name, _)| *name == key) {
+                Some((_, lines)) => lines.push(line),
+                None => groups.push((key, vec![line])),
+            }
+        }
+
+        groups.sort_by_key(|(key, _)| {
+            RENDER_ORDER
+                .iter()
+                .position(|known| known == key)
+                .unwrap_or(RENDER_ORDER.len())
+        });
+
+        let mut document = format!("{header}\n");
+
+        for (index, (key, mut lines)) in groups.into_iter().enumerate() {
+            if index > 0 {
+                document.push('\n');
+            }
+
+            // A backend reads the way it is explained: what it watches,
+            // where, who it authenticates as, then everything the
+            // account only adjusts.
+            lines.sort_by_key(|line| backend_rank(&key, line));
+
+            for line in lines {
+                document.push_str(line);
+                document.push('\n');
+            }
+        }
+
+        Ok(document)
+    }
+
     /// Refuses a hook whose notification names a variable its event
     /// cannot fill, which serde cannot see because a template is only
     /// a string until it is expanded.
@@ -193,7 +319,7 @@ pub struct ImapConfig {
 
     #[serde(default)]
     pub tls: TlsConfig,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub starttls: bool,
 
     /// Optional SASL credentials. When omitted, the connection skips
@@ -229,7 +355,7 @@ pub struct ImapIdConfig {
     /// When `true`, the auth coroutine chains an `ID` round-trip
     /// after the tagged auth response. Default `false` skips ID
     /// entirely.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub auto: bool,
 
     /// Parameters sent with the auto-ID command. Empty (default)
@@ -1065,7 +1191,7 @@ pub struct CaldavConfig {
     pub tls: TlsConfig,
     /// Authentication. Defaults to none, for a calendar that is
     /// readable without it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "DavAuthConfig::is_none")]
     pub auth: DavAuthConfig,
     /// How this account learns about a change. Unset polls.
     #[serde(default)]
@@ -1091,7 +1217,7 @@ pub struct CarddavConfig {
     pub tls: TlsConfig,
     /// Authentication. Defaults to none, for an addressbook that is
     /// readable without it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "DavAuthConfig::is_none")]
     pub auth: DavAuthConfig,
     /// How this account learns about a change. Unset polls.
     #[serde(default)]
@@ -1151,6 +1277,15 @@ pub enum DavAuthConfig {
     },
     /// HTTP Bearer (RFC 6750), for a server behind OAuth.
     Bearer { token: Secret },
+}
+
+#[cfg(feature = "dav")]
+impl DavAuthConfig {
+    /// Whether the server is reached with no `Authorization` header,
+    /// which is what a generated document leaves out.
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
 }
 
 // ---- Watch method -------------------------------------------------

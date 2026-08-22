@@ -5,11 +5,20 @@
 //!
 //! ## Layout
 //!
-//! The frontend: main dispatches, cli declares the parser, config
-//! parses the TOML accounts, watch and check are the two commands,
-//! driver supervises one account (backend selection, reconnect
-//! backoff, credential per attempt), hook fires the notification and
-//! the command.
+//! The frontend: main dispatches, cli declares the parser and meets
+//! the invocations that find no configuration, config parses the TOML
+//! accounts and renders a generated one back, watch, check and
+//! configure are the three commands, driver supervises one account
+//! (backend selection, reconnect backoff, credential per attempt),
+//! hook fires the notification and the command.
+//!
+//! The wizard: one prompt takes an email address, io-pim-discovery
+//! turns it into the services reachable from it, and the module of the
+//! chosen backend prompts its credential and opens the connection.
+//! That connection is both the test and what the account is completed
+//! from: the collection a DAV server holds, and the method its server
+//! can actually be watched with. What is done with the account, a file
+//! to create, a block to append or a document on stdout, is configure's.
 //!
 //! The backends: imap, jmap, maildir and dav, each behind its cargo
 //! feature, each learning about changes its own way and reporting them
@@ -41,6 +50,7 @@ mod jmap;
 #[cfg(feature = "maildir")]
 mod maildir;
 mod watch;
+mod wizard;
 
 use anyhow::Result;
 use clap::Parser;
@@ -57,8 +67,5 @@ fn main() {
 
 fn execute(printer: &mut StdoutPrinter, cli: Cli) -> Result<()> {
     Logger::try_init(&cli.log)?;
-    let config_paths = cli.config_paths.as_ref();
-    let account_name = cli.account.name.as_deref();
-    cli.command
-        .execute(printer, config_paths, account_name, cli.backend)
+    cli.execute(printer)
 }

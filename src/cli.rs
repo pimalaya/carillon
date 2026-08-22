@@ -1,8 +1,15 @@
 //! Top-level CLI parser and subcommand dispatcher.
+//!
+//! Nothing works without a configuration, so the two invocations that
+//! can find none, a bare `carillon` and a command needing an account,
+//! both offer to generate one rather than failing on it.
 
-use std::path::PathBuf;
+use std::{
+    io::{IsTerminal, stdin},
+    path::{Path, PathBuf},
+};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser, Subcommand};
 use pimalaya_cli::{
     clap::{
@@ -10,21 +17,41 @@ use pimalaya_cli::{
         commands::{CompletionCommand, ManualCommand},
         parsers::path_parser,
     },
-    long_version,
+    footer, long_version,
     printer::Printer,
+    prompt,
 };
+use pimalaya_config::toml::TomlConfig;
 
-use crate::{backend::Backend, check::CheckCommand, watch::WatchCommand};
+use crate::{
+    backend::Backend,
+    check::CheckCommand,
+    config::{CONFIG_SAMPLE_URL, Config},
+    watch::WatchCommand,
+    wizard::{self, configure::ConfigureCommand},
+};
 
 /// Top-level CLI: global flags and subcommand dispatch.
 #[derive(Parser, Debug)]
 #[command(name = env!("CARGO_PKG_NAME"))]
 #[command(author, version, about)]
+#[command(long_about = concat!(
+    "CLI to watch PIM collection changes.\n\n",
+    "First time here? Run `carillon` with no command: it offers to generate an ",
+    "account discovered from your email address, which `carillon configure` does ",
+    "again later. Everything discovery does not cover is written by hand.",
+))]
 #[command(long_version = long_version!())]
+#[command(after_help = footer!())]
 #[command(propagate_version = true, infer_subcommands = true)]
 pub struct Cli {
+    /// The command to run.
+    ///
+    /// Omitted, a bare `carillon` offers to generate a configuration
+    /// when it finds none, since running the binary with no argument is
+    /// what a newcomer does first, and shows this help otherwise.
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 
     /// Override the default configuration file path.
     ///
@@ -59,12 +86,55 @@ pub enum Command {
     Watch(WatchCommand),
     /// Validate the account configuration against each allowed backend.
     Check(CheckCommand),
+    /// Configure an account interactively.
+    #[command(visible_alias = "wizard")]
+    Configure(ConfigureCommand),
     /// Generate man pages into the given directory.
     #[command(arg_required_else_help = true)]
     Manuals(ManualCommand),
     /// Generate shell completion scripts into the given directory.
     #[command(arg_required_else_help = true)]
     Completions(CompletionCommand),
+}
+
+impl Cli {
+    /// Runs the parsed command, or meets a bare invocation.
+    ///
+    /// With no command there is nothing to run, so this is where a
+    /// newcomer lands: a missing configuration raises the offer, and an
+    /// existing one gets the help, which is also what a script or a
+    /// JSON caller gets since neither can answer a prompt. A file that
+    /// exists but fails to parse counts as a configuration, so the
+    /// offer never proposes to write over a broken one: the parse error
+    /// surfaces when a real command reads it.
+    pub fn execute(self, printer: &mut impl Printer) -> Result<()> {
+        let config_paths = self.config_paths.as_ref();
+        let account_name = self.account.name.as_deref();
+
+        let Some(command) = self.command else {
+            let configured = Config::from_paths_or_default(config_paths)
+                .ok()
+                .flatten()
+                .is_some();
+
+            if !configured && !printer.is_json() && stdin().is_terminal() {
+                let path = Config::target_path(config_paths)?;
+
+                // NOTE: a bare invocation has nothing to run after the
+                // offer, so a declined one falls back to the help. The
+                // wizard already says what to run next when it ran.
+                if offer_configuration(printer, config_paths, &path)? {
+                    return Ok(());
+                }
+            }
+
+            Cli::command().print_help()?;
+
+            return Ok(());
+        };
+
+        command.execute(printer, config_paths, account_name, self.backend)
+    }
 }
 
 impl Command {
@@ -78,8 +148,70 @@ impl Command {
         match self {
             Self::Watch(cmd) => cmd.execute(printer, config_paths, account_name, backend),
             Self::Check(cmd) => cmd.execute(printer, config_paths, account_name, backend),
+            Self::Configure(cmd) => cmd.execute(printer, config_paths),
             Self::Manuals(cmd) => cmd.execute(printer, Cli::command()),
             Self::Completions(cmd) => cmd.execute(printer, Cli::command()),
         }
     }
+}
+
+/// Loads the configuration a command runs against.
+///
+/// A missing configuration is met with the wizard rather than with an
+/// error: the welcome frames what carillon is and offers to generate an
+/// account, then the command carries on either way. Accepting is what
+/// gives it a chance to work; declining leaves it to fail on the
+/// configuration it still has not got.
+pub fn load_config(printer: &mut impl Printer, config_paths: &[PathBuf]) -> Result<Config> {
+    if let Some(config) = Config::load(config_paths)? {
+        return Ok(config);
+    }
+
+    // NOTE: the target path is where `-c` pointed, or the default
+    // location when it named none, so a mistyped path shows up as
+    // itself rather than as a generic first run.
+    let path = Config::target_path(config_paths)?;
+
+    // NOTE: nobody is there to answer a prompt in a script or a systemd
+    // unit, and a JSON consumer wants a failure it can read, so both
+    // skip the offer and fail below.
+    if !printer.is_json() && stdin().is_terminal() {
+        offer_configuration(printer, config_paths, &path)?;
+    }
+
+    // NOTE: the wizard also prints the account instead of writing it,
+    // so having run it proves nothing: the configuration is looked up
+    // again, and the command fails the ordinary way when nothing
+    // landed.
+    match Config::load(config_paths)? {
+        Some(config) => Ok(config),
+        None => bail!(
+            "No configuration found at {}, run `carillon configure` to generate one or write it by hand: {CONFIG_SAMPLE_URL}",
+            path.display(),
+        ),
+    }
+}
+
+/// Welcomes, then offers to generate a first configuration. Returns
+/// whether the wizard ran.
+///
+/// Raised from the two places nothing can happen without a
+/// configuration: a bare invocation, and a command that needs an
+/// account. It is a hook rather than a gate, so declining it decides
+/// nothing: what happens next is the caller's business, and for a
+/// command that is simply carrying on.
+fn offer_configuration(
+    printer: &mut impl Printer,
+    config_paths: &[PathBuf],
+    path: &Path,
+) -> Result<bool> {
+    wizard::configure::print_welcome(path);
+
+    if !prompt::bool("Create a configuration with a default account?", true)? {
+        return Ok(false);
+    }
+
+    ConfigureCommand.execute(printer, config_paths)?;
+
+    Ok(true)
 }

@@ -17,13 +17,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["rustls-ring", "imap", "jmap", "maildir", "dav"]
-imap = ["dep:io-imap", "io-imap/client", "pimalaya-cli/imap"]
-jmap = ["dep:base64", "dep:io-jmap", "io-jmap/client", "pimalaya-cli/jmap"]
+imap = ["dep:io-imap", "dep:io-pim-discovery", "io-imap/client", "pimalaya-cli/imap"]
+jmap = ["dep:base64", "dep:io-jmap", "dep:io-pim-discovery", "io-jmap/client", "pimalaya-cli/jmap"]
 maildir = ["dep:io-maildir", "io-maildir/client", "io-maildir/parser"]
-dav = ["dep:io-http", "dep:io-webdav", "io-webdav/client"]
-native-tls = ["pimalaya-stream/native-tls", "io-imap?/native-tls", "io-jmap?/native-tls", "io-webdav?/native-tls"]
-rustls-aws = ["pimalaya-stream/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws", "io-webdav?/rustls-aws"]
-rustls-ring = ["pimalaya-stream/rustls-ring", "io-imap?/rustls-ring", "io-jmap?/rustls-ring", "io-webdav?/rustls-ring"]
+dav = ["dep:io-http", "dep:io-pim-discovery", "dep:io-webdav", "io-webdav/client"]
+native-tls = ["pimalaya-stream/native-tls", "io-pim-discovery?/native-tls", "io-imap?/native-tls", "io-jmap?/native-tls", "io-webdav?/native-tls"]
+rustls-aws = ["pimalaya-stream/rustls-aws", "io-pim-discovery?/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws", "io-webdav?/rustls-aws"]
+rustls-ring = ["pimalaya-stream/rustls-ring", "io-pim-discovery?/rustls-ring", "io-imap?/rustls-ring", "io-jmap?/rustls-ring", "io-webdav?/rustls-ring"]
 vendored = ["pimalaya-stream/vendored", "notify-rust/d_vendored"]
 
 [profile.release]
@@ -34,6 +34,7 @@ panic = "abort"
 
 [dev-dependencies]
 tempfile = "3"
+toml = "1"
 
 [build-dependencies]
 pimalaya-cli = { version = "0.2", default-features = false, features = ["build"] }
@@ -47,14 +48,16 @@ io-imap = { version = "0.6", default-features = false, optional = true }
 io-jmap = { version = "0.3", default-features = false, optional = true }
 io-http = { version = "0.5", default-features = false, optional = true }
 io-maildir = { version = "0.3", default-features = false, optional = true }
+io-pim-discovery = { version = "0.7", default-features = false, features = ["autoconfig", "pacc", "rfc6186", "rfc6764", "rfc8620"], optional = true }
 io-webdav = { version = "0.2", default-features = false, optional = true }
 io-sasl = { version = "0.1", default-features = false, features = ["scram"] }
 log = "0.4"
 notify-rust = { version = "4", default-features = false, features = ["d"] }
-pimalaya-cli = { version = "0.2", default-features = false, features = ["terminal", "spinner"] }
+pimalaya-cli = { version = "0.2", default-features = false, features = ["terminal", "prompt", "spinner", "wizard"] }
 pimalaya-config = { version = "0.1", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.3", default-features = false, features = ["std"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
+shellexpand = "3.1"
 subst = "0.3"
 url = { version = "2.2", features = ["serde"] }

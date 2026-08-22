@@ -16,7 +16,7 @@ use serde::Serialize;
 
 #[cfg(feature = "maildir")]
 use crate::config::MaildirConfig;
-use crate::{backend::Backend, config::Config};
+use crate::{backend::Backend, cli::load_config};
 #[cfg(feature = "dav")]
 use crate::{config::DavServer, dav};
 #[cfg(feature = "imap")]
@@ -42,7 +42,7 @@ impl CheckCommand {
         account_name: Option<&str>,
         backend: Backend,
     ) -> Result<()> {
-        let mut config = Config::load(config_paths)?;
+        let mut config = load_config(printer, config_paths)?;
 
         let (name, account_config) = config
             .take_account(account_name)?
