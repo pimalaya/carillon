@@ -1,20 +1,3 @@
-// This file is part of Mirador, a CLI to watch mailbox changes.
-//
-// Copyright (C) 2024-2026  soywod <pimalaya.org@posteo.net>
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 //! Hook runner: dispatches to `notify-rust` for system notifications
 //! and spawns the configured child process for shell commands.
 //! Notification summary/body strings are expanded with [`subst`]
@@ -27,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
-use io_email::{envelope::Envelope, flag::Flag};
+use io_email::{envelope::types::Envelope, flag::types::Flag};
 use log::{trace, warn};
 use notify_rust::Notification;
 

@@ -1,20 +1,3 @@
-// This file is part of Mirador, a CLI to watch mailbox changes.
-//
-// Copyright (C) 2024-2026  soywod <pimalaya.org@posteo.net>
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 //! Backend client construction.
 //!
 //! [`open`] picks the active backend from the [`Backend`] CLI flag and
@@ -92,10 +75,15 @@ fn open_imap(config: crate::config::ImapConfig) -> Result<EmailClientStd> {
     let server = parse_imap_server(&config.server)?;
     let sasl: Option<Sasl> = config
         .sasl
-        .and_then(|cfg| {
-            let host = server.host_str()?;
-            let port = server.port_or_known_default()?;
-            Some(cfg.try_into_sasl(host, port))
+        .map(|cfg| {
+            let host = server.host_str().unwrap_or_default();
+            // url does not know the imap(s) default ports; gating on
+            // port_or_known_default() would silently drop the whole SASL
+            // config for a portless URL, opening an unauthenticated session.
+            let port = server
+                .port()
+                .unwrap_or(if server.scheme() == "imaps" { 993 } else { 143 });
+            cfg.try_into_sasl(host, port)
         })
         .transpose()?;
     let auto_id = resolve_auto_id_params(&config.id)?;

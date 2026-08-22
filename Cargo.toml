@@ -5,7 +5,7 @@ version = "0.1.0"
 authors = ["soywod <clement.douin@posteo.net>"]
 rust-version = "1.88"
 edition = "2024"
-license = "AGPL-3.0-only"
+license = "MIT OR Apache-2.0"
 categories = ["command-line-utilities", "email"]
 keywords = ["cli", "email", "watch", "imap", "jmap"]
 homepage = "https://pimalaya.org/"
@@ -41,10 +41,10 @@ base64 = { version = "0.22", optional = true }
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 ctrlc = { version = "3", features = ["termination"] }
 dirs = "6"
-io-email = { version = "0.0.1", default-features = false, features = ["client", "serde"] }
-io-imap = { version = "0.0.1", default-features = false, optional = true }
-io-jmap = { version = "0.0.1", default-features = false, optional = true }
-io-maildir = { version = "0.0.1", default-features = false, optional = true }
+io-email = { version = "0.1", default-features = false, features = ["client", "serde"] }
+io-imap = { version = "0.1", default-features = false, optional = true }
+io-jmap = { version = "0.1", default-features = false, optional = true }
+io-maildir = { version = "0.1", default-features = false, optional = true }
 log = "0.4"
 notify-rust = { version = "4", default-features = false, features = ["d"] }
 percent-encoding = "2"
@@ -59,11 +59,12 @@ subst = "0.3"
 url = { version = "2.2", features = ["serde"] }
 
 # [patch.crates-io]
-# imap-codec.git = "https://github.com/soywod/imap-codec"
 # io-email.path = "../io-email"
+# io-gmail.path = "../io-gmail"
 # io-http.path = "../io-http"
 # io-imap.path = "../io-imap"
 # io-jmap.path = "../io-jmap"
+# io-msgraph.path = "../io-msgraph"
 # io-smtp.path = "../io-smtp"
 # io-maildir.path = "../io-maildir"
 # pimalaya-cli.path = "../cli"
@@ -71,12 +72,13 @@ url = { version = "2.2", features = ["serde"] }
 # pimalaya-stream.path = "../stream"
 
 [patch.crates-io]
-imap-codec.git = "https://github.com/soywod/imap-codec"
 io-email.git = "https://github.com/pimalaya/io-email"
+io-gmail.git = "https://github.com/pimalaya/io-gmail"
 io-http.git = "https://github.com/pimalaya/io-http"
 io-imap.git = "https://github.com/pimalaya/io-imap"
 io-jmap.git = "https://github.com/pimalaya/io-jmap"
 io-maildir.git = "https://github.com/pimalaya/io-maildir"
+io-msgraph.git = "https://github.com/pimalaya/io-msgraph"
 io-smtp.git = "https://github.com/pimalaya/io-smtp"
 pimalaya-cli.git = "https://github.com/pimalaya/cli"
 pimalaya-config.git = "https://github.com/pimalaya/config"
