@@ -41,18 +41,18 @@ An account SHALL name the one collection it watches, and MAY name the one method
 - **WHEN** a second mailbox is to be watched
 - **THEN** it is a second account, with its own hooks, and no flag exists to ask for it
 
-### Requirement: A backend refuses a method it does not have
-The watch method SHALL be named by its mechanism (`watch.idle`, `watch.push`, `watch.poll`), the way a SASL mechanism and an HTTP auth scheme already are. Unset, an account SHALL watch the best way its backend has: IDLE for IMAP, a held event stream for JMAP, a poll for the backends with nothing else. Every backend SHALL offer the poll, whose interval MAY be given and otherwise takes what suits that backend. A backend asked for a method it cannot honour SHALL refuse to start, naming what it offers, rather than quietly using another one.
+### Requirement: The watch method belongs to the backend
+The method SHALL be configured under its backend (`imap.watch`, `jmap.watch`, `maildir.watch`, `dav.watch`) and named by its mechanism, the way a SASL mechanism and an HTTP auth scheme already are. Each backend SHALL declare only the methods it has, so a method it does not have is refused when the configuration is read rather than when the watch runs. Unset, an account SHALL watch the best way its backend has: IDLE for IMAP, a held event stream for JMAP, a poll for the backends with nothing else. Every backend SHALL offer the poll, whose interval MAY be given and otherwise takes what suits that backend.
 
 #### Scenario: A server whose IDLE cannot be trusted
 - **GIVEN** an IMAP account whose server accepts IDLE and then never speaks
-- **WHEN** the account configures `watch.poll.interval`
+- **WHEN** the account configures `imap.watch.poll.interval`
 - **THEN** the watch re-reads the mailbox on that interval instead, reporting the same events
 
 #### Scenario: A method the backend does not have
-- **GIVEN** a Maildir account configuring `watch.idle`
-- **WHEN** the watch starts
-- **THEN** it fails, saying the maildir backend offers poll, rather than polling anyway
+- **GIVEN** a Maildir account configuring `maildir.watch.idle`
+- **WHEN** the configuration is read
+- **THEN** it is refused, naming the line and the methods that backend has, and no watch is started
 
 ### Requirement: The daemon owns the connection lifecycle
 The daemon SHALL own reconnection: a session that ends, for any reason other than a requested shutdown, SHALL be reopened after a capped exponential backoff, and a session that stayed up long enough to look healthy SHALL reset that backoff. Credentials SHALL be resolved per attempt rather than held, so a rotated secret is picked up by the next reconnect and residency stays minimal.

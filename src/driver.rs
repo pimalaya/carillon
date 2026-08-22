@@ -18,9 +18,17 @@ use std::{
 use anyhow::{Result, bail};
 use log::{debug, info, warn};
 
+#[cfg(feature = "dav")]
+use crate::config::DavWatchConfig;
+#[cfg(feature = "imap")]
+use crate::config::ImapWatchConfig;
+#[cfg(feature = "maildir")]
+use crate::config::MaildirWatchConfig;
+#[cfg(feature = "jmap")]
+use crate::config::{JmapWatchConfig, PushWatchConfig};
 use crate::{
     backend::Backend,
-    config::{AccountConfig, HooksConfig, WatchConfig},
+    config::{AccountConfig, HooksConfig},
     event::WatchEvent,
     hook,
 };
@@ -84,9 +92,9 @@ pub fn run(
 /// Runs one watch session against the account's active backend, with
 /// the method that backend was asked for.
 ///
-/// A backend refuses a method it cannot honour rather than quietly
-/// using one it can: a watch silently downgraded to a poll is how
-/// someone ends up wondering why their mail arrives a minute late.
+/// Which methods exist is the backend's, declared in its own config,
+/// so a method it does not have was already refused when the file was
+/// read: nothing here can be asked for the impossible.
 fn watch_once(
     account: &str,
     config: &AccountConfig,
@@ -95,9 +103,6 @@ fn watch_once(
     hooks: &HooksConfig,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<()> {
-    let watch = config.watch.as_ref();
-    let poll = watch.and_then(WatchConfig::poll_interval);
-
     #[cfg(feature = "imap")]
     if backend.allows_imap() {
         if let Some(imap) = &config.imap {
@@ -107,16 +112,21 @@ fn watch_once(
                 hook::run(hooks, &event, collection, summary.as_ref());
             };
 
-            return match watch {
-                None | Some(WatchConfig::Idle(_)) => {
+            return match &imap.watch {
+                Some(ImapWatchConfig::Poll(poll)) => {
+                    info!("[{account}] watching `{collection}` over imap, polling");
+                    crate::imap::watch_poll(
+                        imap,
+                        collection,
+                        poll.interval(),
+                        shutdown,
+                        &mut on_event,
+                    )
+                }
+                None | Some(ImapWatchConfig::Idle(_)) => {
                     info!("[{account}] watching `{collection}` over imap, idling");
                     crate::imap::watch_idle(imap, collection, shutdown, &mut on_event)
                 }
-                Some(WatchConfig::Poll(_)) => {
-                    info!("[{account}] watching `{collection}` over imap, polling");
-                    crate::imap::watch_poll(imap, collection, poll, shutdown, &mut on_event)
-                }
-                Some(other) => bail!(unsupported("imap", other, "idle or poll")),
             };
         }
 
@@ -130,20 +140,25 @@ fn watch_once(
         if let Some(jmap) = &config.jmap {
             let mut on_event = |event: WatchEvent| hook::run(hooks, &event, collection, None);
 
-            return match watch {
-                None | Some(WatchConfig::Push(_)) => {
+            return match &jmap.watch {
+                Some(JmapWatchConfig::Poll(poll)) => {
+                    info!("[{account}] watching `{collection}` over jmap, polling");
+                    crate::jmap::watch_poll(
+                        jmap,
+                        collection,
+                        poll.interval(),
+                        shutdown,
+                        &mut on_event,
+                    )
+                }
+                watch => {
                     let ping = match watch {
-                        Some(WatchConfig::Push(push)) => push.ping,
-                        _ => crate::config::PushWatchConfig::default().ping,
+                        Some(JmapWatchConfig::Push(push)) => push.ping,
+                        _ => PushWatchConfig::default().ping,
                     };
                     info!("[{account}] watching `{collection}` over jmap, pushed");
                     crate::jmap::watch_push(jmap, collection, ping, shutdown, &mut on_event)
                 }
-                Some(WatchConfig::Poll(_)) => {
-                    info!("[{account}] watching `{collection}` over jmap, polling");
-                    crate::jmap::watch_poll(jmap, collection, poll, shutdown, &mut on_event)
-                }
-                Some(other) => bail!(unsupported("jmap", other, "push or poll")),
             };
         }
 
@@ -155,13 +170,20 @@ fn watch_once(
     #[cfg(feature = "maildir")]
     if backend.allows_maildir() {
         if let Some(maildir) = &config.maildir {
-            if let Some(other) = watch.filter(|watch| watch.poll_interval().is_none()) {
-                bail!(unsupported("maildir", other, "poll"));
-            }
+            let MaildirWatchConfig::Poll(poll) = maildir
+                .watch
+                .clone()
+                .unwrap_or(MaildirWatchConfig::Poll(Default::default()));
 
             info!("[{account}] watching `{collection}` over maildir, polling");
             let mut on_event = |event: WatchEvent| hook::run(hooks, &event, collection, None);
-            return crate::maildir::watch(maildir, collection, poll, shutdown, &mut on_event);
+            return crate::maildir::watch(
+                maildir,
+                collection,
+                poll.interval(),
+                shutdown,
+                &mut on_event,
+            );
         }
 
         if backend == Backend::Maildir {
@@ -172,13 +194,14 @@ fn watch_once(
     #[cfg(feature = "dav")]
     if backend.allows_dav() {
         if let Some(dav) = &config.dav {
-            if let Some(other) = watch.filter(|watch| watch.poll_interval().is_none()) {
-                bail!(unsupported("dav", other, "poll"));
-            }
+            let DavWatchConfig::Poll(poll) = dav
+                .watch
+                .clone()
+                .unwrap_or(DavWatchConfig::Poll(Default::default()));
 
             info!("[{account}] watching `{collection}` over dav, polling");
             let mut on_event = |event: WatchEvent| hook::run(hooks, &event, collection, None);
-            return crate::dav::watch(dav, collection, poll, shutdown, &mut on_event);
+            return crate::dav::watch(dav, collection, poll.interval(), shutdown, &mut on_event);
         }
 
         if backend == Backend::Dav {
@@ -189,15 +212,6 @@ fn watch_once(
     bail!(
         "account has no usable backend block (expected one of `imap`, `jmap`, `maildir`, \
          `dav`); use `-b/--backend` to pin a specific one"
-    )
-}
-
-/// The message a backend gives back when asked for a method it does
-/// not have.
-fn unsupported(backend: &str, watch: &WatchConfig, available: &str) -> String {
-    format!(
-        "the {backend} backend cannot watch with `{}`; it offers {available}",
-        watch.name(),
     )
 }
 /// Resolves an arrival, only when `on-item-added` is configured to

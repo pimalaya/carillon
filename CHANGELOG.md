@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-Renamed from mirador. The binary, the config directory, the `CARILLON_CONFIG` variable and the systemd unit all carry the new name; the configuration file itself is unchanged, so moving its directory is the whole migration. See the [migration guide](./MIGRATION.md).
+Renamed from mirador. The binary, the config directory, the `CARILLON_CONFIG` variable and the systemd unit all carry the new name; the configuration file itself is unchanged, so `mv ~/.config/mirador ~/.config/carillon` is the whole migration.
 
 ### Added
 
@@ -40,7 +40,7 @@ Renamed from mirador. The binary, the config directory, the `CARILLON_CONFIG` va
 
 - One account is one backend watching one collection, one way. `mailbox` became a required `collection` (the old name still reads), `-m/--mailbox` is gone since what an account watches is its config, and `dav.server` became the DAV root with the collection as its path. Watching a second collection is a second account, which is also how it gets its own hooks.
 
-- Added `watch`, naming how an account learns about a change: `watch.idle` for IMAP, `watch.push.ping` for JMAP, `watch.poll.interval` for any backend. Unset takes the best the backend has. A backend asked for a method it does not have refuses to start rather than quietly using another one.
+- Added `watch` under each backend, naming how an account learns about a change: `imap.watch.idle`, `imap.watch.poll.interval`, `jmap.watch.push.ping`, `jmap.watch.poll.interval`, `maildir.watch.poll.interval`, `dav.watch.poll.interval`. Unset takes the best that backend has. Each backend declares only the methods it has, so asking Maildir to idle is a parse error naming the line rather than a failure at watch time.
 
 - JMAP is pushed to again, over the RFC 8620 event-source stream, asking the server to close after each state change so the same socket carries the `Email/changes` round that follows. This closes a regression: the poll that replaced it when io-email was removed is now one method among the others.
 

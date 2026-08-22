@@ -3,7 +3,7 @@
 CLI to watch PIM collection changes, written in Rust
 
 > [!CAUTION]
-> Carillon is in active development and currently shipped as `v0.1.x`. Expect breaking changes between releases until stabilization. See the [migration guide](./MIGRATION.md) if you ran a pre-v0.1.0 build.
+> Carillon is `v0.x`: expect breaking changes between releases until it stabilises.
 
 ## Table of contents
 
@@ -12,7 +12,6 @@ CLI to watch PIM collection changes, written in Rust
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
-- [Interfaces](#interfaces)
 - [AI policy](https://github.com/pimalaya/.github/blob/master/AI_POLICY.md)
 - [License](#license)
 - [Social](#social)
@@ -21,21 +20,12 @@ CLI to watch PIM collection changes, written in Rust
 
 ## Features
 
-- **Four backends**: IMAP idles, JMAP is pushed to, Maildir re-lists, WebDAV asks what moved.
-- **One account, one collection, one method**: what an account watches and how it watches are both its config, so nothing is passed on the command line and nothing is guessed. Any backend can poll instead, for a server whose idle or push cannot be trusted.
-- **Mail, contacts and calendars**: a WebDAV collection is a CalDAV calendar or a CardDAV addressbook just as readily.
-- **Every account at once**: one thread each, or `-a/--account` for a single one.
-- **Self-healing**: a dropped watch reopens with a capped backoff, reading the credential again each time.
+- **Four backends**, mail and not only mail: IMAP idles, JMAP is pushed to, Maildir re-lists, WebDAV asks a collection what moved. A WebDAV collection is a CalDAV calendar or a CardDAV addressbook just as readily.
+- **One account, one collection, one method**: both are its config, so nothing is passed on the command line. Any backend can poll instead, for a server whose idle or push cannot be trusted.
 - **Five events**: an item added, removed or changed, flags added or removed. Flag names are the same on every backend, so a filter written once fires everywhere.
 - **Hooks**: a desktop notification, a shell command, or both, with the event's fields as placeholders.
-- **Shared configuration**: the same `[accounts.<name>]` block backs `himalaya` and `himalaya-tui`.
-- **Authentication**: SASL for IMAP, basic and bearer for JMAP and WebDAV, secrets read from your own password manager.
-- **JSON output**: `--json` on every data command, for scripts.
-- **TLS**: [rustls](https://crates.io/crates/rustls) with ring (`rustls-ring`, default) or aws (`rustls-aws`) crypto, or [native-tls](https://crates.io/crates/native-tls) (`native-tls`).
-
-> [!TIP]
-> Carillon is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
-
+- **Every account at once**, one thread each, reopening a dropped watch with a capped backoff and reading the credential again each time.
+- **Shared configuration** with `himalaya` and `himalaya-tui`, secrets read from your own password manager.
 ## Coverage
 
 | Spec      | What is covered |
@@ -72,10 +62,7 @@ CLI to watch PIM collection changes, written in Rust
 
 ### Pre-built binary
 
-Carillon is not released yet. Until it is, check out the [releases](https://github.com/pimalaya/carillon/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section. These pre-built binaries are built from the master branch.
-
-> [!NOTE]
-> Such binaries are built with the default cargo features. If you need specific features, please use another installation method.
+Not released yet. Until it is, the [releases](https://github.com/pimalaya/carillon/actions/workflows/releases.yml) workflow builds one from master on demand, under *Artifacts*, with the default cargo features.
 
 ### Cargo
 
@@ -115,26 +102,11 @@ nix run
 
 ## Configuration
 
-Carillon ships no wizard: copy the annotated [config.sample.toml](./config.sample.toml), keep the account and the hooks you want, and delete the rest.
+Copy the annotated [config.sample.toml](./config.sample.toml), keep one backend and the hooks you want, delete the rest. It documents every key.
 
-A configuration is loaded from the first valid path among $XDG_CONFIG_HOME/carillon/config.toml, $HOME/.config/carillon/config.toml and $HOME/.carillonrc. Override it with `-c <PATH>` or `CARILLON_CONFIG=<PATH>`, `:`-separated to deep-merge several files on top of the first.
+A configuration is read from `$XDG_CONFIG_HOME/carillon/config.toml`, `$HOME/.config/carillon/config.toml` or `$HOME/.carillonrc`, overridden by `-c <PATH>` or `CARILLON_CONFIG=<PATH>`. Those are the paths [himalaya](https://github.com/pimalaya/himalaya) and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) read too, so one file backs all three.
 
-[himalaya](https://github.com/pimalaya/himalaya) and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) read those same paths, so one file backs all three binaries. Each backend is a protocol key (`imap`, `jmap`, `maildir`, `dav`) written as dotted entries under `[accounts.<name>]`, and the keys only carillon reads sit next to the shared ones, ignored by the others.
-
-> [!WARNING]
-> A pre-v0.1.0 configuration is not compatible with `v0.1.0`, since the schema differs. Read the [migration guide](./MIGRATION.md) first, or rewrite the file from [config.sample.toml](./config.sample.toml).
-
-### Backend selection
-
-A watch opens exactly one connection, so an account declaring several backends picks one at startup: `-b/--backend {imap,jmap,maildir,dav}` pins it and fails when the block is absent, while `-b auto`, the default, takes the first configured among IMAP, JMAP, Maildir, WebDAV.
-
-### Watch method
-
-Unset, an account watches the best way its backend has: IMAP idles, JMAP holds an event stream, Maildir and WebDAV poll. `watch.poll.interval` asks any backend to ask again on an interval instead, which is the answer to a server whose idle or push cannot be trusted; `watch.idle` and `watch.push` name the other two. A backend refuses a method it does not have rather than quietly using another, since a watch silently downgraded to a poll is how someone ends up wondering why their mail arrives a minute late.
-
-### Hooks
-
-Every event has its own hook under the `hooks.` namespace: `hooks.on-item-added`, `hooks.on-item-removed`, `hooks.on-item-changed`, `hooks.on-flags-added` and `hooks.on-flags-removed`. The earlier `on-message-*` names still work. Each fires a notification, a command, or both, and flag hooks take an optional `flags` filter. A hook that fails is logged and never stops the watch. The shapes and the full placeholder list are documented in [config.sample.toml](./config.sample.toml).
+An account declares one backend block (`imap`, `jmap`, `maildir`, `dav`), the `collection` it watches, how it watches under that backend's `watch` key, and its `hooks`. Declaring several backends is allowed; `-b/--backend` then picks one.
 
 ## Usage
 
@@ -171,10 +143,6 @@ carillon watch --log-level debug 2>/tmp/carillon.log
 ```
 
 Use `--log-file <PATH>` to append them to a file directly. When `--log-level` is omitted the `RUST_LOG` environment variable is consulted, and `RUST_BACKTRACE=1` adds the full error backtrace.
-
-## Interfaces
-
-Carillon is one of several front-ends to the Pimalaya libraries. See [pimalaya/himalaya#interfaces](https://github.com/pimalaya/himalaya#interfaces) for the full list.
 
 ## License
 

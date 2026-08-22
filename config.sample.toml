@@ -13,7 +13,7 @@
 # There is no wizard: copy this file, keep one backend and the hooks you want,
 # then delete the rest. The `[accounts.<name>]` block is the schema `himalaya`
 # CLI v2 and `himalaya-tui` read, so one file backs all three binaries; the
-# carillon-only fields (`collection`, `watch`, the `hooks.*` tables) are ignored
+# carillon-only fields (`collection`, the `watch` and `hooks.*` tables) are ignored
 # by them.
 # ================================================================================
 
@@ -33,17 +33,6 @@ default = true
 # `dav.server`, or as an absolute path when it starts with a slash.
 collection = "INBOX"
 
-# How this account learns about a change. Unset takes the best method the
-# backend has: idle for IMAP, push for JMAP, a poll for the two with nothing
-# else. A backend refuses a method it does not have rather than quietly using
-# another one.
-#
-#watch.idle = {}            # IMAP: hold a connection and let the server speak
-#watch.push.ping = 30       # JMAP: hold an event stream, seconds between pings
-#watch.poll.interval = 60   # any backend: ask again on an interval
-#
-# The poll interval is unset by default, each backend taking what suits it: a
-# couple of seconds for a local directory read, a minute for a remote one.
 
 # --------------------------------------------------------------------------------
 # Backend config
@@ -101,6 +90,12 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #imap.id.auto = false
 #imap.id.fields = { name = true, version = true, vendor = true, support-url = true }
 
+# How this account learns about a change, IMAP offering two ways. Unset holds
+# the idle connection. The interval is in seconds, and unset takes what suits
+# the backend.
+#imap.watch.idle = {}
+#imap.watch.poll.interval = 60
+
 # ---- JMAP: a changes poll (RFC 8621) -------------------------------------------
 
 # Server address: a bare authority, discovered through `/.well-known/jmap`, or
@@ -117,12 +112,21 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #jmap.auth.basic.username = "user@example.org"
 #jmap.auth.basic.password.command = "pass show carillon/example"
 
+# How this account learns about a change, JMAP offering two ways. Unset holds
+# the event stream, whose ping is the server keep-alive that also proves the
+# stream is still there.
+#jmap.watch.push.ping = 30
+#jmap.watch.poll.interval = 60
+
 # ---- Maildir: a listing poll ---------------------------------------------------
 
 # Root of the Maildir tree, subfolders being real nested directories, the
 # layout himalaya uses. Watch the root itself with collection = "." or "INBOX",
 # and a subfolder by its path, e.g. collection = "Archive".
 #maildir.root = "~/Mail/example"
+
+# Maildir has one way: re-list on an interval, a couple of seconds when unset.
+#maildir.watch.poll.interval = 2
 
 # ---- WebDAV: a sync-collection poll (RFC 6578) ---------------------------------
 
@@ -136,6 +140,9 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #dav.auth.basic.username = "alice"
 #dav.auth.basic.password.command = "pass show dav/example"
 #dav.auth.bearer.token.command = "ortie token read example"
+
+# WebDAV has one way: ask sync-collection on an interval, a minute when unset.
+#dav.watch.poll.interval = 60
 
 # TLS options, same shape as `imap.tls`.
 #dav.tls.provider = "rustls"

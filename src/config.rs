@@ -105,12 +105,6 @@ pub struct AccountConfig {
     #[serde(alias = "mailbox")]
     pub collection: String,
 
-    /// How this account learns about a change. Unset takes the best
-    /// method the backend has: IDLE for IMAP, push for JMAP, a poll
-    /// for the two that have nothing else.
-    #[serde(default)]
-    pub watch: Option<WatchConfig>,
-
     #[cfg(feature = "imap")]
     #[serde(default)]
     pub imap: Option<ImapConfig>,
@@ -161,6 +155,10 @@ pub struct ImapConfig {
     /// authentication; set `id.auto = true` to opt in.
     #[serde(default)]
     pub id: ImapIdConfig,
+
+    /// How this account learns about a change. Unset holds IDLE.
+    #[serde(default)]
+    pub watch: Option<ImapWatchConfig>,
 }
 
 /// Per-account `imap.id.*` quirks.
@@ -254,6 +252,11 @@ pub struct JmapConfig {
 
     /// Authentication. Exactly one of `header`, `bearer`, `basic`.
     pub auth: JmapAuthConfig,
+
+    /// How this account learns about a change. Unset holds an
+    /// EventSource stream.
+    #[serde(default)]
+    pub watch: Option<JmapWatchConfig>,
 }
 
 #[cfg(feature = "jmap")]
@@ -279,6 +282,10 @@ pub enum JmapAuthConfig {
 pub struct MaildirConfig {
     #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_path")]
     pub root: PathBuf,
+
+    /// How this account learns about a change. Unset polls.
+    #[serde(default)]
+    pub watch: Option<MaildirWatchConfig>,
 }
 
 // ---- TLS ----------------------------------------------------------
@@ -554,6 +561,10 @@ pub struct DavConfig {
     /// readable without it.
     #[serde(default)]
     pub auth: DavAuthConfig,
+
+    /// How this account learns about a change. Unset polls.
+    #[serde(default)]
+    pub watch: Option<DavWatchConfig>,
 }
 
 /// The credential presented to the DAV server.
@@ -577,31 +588,61 @@ pub enum DavAuthConfig {
 
 // ---- Watch method -------------------------------------------------
 
-/// How an account learns about a change.
-///
-/// Every backend can poll; some have better. The method is named by
-/// its key, the way a SASL mechanism and an HTTP auth scheme are, and
-/// a backend refuses a method it cannot honour rather than quietly
-/// falling back to one it can.
+// NOTE: the method lives under its backend, and each backend declares
+// only the methods it has, so asking IMAP to push or Maildir to idle
+// is refused when the config is read rather than when the watch runs.
+
+/// How an IMAP account learns about a change.
+#[cfg(feature = "imap")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub enum WatchConfig {
-    /// IMAP only: hold an IDLE connection and let the server speak
-    /// first.
+pub enum ImapWatchConfig {
+    /// Hold an IDLE connection and let the server speak first.
     Idle(IdleWatchConfig),
-    /// JMAP only: hold an EventSource stream and let the server push.
+    /// Re-read the mailbox on an interval, for a server whose IDLE
+    /// cannot be trusted.
+    Poll(PollWatchConfig),
+}
+
+/// How a JMAP account learns about a change.
+#[cfg(feature = "jmap")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum JmapWatchConfig {
+    /// Hold an EventSource stream and let the server push.
     Push(PushWatchConfig),
-    /// Ask again on an interval. Every backend can do this, and it is
-    /// the escape hatch when a server's IDLE or push misbehaves.
+    /// Ask `Email/changes` on an interval instead.
+    Poll(PollWatchConfig),
+}
+
+/// How a Maildir account learns about a change.
+#[cfg(feature = "maildir")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum MaildirWatchConfig {
+    /// Re-list the directory on an interval, which a filesystem with
+    /// no notification channel leaves as the only way.
+    Poll(PollWatchConfig),
+}
+
+/// How a WebDAV account learns about a change.
+#[cfg(feature = "dav")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum DavWatchConfig {
+    /// Ask `sync-collection` on an interval, which is what WebDAV
+    /// offers a client with no public endpoint.
     Poll(PollWatchConfig),
 }
 
 /// Options of the IDLE method.
+#[cfg(feature = "imap")]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct IdleWatchConfig {}
 
 /// Options of the push method.
+#[cfg(feature = "jmap")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PushWatchConfig {
@@ -622,26 +663,14 @@ pub struct PollWatchConfig {
     pub interval: Option<u64>,
 }
 
-impl WatchConfig {
-    /// The method's name, for a message a user has to act on.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Idle(_) => "idle",
-            Self::Push(_) => "push",
-            Self::Poll(_) => "poll",
-        }
-    }
-
-    /// The interval this config overrides the backend default with,
-    /// when it asks for a poll at all.
-    pub fn poll_interval(&self) -> Option<Duration> {
-        match self {
-            Self::Poll(poll) => poll.interval.map(Duration::from_secs),
-            _ => None,
-        }
+impl PollWatchConfig {
+    /// The interval this config overrides the backend default with.
+    pub fn interval(&self) -> Option<Duration> {
+        self.interval.map(Duration::from_secs)
     }
 }
 
+#[cfg(feature = "jmap")]
 impl Default for PushWatchConfig {
     fn default() -> Self {
         Self {
@@ -652,6 +681,7 @@ impl Default for PushWatchConfig {
 
 /// Half a minute between pings, short enough to notice a dead stream
 /// and long enough to be quiet.
+#[cfg(feature = "jmap")]
 fn default_push_ping() -> u64 {
     30
 }
