@@ -2,15 +2,15 @@
 name = "mirador"
 description = "CLI to watch mailbox changes"
 version = "0.1.0"
-authors = ["soywod <clement.douin@posteo.net>"]
+authors = ["Clément DOUIN (soywod) <clement.douin@posteo.net>"]
 rust-version = "1.89"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 categories = ["command-line-utilities", "email"]
 keywords = ["cli", "email", "watch", "imap", "jmap"]
-homepage = "https://pimalaya.org/"
-documentation = "https://pimalaya.org/mirador/cli/latest/"
-repository = "https://github.com/pimalaya/mirador/"
+homepage = "https://pimalaya.org"
+documentation = "https://pimalaya.org/mirador/cli/latest"
+repository = "https://github.com/pimalaya/mirador"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -53,3 +53,6 @@ secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 subst = "0.3"
 url = { version = "2.2", features = ["serde"] }
+
+[patch.crates-io]
+io-imap.git = "https://github.com/pimalaya/io-imap"

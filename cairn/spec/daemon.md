@@ -57,6 +57,14 @@ A watch learns that a message arrived, not what it says. The daemon SHALL resolv
 - **WHEN** a message arrives
 - **THEN** no envelope is fetched and no second connection is opened
 
+### Requirement: Ctrl+C is prompt on every path
+A requested shutdown SHALL be honoured within roughly a second on every path a watch can be waiting in: idling on a connection, sleeping between polls, backing off before a reconnect, or resolving an arrival's envelope. No path SHALL wait on a server that has stopped answering: every connection the daemon opens SHALL carry a read deadline and SHALL hand back the not-ready failures rather than letting the transport retry them away, since the deadline exists to be the wakeup that re-reads the flag.
+
+#### Scenario: Ctrl+C while resolving against a silent server
+- **GIVEN** a watch resolving an arrival's envelope against a server that has stopped answering
+- **WHEN** the user presses Ctrl+C
+- **THEN** the read deadline expires, the flag is seen, and the watch ends rather than waiting for the transport's own timeout
+
 ### Requirement: A hook failure never stops the watch
 A hook SHALL be a desktop notification, a shell command, or both. Its templates SHALL expand the event's variables, and the command SHALL receive the same variables in its environment. A hook that fails SHALL be logged and left behind: neither a missing notification daemon nor a broken script SHALL end the watch.
 

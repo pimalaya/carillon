@@ -31,7 +31,7 @@ use io_jmap::{
     },
 };
 use log::{debug, trace};
-use pimalaya_stream::tls::Tls;
+use pimalaya_stream::{retry::Retry, stream::Stream, tls::Tls};
 use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 
@@ -53,6 +53,16 @@ pub fn open(config: &JmapConfig) -> Result<(JmapClientStd, Url)> {
     let url = parse_server(&config.server)?;
     let auth = http_auth(config.auth.clone())?;
     let mut client = JmapClientStd::connect(&url, &tls, auth)?;
+
+    // NOTE: io-jmap arms a five-second read deadline so a caller can be
+    // woken up, but pimalaya-stream retries that wakeup away for a
+    // minute by default. Handing the failures back is what bounds a
+    // poll against a server that stopped answering, and therefore how
+    // long a Ctrl+C waits.
+    if let Some(stream) = client.stream.as_any_mut().downcast_mut::<Stream>() {
+        stream.retry = Retry::Never;
+    }
+
     client.session_get(&url)?;
 
     Ok((client, url))
@@ -89,6 +99,7 @@ pub fn parse_server(server: &str) -> Result<Url> {
         Err(err) => Err(err.into()),
     }
 }
+
 /// Watches `mailbox` until `shutdown` is set, calling `on_event` for
 /// every change.
 ///

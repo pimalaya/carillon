@@ -87,7 +87,7 @@ fn watch_once(
     if backend.allows_imap() {
         if let Some(imap) = &config.imap {
             info!("[{account}] watching `{mailbox}` over imap");
-            let mut resolver = crate::imap::Resolver::new(imap, mailbox);
+            let mut resolver = crate::imap::Resolver::new(imap, mailbox, shutdown);
             let mut on_event = |event: WatchEvent| {
                 let summary = resolve_added(account, hooks, &event, &mut resolver);
                 hook::run(hooks, &event, mailbox, summary.as_ref());

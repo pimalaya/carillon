@@ -32,6 +32,8 @@ First public release of mirador. The CLI is synchronous (`std::net` end to end) 
 
 - Flags are reported under one set of names whatever the backend spells them as, so a filter written once fires everywhere: IMAP `\Seen`, JMAP `$seen` and the Maildir `S` letter all arrive as `Seen`.
 
+- Ctrl+C is now honoured within about a second on every path: idling, polling, backing off, or resolving an arrival's envelope. Each connection carries a short read deadline and hands back the not-ready failures instead of letting the transport retry them away for a minute, which is what the deadline is for. Needs the unreleased io-imap watch option, so `Cargo.toml` patches io-imap to a local path until it ships.
+
 - Bumped every Pimalaya dependency: io-imap 0.5, io-jmap 0.3, io-maildir 0.3, pimalaya-stream 0.3, pimalaya-cli 0.2, pimalaya-config 0.1.4. SASL moved out of pimalaya-stream into its own io-sasl crate; the `imap.sasl.*` config shape is unchanged.
 
 - Switched hook placeholder syntax to shell-style `$name` / `${name}`. Notification summary/body are expanded with [subst](https://crates.io/crates/subst). Sender / recipient sub-fields are exposed as `sender_name` / `sender_address` / `recipient_name` / `recipient_address` so they form valid environment-variable names.

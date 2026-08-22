@@ -14,6 +14,8 @@
 
 use std::{
     collections::BTreeSet,
+    fmt,
+    io::{self, Read, Write},
     num::NonZeroU32,
     sync::{
         Arc,
@@ -22,10 +24,14 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use io_imap::{
-    client::{ImapClient, ImapClientStd, ImapMailboxWatchStream, default_port},
-    rfc3501::fetch::ImapMessageFetchOptions,
+    client::{ImapClientStd, ImapMailboxWatchStream, ImapMailboxWatchStreamOptions, default_port},
+    coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
+    rfc3501::{
+        examine::ImapMailboxExamine,
+        fetch::{ImapMessageFetch, ImapMessageFetchOptions},
+    },
     session::ImapSessionOpenOptions,
     types::{
         core::NString,
@@ -50,6 +56,12 @@ use crate::{
 /// How long a watch waits for an event before checking the shutdown
 /// flag again.
 const POLL_TICK: Duration = Duration::from_millis(500);
+/// How long the watch worker, and the resolver, may sit in a read
+/// before looking at the shutdown flag again.
+const READ_TIMEOUT: Duration = Duration::from_secs(1);
+/// Per-read scratch buffer for the resolver. Only envelopes are read,
+/// never a body.
+const READ_BUF: usize = 8 * 1024;
 
 /// Opens an authenticated IMAP session, returning the client and the
 /// capabilities the handshake reported.
@@ -102,9 +114,12 @@ pub fn watch(
     let (client, capability) = open(config)?;
     let watched = Mailbox::try_from(mailbox.to_string())
         .map_err(|err| anyhow!("invalid mailbox name `{mailbox}`: {err}"))?;
-    let stream = client.watch_mailbox(watched, &capability)?;
+    let opts = ImapMailboxWatchStreamOptions {
+        shutdown_poll: READ_TIMEOUT,
+    };
+    let stream = client.watch_mailbox(watched, &capability, opts)?;
 
-    let result = pump(&stream, shutdown, &mut on_event);
+    let result = drain(&stream, shutdown, &mut on_event);
     // NOTE: close winds the worker down cleanly, whether we are leaving
     // because of a shutdown or because the connection failed.
     let closed = stream.close();
@@ -113,7 +128,7 @@ pub fn watch(
 }
 
 /// Drains the watch stream into `on_event` until shutdown or failure.
-fn pump(
+fn drain(
     stream: &ImapMailboxWatchStream,
     shutdown: &Arc<AtomicBool>,
     on_event: &mut impl FnMut(WatchEvent),
@@ -169,19 +184,26 @@ fn render_flags(flags: &[io_imap::types::flag::Flag<'static>]) -> BTreeSet<Strin
 /// The watch connection is busy holding IDLE, so resolving rides its
 /// own session. It opens on the first arrival a hook asks about, and
 /// re-opens once if the server dropped it in between.
+///
+/// The coroutines are pumped here rather than through the client's own
+/// blocking runner, so that a shutdown is noticed between reads: a
+/// resolve against a server that stopped answering must not be what
+/// holds a Ctrl+C.
 pub struct Resolver<'a> {
     config: &'a ImapConfig,
     mailbox: &'a str,
+    shutdown: &'a Arc<AtomicBool>,
     client: Option<ImapClientStd>,
 }
 
 impl<'a> Resolver<'a> {
     /// Prepares a resolver; no connection is opened until something is
     /// resolved.
-    pub fn new(config: &'a ImapConfig, mailbox: &'a str) -> Self {
+    pub fn new(config: &'a ImapConfig, mailbox: &'a str, shutdown: &'a Arc<AtomicBool>) -> Self {
         Self {
             config,
             mailbox,
+            shutdown,
             client: None,
         }
     }
@@ -191,6 +213,7 @@ impl<'a> Resolver<'a> {
     pub fn summary(&mut self, uid: &str) -> Result<MessageSummary> {
         match self.fetch(uid) {
             Ok(summary) => Ok(summary),
+            Err(err) if self.shutdown.load(Ordering::SeqCst) => Err(err),
             Err(err) => {
                 debug!("resolver session lost, reconnecting: {err:#}");
                 self.client = None;
@@ -203,20 +226,30 @@ impl<'a> Resolver<'a> {
         let mailbox = Mailbox::try_from(self.mailbox.to_string())
             .map_err(|err| anyhow!("invalid mailbox name `{}`: {err}", self.mailbox))?;
 
-        if self.client.is_none() {
-            let (client, _capability) = open(self.config)?;
-            self.client = Some(client);
-        }
-
-        // NOTE: unwrapping is safe, the client was just opened.
-        let client = self.client.as_mut().unwrap();
-        client.examine(mailbox, Default::default())?;
-
         let parsed = uid
             .parse::<u32>()
             .ok()
             .and_then(NonZeroU32::new)
             .ok_or_else(|| anyhow!("invalid UID `{uid}`"))?;
+
+        if self.client.is_none() {
+            let (mut client, _capability) = open(self.config)?;
+            // NOTE: the same arrangement the watch worker makes: a read
+            // deadline to be woken up by, and no retry strategy to
+            // swallow the wakeup, so the loop below can look at the
+            // shutdown flag between reads.
+            client.stream.set_read_timeout(Some(READ_TIMEOUT))?;
+            client.stream.stop_retrying();
+            self.client = Some(client);
+        }
+
+        // NOTE: unwrapping is safe, the client was just opened.
+        let client = self.client.as_mut().unwrap();
+        let shutdown = self.shutdown;
+
+        let examine = ImapMailboxExamine::new(mailbox, Default::default());
+        pump(client, examine, shutdown)?;
+
         let sequence = SequenceSet::from(parsed..=parsed);
         let items =
             MacroOrMessageDataItemNames::MessageDataItemNames(vec![MessageDataItemName::Envelope]);
@@ -224,7 +257,11 @@ impl<'a> Resolver<'a> {
             uid: true,
             modifiers: Vec::new(),
         };
-        let fetched = client.fetch(sequence, items, opts)?;
+        let fetched = pump(
+            client,
+            ImapMessageFetch::new(sequence, items, opts),
+            shutdown,
+        )?;
 
         let items = fetched
             .into_values()
@@ -233,6 +270,59 @@ impl<'a> Resolver<'a> {
 
         Ok(summarize(items.into_inner()))
     }
+}
+
+/// Runs one coroutine over the resolver's connection, checking the
+/// shutdown flag between reads.
+///
+/// This is what the client's own runner does, minus the part where a
+/// silent server can hold the thread for as long as the transport
+/// allows: here a read deadline expires into another look at the flag.
+fn pump<C, T, E>(
+    client: &mut ImapClientStd,
+    mut coroutine: C,
+    shutdown: &Arc<AtomicBool>,
+) -> Result<T>
+where
+    C: ImapCoroutine<Yield = ImapYield, Return = Result<T, E>>,
+    E: fmt::Display,
+{
+    let mut buf = [0u8; READ_BUF];
+    let mut arg: Option<Vec<u8>> = None;
+
+    loop {
+        match coroutine.resume(&mut client.fragmentizer, arg.take().as_deref()) {
+            ImapCoroutineState::Yielded(ImapYield::WantsRead) => loop {
+                if shutdown.load(Ordering::SeqCst) {
+                    bail!("shutting down");
+                }
+
+                match client.stream.read(&mut buf) {
+                    Ok(0) => bail!("connection closed by peer"),
+                    Ok(read) => {
+                        arg = Some(buf[..read].to_vec());
+                        break;
+                    }
+                    Err(err) if is_timeout(&err) => continue,
+                    Err(err) => return Err(err).context("read failed"),
+                }
+            },
+            ImapCoroutineState::Yielded(ImapYield::WantsWrite(bytes)) => {
+                client.stream.write_all(&bytes).context("write failed")?;
+            }
+            ImapCoroutineState::Complete(Ok(value)) => return Ok(value),
+            ImapCoroutineState::Complete(Err(err)) => bail!("{err}"),
+        }
+    }
+}
+
+/// Whether an I/O error is the read deadline expiring, which is a
+/// wakeup rather than a failure.
+fn is_timeout(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    )
 }
 
 /// Folds a FETCH response into what the hook templates expose.
