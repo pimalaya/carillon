@@ -18,15 +18,25 @@ use std::{
 use anyhow::{Result, bail};
 use log::{debug, info, warn};
 
-#[cfg(feature = "dav")]
-use crate::config::DavWatchConfig;
-#[cfg(feature = "maildir")]
-use crate::config::MaildirWatchConfig;
-#[cfg(feature = "imap")]
-use crate::config::{IdleWatchConfig, ImapWatchConfig};
-#[cfg(feature = "jmap")]
-use crate::config::{JmapWatchConfig, PushWatchConfig};
 use crate::{backend::Backend, config::AccountConfig, event::WatchEvent, hook};
+#[cfg(feature = "dav")]
+use crate::{
+    config::DavWatchConfig,
+    dav::{self, DavKind},
+};
+#[cfg(feature = "maildir")]
+use crate::{config::MaildirWatchConfig, maildir};
+#[cfg(feature = "imap")]
+use crate::{
+    config::{IdleWatchConfig, ImapWatchConfig},
+    event::ItemSummary,
+    imap::{self, Resolver},
+};
+#[cfg(feature = "jmap")]
+use crate::{
+    config::{JmapWatchConfig, PushWatchConfig},
+    jmap,
+};
 
 /// Reconnect backoff floor.
 const INITIAL_BACKOFF: Duration = Duration::from_secs(2);
@@ -99,10 +109,10 @@ fn watch_once(
 ) -> Result<()> {
     #[cfg(feature = "imap")]
     if backend.allows_imap() {
-        if let Some(imap) = &config.imap {
-            let mut resolver = crate::imap::Resolver::new(imap, collection, shutdown);
+        if let Some(imap_config) = &config.imap {
+            let mut resolver = Resolver::new(imap_config, collection, shutdown);
             let mut on_event = |event: WatchEvent| {
-                let Some(hook) = imap.hook.get(&event) else {
+                let Some(hook) = imap_config.hook.get(&event) else {
                     return;
                 };
 
@@ -110,11 +120,11 @@ fn watch_once(
                 hook::run(hook, &event, collection, summary.as_ref());
             };
 
-            return match &imap.watch {
+            return match &imap_config.watch {
                 Some(ImapWatchConfig::Poll(poll)) => {
                     info!("[{account}] watching `{collection}` over imap, polling");
-                    crate::imap::watch_poll(
-                        imap,
+                    imap::watch_poll(
+                        imap_config,
                         collection,
                         poll.interval(),
                         shutdown,
@@ -128,8 +138,8 @@ fn watch_once(
                     };
 
                     info!("[{account}] watching `{collection}` over imap, idling");
-                    crate::imap::watch_idle(
-                        imap,
+                    imap::watch_idle(
+                        imap_config,
                         collection,
                         idle.timeout(),
                         shutdown,
@@ -146,18 +156,18 @@ fn watch_once(
 
     #[cfg(feature = "jmap")]
     if backend.allows_jmap() {
-        if let Some(jmap) = &config.jmap {
+        if let Some(jmap_config) = &config.jmap {
             let mut on_event = |event: WatchEvent| {
-                if let Some(hook) = jmap.hook.get(&event) {
+                if let Some(hook) = jmap_config.hook.get(&event) {
                     hook::run(hook, &event, collection, None);
                 }
             };
 
-            return match &jmap.watch {
+            return match &jmap_config.watch {
                 Some(JmapWatchConfig::Poll(poll)) => {
                     info!("[{account}] watching `{collection}` over jmap, polling");
-                    crate::jmap::watch_poll(
-                        jmap,
+                    jmap::watch_poll(
+                        jmap_config,
                         collection,
                         poll.interval(),
                         shutdown,
@@ -170,7 +180,7 @@ fn watch_once(
                         _ => PushWatchConfig::default().ping,
                     };
                     info!("[{account}] watching `{collection}` over jmap, pushed");
-                    crate::jmap::watch_push(jmap, collection, ping, shutdown, &mut on_event)
+                    jmap::watch_push(jmap_config, collection, ping, shutdown, &mut on_event)
                 }
             };
         }
@@ -182,20 +192,20 @@ fn watch_once(
 
     #[cfg(feature = "maildir")]
     if backend.allows_maildir() {
-        if let Some(maildir) = &config.maildir {
-            let MaildirWatchConfig::Poll(poll) = maildir
+        if let Some(maildir_config) = &config.maildir {
+            let MaildirWatchConfig::Poll(poll) = maildir_config
                 .watch
                 .clone()
                 .unwrap_or(MaildirWatchConfig::Poll(Default::default()));
 
             info!("[{account}] watching `{collection}` over maildir, polling");
             let mut on_event = |event: WatchEvent| {
-                if let Some(hook) = maildir.hook.get(&event) {
+                if let Some(hook) = maildir_config.hook.get(&event) {
                     hook::run(hook, &event, collection, None);
                 }
             };
-            return crate::maildir::watch(
-                maildir,
+            return maildir::watch(
+                maildir_config,
                 collection,
                 poll.interval(),
                 shutdown,
@@ -210,18 +220,18 @@ fn watch_once(
 
     #[cfg(feature = "dav")]
     if backend.allows_caldav() {
-        if let Some(caldav) = &config.caldav {
+        if let Some(caldav_config) = &config.caldav {
             info!("[{account}] watching `{collection}` over caldav, polling");
             let mut on_event = |event: WatchEvent| {
-                if let Some(hook) = caldav.hook.get(&event) {
+                if let Some(hook) = caldav_config.hook.get(&event) {
                     hook::run(hook, &event, collection, None);
                 }
             };
-            return crate::dav::watch(
-                caldav.server(),
-                crate::dav::DavKind::Calendar(caldav.hook.domains()),
+            return dav::watch(
+                caldav_config.server(),
+                DavKind::Calendar(caldav_config.hook.domains()),
                 collection,
-                dav_interval(&caldav.watch),
+                dav_interval(&caldav_config.watch),
                 shutdown,
                 &mut on_event,
             );
@@ -234,18 +244,18 @@ fn watch_once(
 
     #[cfg(feature = "dav")]
     if backend.allows_carddav() {
-        if let Some(carddav) = &config.carddav {
+        if let Some(carddav_config) = &config.carddav {
             info!("[{account}] watching `{collection}` over carddav, polling");
             let mut on_event = |event: WatchEvent| {
-                if let Some(hook) = carddav.hook.get(&event) {
+                if let Some(hook) = carddav_config.hook.get(&event) {
                     hook::run(hook, &event, collection, None);
                 }
             };
-            return crate::dav::watch(
-                carddav.server(),
-                crate::dav::DavKind::Addressbook,
+            return dav::watch(
+                carddav_config.server(),
+                DavKind::Addressbook,
                 collection,
-                dav_interval(&carddav.watch),
+                dav_interval(&carddav_config.watch),
                 shutdown,
                 &mut on_event,
             );
@@ -258,18 +268,18 @@ fn watch_once(
 
     #[cfg(feature = "dav")]
     if backend.allows_dav() {
-        if let Some(dav) = &config.dav {
+        if let Some(dav_config) = &config.dav {
             info!("[{account}] watching `{collection}` over dav, polling");
             let mut on_event = |event: WatchEvent| {
-                if let Some(hook) = dav.hook.get(&event) {
+                if let Some(hook) = dav_config.hook.get(&event) {
                     hook::run(hook, &event, collection, None);
                 }
             };
-            return crate::dav::watch(
-                dav.server(),
-                crate::dav::DavKind::Plain,
+            return dav::watch(
+                dav_config.server(),
+                DavKind::Plain,
                 collection,
-                dav_interval(&dav.watch),
+                dav_interval(&dav_config.watch),
                 shutdown,
                 &mut on_event,
             );
@@ -303,8 +313,8 @@ fn dav_interval(watch: &Option<DavWatchConfig>) -> Option<Duration> {
 fn resolve_added(
     account: &str,
     event: &WatchEvent,
-    resolver: &mut crate::imap::Resolver<'_>,
-) -> Option<crate::event::ItemSummary> {
+    resolver: &mut Resolver<'_>,
+) -> Option<ItemSummary> {
     let WatchEvent::ItemAdded { id, .. } = event else {
         return None;
     };

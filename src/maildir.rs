@@ -205,15 +205,15 @@ fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::Path};
 
     use tempfile::TempDir;
 
-    use super::*;
+    use crate::maildir::*;
 
     /// Builds a Maildir at `path`, with the three subdirectories a
     /// listing needs.
-    fn maildir(path: &std::path::Path) {
+    fn maildir(path: &Path) {
         for sub in ["cur", "new", "tmp"] {
             fs::create_dir_all(path.join(sub)).expect("maildir subdirectory");
         }
@@ -221,7 +221,7 @@ mod tests {
 
     /// Writes an entry into one of the Maildir subdirectories, named
     /// the way a delivering agent would.
-    fn entry(path: &std::path::Path, sub: &str, name: &str) {
+    fn entry(path: &Path, sub: &str, name: &str) {
         fs::write(path.join(sub).join(name), b"body").expect("maildir entry");
     }
 

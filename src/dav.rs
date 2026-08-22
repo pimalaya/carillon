@@ -17,6 +17,7 @@
 
 use std::{
     collections::BTreeMap,
+    error,
     io::{self, Read, Write},
     sync::{
         Arc,
@@ -26,7 +27,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Error, Result, anyhow, bail};
 use io_http::{rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic};
 use io_webdav::{
     client::WebdavClientStd,
@@ -543,7 +544,7 @@ fn pump<C, T, E>(
 ) -> Result<T>
 where
     C: WebdavCoroutine<Yield = WebdavYield, Return = Result<T, E>>,
-    E: std::error::Error + Send + Sync + 'static,
+    E: error::Error + Send + Sync + 'static,
 {
     let mut buf = [0u8; READ_BUF];
     let mut arg: Option<Vec<u8>> = None;
@@ -591,7 +592,7 @@ fn auth(config: &DavAuthConfig) -> Result<WebdavAuth> {
 
 /// Whether the failure is the server refusing the sync token, which
 /// asks for an enumeration rather than a retry.
-fn is_invalid_token(err: &anyhow::Error) -> bool {
+fn is_invalid_token(err: &Error) -> bool {
     err.downcast_ref::<WebdavSyncCollectionError>()
         .is_some_and(|err| matches!(err, WebdavSyncCollectionError::InvalidSyncToken))
 }

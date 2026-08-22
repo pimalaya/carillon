@@ -26,7 +26,7 @@ use std::{
 
 #[cfg(feature = "imap")]
 use anyhow::anyhow;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 #[cfg(feature = "imap")]
 use io_imap::types::{
     IntoStatic,
@@ -38,10 +38,11 @@ use io_sasl::{
     rfc4616::plain::SaslPlainCreds, rfc5801::SaslGs2ChannelBinding, rfc5802::SaslScramCreds,
     rfc7628::oauthbearer::SaslOauthbearerCreds, xoauth2::SaslXoauth2Creds,
 };
-use pimalaya_config::command;
-#[cfg(any(feature = "imap", feature = "dav"))]
+#[cfg(feature = "imap")]
+use log::warn;
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 use pimalaya_config::secret::Secret;
-use pimalaya_config::toml::TomlConfig;
+use pimalaya_config::{command, toml::TomlConfig};
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 use pimalaya_stream::tls::{Rustls, RustlsCrypto, Tls, TlsProvider};
 use serde::{Deserialize, Serialize};
@@ -83,7 +84,7 @@ impl Config {
     /// the sample so they can hand-edit one.
     pub fn load(config_paths: &[PathBuf]) -> Result<Config> {
         let Some(config) = Config::from_paths_or_default(config_paths)? else {
-            anyhow::bail!(
+            bail!(
                 "No configuration found. Copy `config.sample.toml` to \
                  `$XDG_CONFIG_HOME/carillon/config.toml`, edit it, then \
                  re-run carillon"
@@ -278,7 +279,7 @@ pub fn resolve_auto_id_params(
                     })?
                     .into_static(),
                 None => {
-                    log::warn!("imap.id.fields.{key} = true: no canned value defined, sending NIL");
+                    warn!("imap.id.fields.{key} = true: no canned value defined, sending NIL");
                     NString::NIL
                 }
             }
@@ -334,14 +335,14 @@ pub struct JmapConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum JmapAuthConfig {
-    Header(pimalaya_config::secret::Secret),
+    Header(Secret),
     Bearer {
-        token: pimalaya_config::secret::Secret,
+        token: Secret,
     },
     Basic {
         #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_string")]
         username: String,
-        password: pimalaya_config::secret::Secret,
+        password: Secret,
     },
 }
 

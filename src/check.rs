@@ -4,14 +4,25 @@
 //! allowed by `--backend` is tried in turn, and the result is
 //! collected into a per-backend report.
 
+#[cfg(feature = "dav")]
+use std::sync::{Arc, atomic::AtomicBool};
 use std::{fmt, path::PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use clap::Parser;
+use pimalaya_cli::printer::Printer;
 use pimalaya_config::toml::TomlConfig;
 use serde::Serialize;
 
+#[cfg(feature = "maildir")]
+use crate::config::MaildirConfig;
 use crate::{backend::Backend, config::Config};
+#[cfg(feature = "dav")]
+use crate::{config::DavServer, dav};
+#[cfg(feature = "imap")]
+use crate::{config::ImapConfig, imap};
+#[cfg(feature = "jmap")]
+use crate::{config::JmapConfig, jmap};
 
 /// Validate the account configuration.
 ///
@@ -26,7 +37,7 @@ pub struct CheckCommand;
 impl CheckCommand {
     pub fn execute(
         self,
-        printer: &mut impl pimalaya_cli::printer::Printer,
+        printer: &mut impl Printer,
         config_paths: &[PathBuf],
         account_name: Option<&str>,
         backend: Backend,
@@ -35,7 +46,7 @@ impl CheckCommand {
 
         let (name, account_config) = config
             .take_account(account_name)?
-            .ok_or_else(|| anyhow::anyhow!("Cannot find account"))?;
+            .ok_or_else(|| anyhow!("Cannot find account"))?;
 
         let mut report = CheckReport {
             account: name,
@@ -105,23 +116,23 @@ impl CheckCommand {
 }
 
 #[cfg(feature = "imap")]
-fn check_imap(imap_config: crate::config::ImapConfig) -> BackendCheck {
+fn check_imap(imap_config: ImapConfig) -> BackendCheck {
     // NOTE: opening the session is the check: it runs the same
     // transport, greeting and authentication a watch would.
-    let result = crate::imap::open(&imap_config).map(|_| ());
+    let result = imap::open(&imap_config).map(|_| ());
 
     BackendCheck::from("imap", result)
 }
 
 #[cfg(feature = "jmap")]
-fn check_jmap(jmap_config: crate::config::JmapConfig) -> BackendCheck {
-    let result = crate::jmap::open(&jmap_config).map(|_| ());
+fn check_jmap(jmap_config: JmapConfig) -> BackendCheck {
+    let result = jmap::open(&jmap_config).map(|_| ());
 
     BackendCheck::from("jmap", result)
 }
 
 #[cfg(feature = "maildir")]
-fn check_maildir(maildir_config: crate::config::MaildirConfig) -> BackendCheck {
+fn check_maildir(maildir_config: MaildirConfig) -> BackendCheck {
     let result = (|| -> Result<()> {
         if !maildir_config.root.is_dir() {
             bail!(
@@ -136,16 +147,12 @@ fn check_maildir(maildir_config: crate::config::MaildirConfig) -> BackendCheck {
 }
 
 #[cfg(feature = "dav")]
-fn check_dav(
-    backend: &'static str,
-    server: crate::config::DavServer<'_>,
-    collection: &str,
-) -> BackendCheck {
+fn check_dav(backend: &'static str, server: DavServer<'_>, collection: &str) -> BackendCheck {
     // NOTE: opening proves the transport, and one report proves the
     // credential and that the collection is really there, which is
     // what a watch would find out on its first poll.
-    let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let result = crate::dav::probe(server, collection, &shutdown);
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let result = dav::probe(server, collection, &shutdown);
 
     BackendCheck::from(backend, result)
 }

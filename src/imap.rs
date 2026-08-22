@@ -17,6 +17,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc::RecvTimeoutError,
     },
     time::Duration,
 };
@@ -34,6 +35,7 @@ use io_imap::{
         core::NString,
         envelope::Address,
         fetch::{MacroOrMessageDataItemNames, MessageDataItem, MessageDataItemName},
+        flag::Flag,
         mailbox::Mailbox,
         response::Capability,
         sequence::SequenceSet,
@@ -165,8 +167,6 @@ fn drain(
     shutdown: &Arc<AtomicBool>,
     on_event: &mut impl FnMut(WatchEvent),
 ) -> Result<()> {
-    use std::sync::mpsc::RecvTimeoutError;
-
     while !shutdown.load(Ordering::SeqCst) {
         match stream.recv_timeout(POLL_TICK) {
             Ok(Ok(event)) => {
@@ -217,7 +217,7 @@ fn translate(event: ImapMailboxWatchEvent) -> Vec<WatchEvent> {
 }
 
 /// Renders IMAP flags as the strings a hook filter matches against.
-fn render_flags(flags: &[io_imap::types::flag::Flag<'static>]) -> BTreeSet<String> {
+fn render_flags(flags: &[Flag<'static>]) -> BTreeSet<String> {
     flags.iter().map(|flag| flag.to_string()).collect()
 }
 
