@@ -400,8 +400,8 @@ mod tests {
         let notify = notified("$flag");
         validate(
             Some(&notify),
-            Vocabulary::item("collection"),
-            "dav.hook.on-item-added",
+            Vocabulary::item("calendar"),
+            "caldav.hook.on-event-added",
         )
         .expect_err("an item hook has no flag");
     }
@@ -413,8 +413,8 @@ mod tests {
         let notify = notified("${subject:no subject}");
         validate(
             Some(&notify),
-            Vocabulary::item("collection"),
-            "dav.hook.on-item-removed",
+            Vocabulary::item("addressbook"),
+            "carddav.hook.on-card-removed",
         )
         .expect("a default is enough");
     }

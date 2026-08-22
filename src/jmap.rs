@@ -41,7 +41,7 @@ use url::Url;
 
 use crate::{
     config::{JmapAuthConfig, JmapConfig},
-    event::{WatchDomain, WatchEvent},
+    event::{ItemSummary, WatchDomain, WatchEvent},
 };
 
 /// How long the watch waits between two polls.
@@ -116,8 +116,9 @@ pub fn watch_poll(
     config: &JmapConfig,
     collection: &str,
     interval: Option<Duration>,
+    resolve: bool,
     shutdown: &Arc<AtomicBool>,
-    mut on_event: impl FnMut(WatchEvent),
+    mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let interval = interval.unwrap_or(POLL_INTERVAL);
     let (mut client, mailbox_id, mut known, mut state) = arm(config, collection)?;
@@ -127,13 +128,31 @@ pub fn watch_poll(
             break;
         }
 
-        round(
+        // NOTE: the connection slept as long as the interval, which a
+        // server is free to have found long enough to close, so a
+        // round that fails is given a fresh one before the session is
+        // given up.
+        let outcome = round(
             &mut client,
             &mailbox_id,
             &mut known,
             &mut state,
+            resolve,
             &mut on_event,
-        )?;
+        );
+
+        if let Err(err) = outcome {
+            debug!("jmap round failed, reconnecting: {err:#}");
+            reconnect(&mut client, config)?;
+            round(
+                &mut client,
+                &mailbox_id,
+                &mut known,
+                &mut state,
+                resolve,
+                &mut on_event,
+            )?;
+        }
     }
 
     Ok(())
@@ -143,21 +162,26 @@ pub fn watch_poll(
 /// is set.
 ///
 /// The server is asked to close the stream after the first state
-/// change (RFC 8620 §7.3 `closeafter=state`), which frees the socket
-/// for the `Email/changes` round that follows and leaves the loop
+/// change (RFC 8620 §7.3 `closeafter=state`), which leaves the loop
 /// looking like an IMAP IDLE: subscribe, wait, read what moved,
 /// subscribe again.
+///
+/// The subscription holds its own connection, since the one it holds
+/// is the one the server closes: reading the stream over the client's
+/// connection would leave every `Email/changes` after a change writing
+/// into a socket the server had just hung up.
 pub fn watch_push(
     config: &JmapConfig,
     collection: &str,
     ping: u64,
+    resolve: bool,
     shutdown: &Arc<AtomicBool>,
-    mut on_event: impl FnMut(WatchEvent),
+    mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let (mut client, mailbox_id, mut known, mut state) = arm(config, collection)?;
 
     while !shutdown.load(Ordering::SeqCst) {
-        if !subscribe(&mut client, ping, shutdown)? {
+        if !subscribe(&mut client, config, ping, shutdown)? {
             continue;
         }
 
@@ -166,9 +190,23 @@ pub fn watch_push(
             &mailbox_id,
             &mut known,
             &mut state,
+            resolve,
             &mut on_event,
         )?;
     }
+
+    Ok(())
+}
+
+/// Dials a fresh connection for `client`, keeping the session it has
+/// already read.
+///
+/// The session is what the API URL and the account id come from, and
+/// it does not move when the transport does, so it is not read again.
+fn reconnect(client: &mut JmapClientStd, config: &JmapConfig) -> Result<()> {
+    let (fresh, _url) = open(config)?;
+    client.set_stream(fresh.stream);
+    debug!("reconnected the jmap client");
 
     Ok(())
 }
@@ -196,7 +234,8 @@ fn round(
     mailbox_id: &str,
     known: &mut Known,
     state: &mut String,
-    on_event: &mut impl FnMut(WatchEvent),
+    resolve: bool,
+    on_event: &mut impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let changes = client
         .email_changes(state.clone(), Default::default())
@@ -208,15 +247,6 @@ fn round(
 
     trace!("jmap changes: {changes:?}");
 
-    for id in &changes.destroyed {
-        if known.remove(id).is_some() {
-            on_event(WatchEvent::ItemRemoved {
-                domain: WatchDomain::Message,
-                id: id.clone(),
-            });
-        }
-    }
-
     let touched: Vec<String> = changes
         .created
         .iter()
@@ -224,21 +254,79 @@ fn round(
         .cloned()
         .collect();
 
-    if !touched.is_empty() {
-        let fetched = client
-            .email_get(touched, get_options(true))
-            .context("cannot resolve changed emails")?;
+    // NOTE: nothing is reported until every request the round makes
+    // has answered, so a round that fails part way leaves the state
+    // and the picture where they were and can simply be run again.
+    let mut reported = Vec::new();
 
-        for email in fetched.emails {
-            for event in reconcile(known, mailbox_id, email) {
-                on_event(event);
-            }
+    for id in &changes.destroyed {
+        if known.contains_key(id) {
+            reported.push((
+                WatchEvent::ItemRemoved {
+                    domain: WatchDomain::Message,
+                    id: id.clone(),
+                },
+                None,
+            ));
         }
+    }
+
+    let fetched = if touched.is_empty() {
+        Vec::new()
+    } else {
+        client
+            .email_get(touched, get_options(resolve))
+            .context("cannot resolve changed emails")?
+            .emails
+    };
+
+    for id in &changes.destroyed {
+        known.remove(id);
+    }
+
+    for email in fetched {
+        // NOTE: the envelope rides the same response the reconciliation
+        // reads, so an arrival costs no second request and a backend
+        // that already knows what arrived says so.
+        let summary = resolve.then(|| summarize(&email));
+
+        for event in reconcile(known, mailbox_id, email) {
+            let summary = matches!(event, WatchEvent::ItemAdded { .. })
+                .then(|| summary.clone())
+                .flatten();
+            reported.push((event, summary));
+        }
+    }
+
+    for (event, summary) in reported {
+        on_event(event, summary);
     }
 
     *state = changes.new_state;
 
     Ok(())
+}
+
+/// Folds an `Email/get` result into what an arrival hook templates
+/// against.
+fn summarize(email: &JmapEmail) -> ItemSummary {
+    let mut summary = ItemSummary {
+        subject: email.subject.clone(),
+        date: email.received_at.clone(),
+        ..Default::default()
+    };
+
+    if let Some(from) = email.from.as_ref().and_then(|from| from.first()) {
+        summary.from_name = from.name.clone();
+        summary.from_addr = Some(from.email.clone());
+    }
+
+    if let Some(to) = email.to.as_ref().and_then(|to| to.first()) {
+        summary.to_name = to.name.clone();
+        summary.to_addr = Some(to.email.clone());
+    }
+
+    summary
 }
 
 /// Holds an EventSource subscription until the server reports a state
@@ -247,7 +335,12 @@ fn round(
 /// A frame with an empty `changed` map is the server's keep-alive, and
 /// a read that times out is the wakeup this loop arms to look at the
 /// shutdown flag: neither is news.
-fn subscribe(client: &mut JmapClientStd, ping: u64, shutdown: &Arc<AtomicBool>) -> Result<bool> {
+fn subscribe(
+    client: &mut JmapClientStd,
+    config: &JmapConfig,
+    ping: u64,
+    shutdown: &Arc<AtomicBool>,
+) -> Result<bool> {
     let session = client
         .session()
         .ok_or_else(|| anyhow!("the JMAP session was not read"))?;
@@ -260,6 +353,10 @@ fn subscribe(client: &mut JmapClientStd, ping: u64, shutdown: &Arc<AtomicBool>) 
         shutdown.clone(),
     )?;
 
+    // NOTE: the subscription is what the server hangs up on, so it is
+    // held on a connection of its own and the client's is left for the
+    // round that follows to use.
+    let (mut stream, _url) = open(config)?;
     let mut buf = [0u8; READ_BUF];
     let mut arg: Option<Vec<u8>> = None;
     let mut changed = false;
@@ -277,7 +374,7 @@ fn subscribe(client: &mut JmapClientStd, ping: u64, shutdown: &Arc<AtomicBool>) 
                     return Ok(false);
                 }
 
-                match client.stream.read(&mut buf) {
+                match stream.stream.read(&mut buf) {
                     Ok(0) => return Ok(changed),
                     Ok(read) => arg = Some(buf[..read].to_vec()),
                     Err(err) if is_timeout(&err) => continue,
@@ -285,7 +382,7 @@ fn subscribe(client: &mut JmapClientStd, ping: u64, shutdown: &Arc<AtomicBool>) 
                 }
             }
             JmapCoroutineState::Yielded(JmapEventSourceYield::WantsWrite(bytes)) => {
-                client.stream.write_all(&bytes).context("write failed")?;
+                stream.stream.write_all(&bytes).context("write failed")?;
             }
             JmapCoroutineState::Complete(Ok(())) => return Ok(changed),
             JmapCoroutineState::Complete(Err(err)) => return Err(err.into()),
@@ -416,12 +513,22 @@ fn resolve_mailbox(client: &mut JmapClientStd, mailbox: &str) -> Result<String> 
 
 /// The `Email/get` properties each call needs: ids only for a state
 /// probe, plus what a change is judged against otherwise.
-fn get_options(resolving: bool) -> JmapEmailGetOptions {
-    let mut properties = vec![JmapEmailProperty::Id];
+fn get_options(envelope: bool) -> JmapEmailGetOptions {
+    let mut properties = vec![
+        JmapEmailProperty::Id,
+        JmapEmailProperty::MailboxIds,
+        JmapEmailProperty::Keywords,
+    ];
 
-    if resolving {
-        properties.push(JmapEmailProperty::MailboxIds);
-        properties.push(JmapEmailProperty::Keywords);
+    // NOTE: the envelope is asked for only when a hook consumes one,
+    // the same rule IMAP resolves an arrival under, except that here
+    // it costs properties on a request already being made rather than
+    // a second connection.
+    if envelope {
+        properties.push(JmapEmailProperty::Subject);
+        properties.push(JmapEmailProperty::ReceivedAt);
+        properties.push(JmapEmailProperty::From);
+        properties.push(JmapEmailProperty::To);
     }
 
     JmapEmailGetOptions {
@@ -472,3 +579,58 @@ fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
 /// What the watch knows of the collection: a message id to its
 /// keywords.
 type Known = BTreeMap<String, BTreeSet<String>>;
+
+#[cfg(test)]
+mod tests {
+    use io_jmap::rfc8621::email::JmapEmailAddress;
+
+    use crate::jmap::*;
+
+    /// The envelope a hook templates against comes out of the same
+    /// response the reconciliation reads, so an arrival costs no
+    /// second request.
+    #[test]
+    fn an_envelope_is_read_from_the_round_s_own_response() {
+        let email = JmapEmail {
+            id: Some(String::from("M1")),
+            subject: Some(String::from("Investment Funding")),
+            received_at: Some(String::from("2026-08-22T12:58:23Z")),
+            from: Some(vec![JmapEmailAddress {
+                name: Some(String::from("Robert Daniels")),
+                email: String::from("robert@example.org"),
+            }]),
+            to: Some(vec![JmapEmailAddress {
+                name: None,
+                email: String::from("alice@example.org"),
+            }]),
+            ..Default::default()
+        };
+
+        let summary = summarize(&email);
+        assert_eq!(Some(String::from("Investment Funding")), summary.subject);
+        assert_eq!(Some(String::from("2026-08-22T12:58:23Z")), summary.date);
+        assert_eq!(Some(String::from("Robert Daniels")), summary.from_name);
+        assert_eq!(Some(String::from("robert@example.org")), summary.from_addr);
+        // NOTE: a recipient with no personal name still has an address,
+        // which is what the combined `$recipient` falls back to.
+        assert_eq!(None, summary.to_name);
+        assert_eq!(Some(String::from("alice@example.org")), summary.to_addr);
+    }
+
+    /// An arrival on an account with no arrival hook is not resolved,
+    /// so the envelope properties are not even asked for.
+    #[test]
+    fn the_envelope_is_asked_for_only_when_a_hook_wants_it() {
+        // NOTE: JmapEmailProperty carries no PartialEq, so the list is
+        // read as it renders.
+        let bare = format!("{:?}", get_options(false).properties);
+        assert!(!bare.contains("Subject"), "got {bare}");
+        assert!(bare.contains("MailboxIds"), "got {bare}");
+
+        let resolved = format!("{:?}", get_options(true).properties);
+        assert!(resolved.contains("Subject"), "got {resolved}");
+        assert!(resolved.contains("From"), "got {resolved}");
+        assert!(resolved.contains("To"), "got {resolved}");
+        assert!(resolved.contains("ReceivedAt"), "got {resolved}");
+    }
+}

@@ -5,9 +5,9 @@
 //! pin the active backend to that protocol and bail when the account
 //! has no matching config block.
 //!
-//! CalDAV, CardDAV and plain WebDAV are three names rather than one,
-//! since what a collection holds is what its events are called, and a
-//! backend that names its domain can refuse the hooks of another.
+//! CalDAV and CardDAV are two names rather than one, since what a
+//! collection holds is what its events are called, and a backend that
+//! names its domain can refuse the hooks of another.
 //!
 //! [himalaya CLI's `Backend`]: https://github.com/pimalaya/himalaya/blob/master/src/backend.rs
 
@@ -20,7 +20,7 @@ use clap::Parser;
 #[derive(Clone, Copy, Debug, Default, Parser, PartialEq, Eq)]
 pub enum Backend {
     /// First configured block wins (priority: IMAP, JMAP, Maildir,
-    /// CalDAV, CardDAV, DAV).
+    /// CalDAV, CardDAV).
     #[default]
     Auto,
     /// Force IMAP; bail when the account has no `imap` block.
@@ -33,8 +33,6 @@ pub enum Backend {
     Caldav,
     /// Force CardDAV; bail when the account has no `carddav` block.
     Carddav,
-    /// Force plain WebDAV; bail when the account has no `dav` block.
-    Dav,
 }
 
 #[allow(unused)]
@@ -58,10 +56,6 @@ impl Backend {
     pub fn allows_carddav(self) -> bool {
         matches!(self, Self::Auto | Self::Carddav)
     }
-
-    pub fn allows_dav(self) -> bool {
-        matches!(self, Self::Auto | Self::Dav)
-    }
 }
 
 impl FromStr for Backend {
@@ -75,7 +69,6 @@ impl FromStr for Backend {
             "maildir" => Ok(Self::Maildir),
             "caldav" => Ok(Self::Caldav),
             "carddav" => Ok(Self::Carddav),
-            "dav" => Ok(Self::Dav),
             backend => bail!("Invalid backend {backend}"),
         }
     }
@@ -90,7 +83,6 @@ impl fmt::Display for Backend {
             Self::Maildir => write!(f, "maildir"),
             Self::Caldav => write!(f, "caldav"),
             Self::Carddav => write!(f, "carddav"),
-            Self::Dav => write!(f, "dav"),
         }
     }
 }

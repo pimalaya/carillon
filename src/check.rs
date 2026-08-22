@@ -96,17 +96,6 @@ impl CheckCommand {
             ));
         }
 
-        #[cfg(feature = "dav")]
-        if backend.allows_dav()
-            && let Some(dav_config) = account_config.dav.clone()
-        {
-            report.backends.push(check_dav(
-                "dav",
-                dav_config.server(),
-                &dav_config.collection,
-            ));
-        }
-
         if report.backends.is_empty() {
             bail!("No backend matching `{backend}` is configured for this account");
         }

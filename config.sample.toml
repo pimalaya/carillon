@@ -27,22 +27,22 @@ default = true
 # Backend config
 # --------------------------------------------------------------------------------
 
-# Declare one or more of the `imap`, `jmap`, `maildir`, `caldav`, `carddav` and
-# `dav` blocks below. With more than one, `-b/--backend` selects the active one;
+# Declare one or more of the `imap`, `jmap`, `maildir`, `caldav` and `carddav`
+# blocks below. With more than one, `-b/--backend` selects the active one;
 # `-b auto`, the default, takes the first configured in that order.
 #
 # Each block carries the one collection it watches, under the name its own
 # domain uses and required: `imap.mailbox`, `jmap.mailbox`, `maildir.mailbox`,
-# `caldav.calendar`, `carddav.addressbook`, `dav.collection`. One account is one
+# `caldav.calendar` and `carddav.addressbook`. One account is one
 # backend is one collection; watching a second is a second account, which is also
 # how it gets its own hooks.
 #
 # Each block also carries the hooks that backend fires, under `<backend>.hook`
 # (`hooks` also reads). A hook is named after what its backend holds, so mail
-# fires `on-message-*`, an addressbook `on-card-*`, a calendar `on-event-*` and
-# `on-task-*`, and an untyped collection `on-item-*`. A backend takes only its
-# own names, and only the events its protocol can express, so anything else is
-# refused when this file is read rather than staying quiet forever.
+# fires `on-message-*`, an addressbook `on-card-*`, and a calendar `on-event-*`
+# and `on-task-*`. A backend takes only its own names, and only the events its
+# protocol can express, so anything else is refused when this file is read
+# rather than staying quiet forever.
 #
 # Every hook fires a `notify` desktop notification, a `cmd`, or both. `cmd` is
 # either a string handed to the platform shell (/bin/sh -c on Unix, cmd /C on
@@ -50,13 +50,13 @@ default = true
 # placeholders reach it as environment variables.
 #
 # A hook templates against $id and against the collection under the same name
-# its backend configures it: $mailbox for mail, $calendar, $addressbook,
-# $collection. $id is the backend's own id: an IMAP UID, a JMAP Email id, a
-# Maildir file name, a WebDAV href. A flag hook adds $flag, naming the one flag
-# that moved. The envelope variables ($subject, $date, $sender, $sender_name,
-# $sender_address, $recipient, $recipient_name, $recipient_address) are resolved
-# on a second connection, over IMAP only, and only for on-message-added, so they
-# belong to that hook alone.
+# its backend configures it: $mailbox for mail, $calendar, $addressbook. $id is
+# the backend's own id: an IMAP UID, a JMAP Email id, a Maildir file name, a
+# WebDAV href. A flag hook adds $flag, naming the one flag that moved. The
+# envelope variables ($subject, $date, $sender, $sender_name, $sender_address,
+# $recipient, $recipient_name, $recipient_address) belong to the on-message-added
+# hook of IMAP and JMAP alone, those being the two that can read one: IMAP on a
+# second connection, JMAP from the request its poll already makes.
 #
 # A notification naming anything else is refused when this file is read, since
 # an expunged message has no envelope to read and a template that asks for one
@@ -166,8 +166,11 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #jmap.watch.poll.interval = 60
 
 
-# Same events as IMAP, JMAP keywords arriving under the same flag names.
-#jmap.hook.on-message-added.notify.summary = "New mail from $sender"
+# Same events as IMAP, JMAP keywords arriving under the same flag names. The
+# envelope is read from the request the poll already makes, so an arrival hook
+# names $subject and $sender at no extra cost.
+#jmap.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
+#jmap.hook.on-message-added.notify.body = "$subject"
 #jmap.hook.on-message-removed.cmd = "true"
 #jmap.hook.on-flag-added.flags = ["Seen"]
 #jmap.hook.on-flag-removed.cmd = "true"
@@ -240,15 +243,3 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #carddav.hook.on-card-changed.cmd = "true"
 #carddav.hook.on-card-removed.cmd = "true"
 
-# ---- WebDAV: the same poll over a collection naming no domain ------------------
-
-# For a collection that is neither a calendar nor an addressbook, whose members
-# are items because nothing better can be said about them.
-#dav.collection = "files/alice/shared/"
-#dav.server = "https://dav.example.org/"
-#dav.auth.basic.username = "alice"
-#dav.auth.basic.password.command = "pass show dav/example"
-#dav.watch.poll.interval = 60
-#dav.hook.on-item-added.notify.summary = "$id arrived"
-#dav.hook.on-item-changed.cmd = "true"
-#dav.hook.on-item-removed.cmd = "true"

@@ -137,9 +137,6 @@ pub struct AccountConfig {
     #[cfg(feature = "dav")]
     #[serde(default)]
     pub carddav: Option<CarddavConfig>,
-    #[cfg(feature = "dav")]
-    #[serde(default)]
-    pub dav: Option<DavConfig>,
 }
 
 impl AccountConfig {
@@ -170,11 +167,6 @@ impl AccountConfig {
         #[cfg(feature = "dav")]
         if let Some(carddav) = &self.carddav {
             carddav.hook.validate()?;
-        }
-
-        #[cfg(feature = "dav")]
-        if let Some(dav) = &self.dav {
-            dav.hook.validate()?;
         }
 
         Ok(())
@@ -614,19 +606,6 @@ impl CarddavConfig {
     }
 }
 
-#[cfg(feature = "dav")]
-impl DavConfig {
-    /// What a collection with no domain to name is called.
-    pub const COLLECTION: &'static str = "collection";
-
-    /// The collection this backend watches, under its own name.
-    pub fn collection(&self) -> HookCollection<'_> {
-        HookCollection {
-            name: Self::COLLECTION,
-            value: &self.collection,
-        }
-    }
-}
 // ---- Hooks --------------------------------------------------------
 
 // NOTE: the hooks live under their backend, and each backend declares
@@ -710,19 +689,6 @@ pub struct CarddavHookConfig {
     pub on_card_removed: Option<ItemHook>,
     /// Fires when a vCard is edited where it stands.
     pub on_card_changed: Option<ItemHook>,
-}
-
-/// Hooks a plain DAV watch fires, over a collection naming no domain.
-#[cfg(feature = "dav")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct DavHookConfig {
-    /// Fires when a member appears in the watched collection.
-    pub on_item_added: Option<ItemHook>,
-    /// Fires when a member leaves it.
-    pub on_item_removed: Option<ItemHook>,
-    /// Fires when a member is edited where it stands.
-    pub on_item_changed: Option<ItemHook>,
 }
 
 /// The hook one event resolved to, in whichever of the two shapes a
@@ -863,21 +829,6 @@ impl CarddavHookConfig {
     }
 }
 
-#[cfg(feature = "dav")]
-impl DavHookConfig {
-    /// The hook `event` calls for, when one is configured.
-    pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
-        let hook = match event {
-            WatchEvent::ItemAdded { .. } => &self.on_item_added,
-            WatchEvent::ItemRemoved { .. } => &self.on_item_removed,
-            WatchEvent::ItemChanged { .. } => &self.on_item_changed,
-            _ => return None,
-        };
-
-        hook.as_ref().map(Hook::Item)
-    }
-}
-
 #[cfg(feature = "imap")]
 impl ImapHookConfig {
     /// Refuses a notification naming what its event cannot fill.
@@ -917,12 +868,15 @@ impl ImapHookConfig {
 #[cfg(feature = "jmap")]
 impl JmapHookConfig {
     /// Refuses a notification naming what its event cannot fill.
+    ///
+    /// JMAP reads an envelope, from the request its round already
+    /// makes, so its arrival hook may name one.
     pub fn validate(&self) -> Result<()> {
         hook::validate(
             self.on_message_added
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            Vocabulary::item(Self::COLLECTION),
+            Vocabulary::resolved(Self::COLLECTION),
             "jmap.hook.on-message-added",
         )?;
         hook::validate(
@@ -1018,27 +972,6 @@ impl CarddavHookConfig {
                 notify,
                 Vocabulary::item(CarddavConfig::COLLECTION),
                 &format!("carddav.hook.{name}"),
-            )?;
-        }
-
-        Ok(())
-    }
-}
-
-#[cfg(feature = "dav")]
-impl DavHookConfig {
-    /// Refuses a notification naming what its event cannot fill.
-    pub fn validate(&self) -> Result<()> {
-        for (hook, name) in [
-            (&self.on_item_added, "on-item-added"),
-            (&self.on_item_removed, "on-item-removed"),
-            (&self.on_item_changed, "on-item-changed"),
-        ] {
-            let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
-            hook::validate(
-                notify,
-                Vocabulary::item(DavConfig::COLLECTION),
-                &format!("dav.hook.{name}"),
             )?;
         }
 
@@ -1168,33 +1101,6 @@ pub struct CarddavConfig {
     pub hook: CarddavHookConfig,
 }
 
-/// Plain WebDAV configuration: a collection that names no domain, whose
-/// members are items.
-#[cfg(feature = "dav")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct DavConfig {
-    /// The collection this account watches, read as a path under
-    /// `server`, or as an absolute path when it starts with a slash.
-    pub collection: String,
-
-    /// The DAV server URL, `http://` or `https://`, naming the DAV
-    /// root the collection hangs under.
-    pub server: String,
-    #[serde(default)]
-    pub tls: TlsConfig,
-    /// Authentication. Defaults to none, for a collection that is
-    /// readable without it.
-    #[serde(default)]
-    pub auth: DavAuthConfig,
-    /// How this account learns about a change. Unset polls.
-    #[serde(default)]
-    pub watch: Option<DavWatchConfig>,
-    /// The hooks this backend fires.
-    #[serde(default, alias = "hooks")]
-    pub hook: DavHookConfig,
-}
-
 /// The transport half of a DAV backend, which a calendar, an
 /// addressbook and a plain collection share.
 #[cfg(feature = "dav")]
@@ -1218,18 +1124,6 @@ impl CaldavConfig {
 
 #[cfg(feature = "dav")]
 impl CarddavConfig {
-    /// What it takes to open a connection to this server.
-    pub fn server(&self) -> DavServer<'_> {
-        DavServer {
-            server: &self.server,
-            tls: &self.tls,
-            auth: &self.auth,
-        }
-    }
-}
-
-#[cfg(feature = "dav")]
-impl DavConfig {
     /// What it takes to open a connection to this server.
     pub fn server(&self) -> DavServer<'_> {
         DavServer {

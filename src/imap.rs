@@ -112,7 +112,7 @@ pub fn watch_idle(
     collection: &str,
     timeout: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
-    on_event: impl FnMut(WatchEvent),
+    on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     watch(config, collection, timeout, None, shutdown, on_event)
 }
@@ -128,7 +128,7 @@ pub fn watch_poll(
     collection: &str,
     interval: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
-    on_event: impl FnMut(WatchEvent),
+    on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let interval = interval.unwrap_or(POLL_INTERVAL);
 
@@ -141,7 +141,7 @@ fn watch(
     idle_timeout: Option<Duration>,
     poll: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
-    mut on_event: impl FnMut(WatchEvent),
+    mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let (client, capability) = open(config)?;
     let watched = Mailbox::try_from(collection.to_string())
@@ -165,13 +165,13 @@ fn watch(
 fn drain(
     stream: &ImapMailboxWatchStream,
     shutdown: &Arc<AtomicBool>,
-    on_event: &mut impl FnMut(WatchEvent),
+    on_event: &mut impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     while !shutdown.load(Ordering::SeqCst) {
         match stream.recv_timeout(POLL_TICK) {
             Ok(Ok(event)) => {
                 for event in translate(event) {
-                    on_event(event);
+                    on_event(event, None);
                 }
             }
             Ok(Err(err)) => return Err(err).context("imap watch failed"),

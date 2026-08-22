@@ -18,7 +18,12 @@ use std::{
 use anyhow::{Result, bail};
 use log::{debug, info, warn};
 
-use crate::{backend::Backend, config::AccountConfig, event::WatchEvent, hook};
+use crate::{
+    backend::Backend,
+    config::AccountConfig,
+    event::{ItemSummary, WatchEvent},
+    hook,
+};
 #[cfg(feature = "dav")]
 use crate::{
     config::DavWatchConfig,
@@ -29,7 +34,6 @@ use crate::{config::MaildirWatchConfig, maildir};
 #[cfg(feature = "imap")]
 use crate::{
     config::{IdleWatchConfig, ImapWatchConfig},
-    event::ItemSummary,
     imap::{self, Resolver},
 };
 #[cfg(feature = "jmap")]
@@ -110,12 +114,14 @@ fn watch_once(
         if let Some(imap_config) = &config.imap {
             let collection = imap_config.collection();
             let mut resolver = Resolver::new(imap_config, collection.value, shutdown);
-            let mut on_event = |event: WatchEvent| {
+            let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
                 let Some(hook) = imap_config.hook.get(&event) else {
                     return;
                 };
 
-                let summary = resolve_added(account, &event, &mut resolver);
+                // NOTE: an IMAP delta names a UID and nothing else, so
+                // what the hook wants is read on a second connection.
+                let summary = summary.or_else(|| resolve_added(account, &event, &mut resolver));
                 hook::run(hook, &event, imap_config.collection(), summary.as_ref());
             };
 
@@ -163,9 +169,10 @@ fn watch_once(
     if backend.allows_jmap() {
         if let Some(jmap_config) = &config.jmap {
             let collection = jmap_config.collection();
-            let mut on_event = |event: WatchEvent| {
+            let resolve = jmap_config.hook.on_message_added.is_some();
+            let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
                 if let Some(hook) = jmap_config.hook.get(&event) {
-                    hook::run(hook, &event, jmap_config.collection(), None);
+                    hook::run(hook, &event, jmap_config.collection(), summary.as_ref());
                 }
             };
 
@@ -179,6 +186,7 @@ fn watch_once(
                         jmap_config,
                         collection.value,
                         poll.interval(),
+                        resolve,
                         shutdown,
                         &mut on_event,
                     )
@@ -192,7 +200,14 @@ fn watch_once(
                         "[{account}] watching `{}` over jmap, pushed",
                         collection.value
                     );
-                    jmap::watch_push(jmap_config, collection.value, ping, shutdown, &mut on_event)
+                    jmap::watch_push(
+                        jmap_config,
+                        collection.value,
+                        ping,
+                        resolve,
+                        shutdown,
+                        &mut on_event,
+                    )
                 }
             };
         }
@@ -215,7 +230,7 @@ fn watch_once(
                 "[{account}] watching `{}` over maildir, polling",
                 collection.value
             );
-            let mut on_event = |event: WatchEvent| {
+            let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
                 if let Some(hook) = maildir_config.hook.get(&event) {
                     hook::run(hook, &event, maildir_config.collection(), None);
                 }
@@ -242,7 +257,7 @@ fn watch_once(
                 "[{account}] watching `{}` over caldav, polling",
                 collection.value
             );
-            let mut on_event = |event: WatchEvent| {
+            let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
                 if let Some(hook) = caldav_config.hook.get(&event) {
                     hook::run(hook, &event, caldav_config.collection(), None);
                 }
@@ -270,7 +285,7 @@ fn watch_once(
                 "[{account}] watching `{}` over carddav, polling",
                 collection.value
             );
-            let mut on_event = |event: WatchEvent| {
+            let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
                 if let Some(hook) = carddav_config.hook.get(&event) {
                     hook::run(hook, &event, carddav_config.collection(), None);
                 }
@@ -290,37 +305,9 @@ fn watch_once(
         }
     }
 
-    #[cfg(feature = "dav")]
-    if backend.allows_dav() {
-        if let Some(dav_config) = &config.dav {
-            let collection = dav_config.collection();
-            info!(
-                "[{account}] watching `{}` over dav, polling",
-                collection.value
-            );
-            let mut on_event = |event: WatchEvent| {
-                if let Some(hook) = dav_config.hook.get(&event) {
-                    hook::run(hook, &event, dav_config.collection(), None);
-                }
-            };
-            return dav::watch(
-                dav_config.server(),
-                DavKind::Plain,
-                collection.value,
-                dav_interval(&dav_config.watch),
-                shutdown,
-                &mut on_event,
-            );
-        }
-
-        if backend == Backend::Dav {
-            bail!("account has no `dav` config block");
-        }
-    }
-
     bail!(
         "account has no usable backend block (expected one of `imap`, `jmap`, `maildir`, \
-         `caldav`, `carddav`, `dav`); use `-b/--backend` to pin a specific one"
+         `caldav`, `carddav`); use `-b/--backend` to pin a specific one"
     )
 }
 

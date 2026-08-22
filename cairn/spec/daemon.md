@@ -13,7 +13,7 @@ It watches; it never syncs. A change is reported as it is seen (an item arrived,
 Each backend brings its own way of learning about a change, and the daemon translates all of them into one vocabulary, so one hook runner serves them all: IMAP holds IDLE and reports UID-keyed deltas, JMAP polls `Email/changes`, Maildir re-lists the mailbox, and the DAV backends report what a collection did since a sync token. Mail is not the boundary: CalDAV holds events and tasks and CardDAV holds cards, and each is configured and named for what it holds rather than reduced to a word true of everything. The protocol crates own the protocols (io-imap, io-jmap, io-maildir, io-webdav); this repository owns the config, the hooks and the supervision.
 
 ### Requirement: A watch runs from a TOML file
-The daemon SHALL read its accounts from a TOML config file, resolved from an explicit path then the standard user paths. Each account SHALL carry at least one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `dav`), and each block SHALL carry the collection it watches, how it watches, and the hooks it fires. The account block SHALL keep the shape himalaya CLI and himalaya TUI read, and unknown keys SHALL be ignored there rather than refused, so an account can be recognised across the binaries. A whole file SHALL NOT be claimed to load in all three, since every backend block is strict on both sides and each has keys the other does not know.
+The daemon SHALL read its accounts from a TOML config file, resolved from an explicit path then the standard user paths. Each account SHALL carry at least one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`), and each block SHALL carry the collection it watches, how it watches, and the hooks it fires. The account block SHALL keep the shape himalaya CLI and himalaya TUI read, and unknown keys SHALL be ignored there rather than refused, so an account can be recognised across the binaries. A whole file SHALL NOT be claimed to load in all three, since every backend block is strict on both sides and each has keys the other does not know.
 
 #### Scenario: A local watch from a config file
 - **GIVEN** a config describing one IMAP account with an `imap.mailbox` and an `imap.hook.on-message-added` notify hook
@@ -42,7 +42,7 @@ An account SHALL watch the one collection its backend names, and MAY name the on
 - **THEN** it is a second account, with its own hooks, and no flag exists to ask for it
 
 ### Requirement: The watch method belongs to the backend
-The method SHALL be configured under its backend (`imap.watch`, `jmap.watch`, `maildir.watch`, and `watch` under each of `caldav`, `carddav` and `dav`) and named by its mechanism, the way a SASL mechanism and an HTTP auth scheme already are. Each backend SHALL declare only the methods it has, so a method it does not have is refused when the configuration is read rather than when the watch runs. Unset, an account SHALL watch the best way its backend has: IDLE for IMAP, a held event stream for JMAP, a poll for the backends with nothing else. Every backend SHALL offer the poll, whose interval MAY be given and otherwise takes what suits that backend.
+The method SHALL be configured under its backend (`imap.watch`, `jmap.watch`, `maildir.watch`, and `watch` under each of `caldav` and `carddav`) and named by its mechanism, the way a SASL mechanism and an HTTP auth scheme already are. Each backend SHALL declare only the methods it has, so a method it does not have is refused when the configuration is read rather than when the watch runs. Unset, an account SHALL watch the best way its backend has: IDLE for IMAP, a held event stream for JMAP, a poll for the backends with nothing else. Every backend SHALL offer the poll, whose interval MAY be given and otherwise takes what suits that backend.
 
 #### Scenario: A server whose IDLE cannot be trusted
 - **GIVEN** an IMAP account whose server accepts IDLE and then never speaks
@@ -76,7 +76,7 @@ Every backend SHALL report changes in one vocabulary: an item added, an item rem
 - **THEN** `carddav.hook.on-card-changed` fires, an event no mail backend accepts a hook for
 
 ### Requirement: A WebDAV collection is watchable
-The daemon SHALL watch a WebDAV collection by polling an RFC 6578 `sync-collection` report, under whichever of `caldav`, `carddav` and `dav` names the domain it holds, all three sharing one server, authentication and poll shape. It SHALL request `getetag`, and the content type only where a mixed calendar needs it, so a poll never carries a contact or an event; it SHALL keep an href to etag and domain picture of the collection, so that a member it has never seen reads as an arrival, a known member whose etag moved reads as an edit, and a member that vanished is still reported under the domain it had. A truncated report SHALL be drained immediately rather than at the next interval, and a sync token the server rejects SHALL cause a re-enumeration, which reports nothing because a re-baseline is not news.
+The daemon SHALL watch a WebDAV collection by polling an RFC 6578 `sync-collection` report, under whichever of `caldav` and `carddav` names the domain it holds, both sharing one server, authentication and poll shape. It SHALL request `getetag`, and the content type only where a mixed calendar needs it, so a poll never carries a contact or an event; it SHALL keep an href to etag and domain picture of the collection, so that a member it has never seen reads as an arrival, a known member whose etag moved reads as an edit, and a member that vanished is still reported under the domain it had. A truncated report SHALL be drained immediately rather than at the next interval, and a sync token the server rejects SHALL cause a re-enumeration, which reports nothing because a re-baseline is not news. No backend SHALL watch a collection holding neither calendars nor contacts: the domains that exist have their own backend, and a collection naming none of them has no hook worth firing.
 
 #### Scenario: A contact is edited
 - **GIVEN** a CardDAV account watching an addressbook it has already enumerated
@@ -89,12 +89,17 @@ The daemon SHALL watch a WebDAV collection by polling an RFC 6578 `sync-collecti
 - **THEN** the collection is enumerated again, no event is fired for what was already there, and the watch continues from the fresh token
 
 ### Requirement: Arrivals are resolved only when a hook wants them
-A watch learns that an item arrived, not what it says. The daemon SHALL resolve an arrival into its summary (for mail: subject, sender, recipient, date) only when the active backend configures the arrival hook of that domain, and SHALL do so on a second connection, never the one holding the watch. Only a backend able to read one resolves anything; the others neither resolve nor offer the envelope variables. A resolution failure SHALL degrade to an unresolved event rather than ending the watch.
+A watch learns that an item arrived, and sometimes what it says. A backend SHALL report an arrival together with the summary it already read, and SHALL read one it does not have only when the active backend configures the arrival hook of that domain. JMAP SHALL take its summary from the `Email/get` its round already makes, asking for the envelope properties only when a hook wants them. IMAP SHALL read one on a second connection, never the one holding the watch, an IMAP delta naming a UID and nothing more. A backend that can read no envelope SHALL leave the summary empty, and a resolution failure SHALL degrade to an unresolved event rather than ending the watch.
 
 #### Scenario: An account with no arrival hook
 - **GIVEN** an account whose only hook is `imap.hook.on-flag-added`
 - **WHEN** a message arrives
 - **THEN** no envelope is fetched and no second connection is opened
+
+#### Scenario: A JMAP arrival with an envelope
+- **GIVEN** a JMAP account whose `jmap.hook.on-message-added` notification names `$subject` and `$sender`
+- **WHEN** a message arrives
+- **THEN** both are filled from the round's own `Email/get`, with no second request
 
 ### Requirement: Ctrl+C is prompt on every path
 A requested shutdown SHALL be honoured within roughly a second on every path a watch can be waiting in: idling on a connection, sleeping between polls, backing off before a reconnect, or resolving an arrival's envelope. No path SHALL wait on a server that has stopped answering: every connection the daemon opens SHALL carry a read deadline and SHALL hand back the not-ready failures rather than letting the transport retry them away, since the deadline exists to be the wakeup that re-reads the flag.
@@ -134,7 +139,7 @@ The hooks SHALL be configured under their backend (`imap.hook`, `jmap.hook`, `ma
 - **THEN** no hook fires from the IMAP table, and the Maildir table is what the watch reads
 
 ### Requirement: An event is named after its domain
-A hook SHALL be named after what it carries. Mail SHALL be `on-message-added` and `on-message-removed`, whichever of IMAP, JMAP and Maildir reports it. A CardDAV addressbook SHALL be `on-card-*`, a CalDAV calendar `on-event-*` and `on-task-*`, and a DAV collection with no domain to name SHALL keep `on-item-*`. A backend SHALL take only the domains it holds, so the domain a hook names is checked when the configuration is read rather than assumed while the watch runs. The domain SHALL be carried by the event itself, so that one hook runner still serves every backend.
+A hook SHALL be named after what it carries. Mail SHALL be `on-message-added` and `on-message-removed`, whichever of IMAP, JMAP and Maildir reports it. A CardDAV addressbook SHALL be `on-card-added`, `on-card-removed` and `on-card-changed`, and a CalDAV calendar the same three under `on-event-` and `on-task-`. A backend SHALL take only the domains it holds, so the domain a hook names is checked when the configuration is read rather than assumed while the watch runs. The domain SHALL be carried by the event itself, so that one hook runner still serves every backend.
 
 #### Scenario: A calendar hook on an addressbook
 - **GIVEN** an account configuring `carddav.hook.on-event-added`
@@ -181,7 +186,7 @@ Each hook SHALL declare the variables it can fill, and a notification naming any
 - **THEN** the notification fires with that part empty, rather than being dropped
 
 ### Requirement: The collection belongs to the backend, under its own name
-Each backend SHALL take the one collection it watches, required, under the name its domain uses: `imap.mailbox`, `jmap.mailbox`, `maildir.mailbox`, `caldav.calendar`, `carddav.addressbook` and `dav.collection`, the last being generic because a plain DAV collection has no domain to name. No account-level key SHALL name it, so an account block carries nothing that needs a backend to be understood. A hook SHALL template against the same name its backend configures, `$id` being the one variable every backend means the same way.
+Each backend SHALL take the one collection it watches, required, under the name its domain uses: `imap.mailbox`, `jmap.mailbox`, `maildir.mailbox`, `caldav.calendar` and `carddav.addressbook`. No account-level key SHALL name it, so an account block carries nothing that needs a backend to be understood. A hook SHALL template against the same name its backend configures, `$id` being the one variable every backend means the same way.
 
 #### Scenario: A mail hook naming its mailbox
 - **GIVEN** an account whose `imap.hook.on-message-added` summary reads `New mail in $mailbox`
@@ -192,4 +197,17 @@ Each backend SHALL take the one collection it watches, required, under the name 
 - **GIVEN** an account whose `caldav.hook.on-event-added` summary reads `$mailbox`
 - **WHEN** the configuration is read
 - **THEN** it is refused, since a calendar is configured and templated as `$calendar`
+
+### Requirement: A watch survives the change it reports
+A watch SHALL keep working across the changes it reports. A connection a backend's own protocol closes as part of reporting SHALL be reopened before the next request rather than written into, and a round that fails SHALL be retried once on a fresh connection before the session is given up. A round SHALL advance no state it did not complete, so running it twice reports nothing twice.
+
+#### Scenario: A JMAP event stream that closes after its state change
+- **GIVEN** a JMAP account watching over the event stream, which the server closes after reporting one state change
+- **WHEN** a message arrives
+- **THEN** the round that follows runs on a fresh connection and fires the hook, rather than losing the session and re-baselining the change away
+
+#### Scenario: A polling watch whose idle connection was closed
+- **GIVEN** a JMAP account polling on an interval, whose server closed the connection while it slept
+- **WHEN** the next round runs
+- **THEN** it reconnects and runs again, and the session is given up only if that also fails
 

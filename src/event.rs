@@ -12,8 +12,7 @@
 /// What a change is about, which is the noun its hook is named after.
 ///
 /// A backend fills it from what it holds: mail is always a message, a
-/// CardDAV member a card, a CalDAV member an event or a task, and an
-/// untyped DAV collection an item, having no domain to name.
+/// CardDAV member a card, and a CalDAV member an event or a task.
 // NOTE: which domains exist is the vocabulary's business; which of
 // them can be constructed depends on the backends compiled in, so a
 // reduced feature set leaves some unused by construction.
@@ -28,8 +27,6 @@ pub enum WatchDomain {
     Event,
     /// A VTODO in a CalDAV calendar.
     Task,
-    /// A member of a DAV collection that names no domain.
-    Item,
 }
 
 /// A change in a watched collection, keyed by the backend's own id.

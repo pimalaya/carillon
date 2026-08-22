@@ -1,12 +1,11 @@
 //! WebDAV backend: an RFC 6578 `sync-collection` poll over a DAV
 //! collection, whichever domain it holds.
 //!
-//! CalDAV and CardDAV are WebDAV, so one poll serves all three of
+//! CalDAV and CardDAV are WebDAV, so one poll serves both of
 //! carillon's DAV backends; what differs is what a member is called,
-//! and that is [`DavKind`]. An addressbook holds cards and a plain
-//! collection holds items, both known before the first request. A
-//! calendar holds events, tasks, or both, so it is asked what it
-//! supports when the watch starts.
+//! and that is [`DavKind`]. An addressbook holds cards, known before
+//! the first request. A calendar holds events, tasks, or both, so it
+//! is asked what it supports when the watch starts.
 //!
 //! The report asks for `getetag` only, so a poll carries no vCard and
 //! no VEVENT. It reports created and updated members together, so the
@@ -49,7 +48,7 @@ use url::Url;
 
 use crate::{
     config::{DavAuthConfig, DavServer},
-    event::{WatchDomain, WatchEvent},
+    event::{ItemSummary, WatchDomain, WatchEvent},
 };
 
 /// How long the watch waits between two reports, unless the config
@@ -81,8 +80,6 @@ pub enum DavKind {
     Calendar(Vec<WatchDomain>),
     /// A CardDAV addressbook, whose members are all cards.
     Addressbook,
-    /// A collection naming no domain, whose members are items.
-    Plain,
 }
 
 /// Opens a connection to the configured server.
@@ -145,7 +142,7 @@ pub fn watch(
     collection: &str,
     interval: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
-    mut on_event: impl FnMut(WatchEvent),
+    mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let mut client = open(config)?;
     let collection = path(&client, collection);
@@ -189,7 +186,7 @@ pub fn watch(
                 &mut token,
                 shutdown,
             ) {
-                on_event(event);
+                on_event(event, None);
             }
 
             if !truncated || shutdown.load(Ordering::SeqCst) {
@@ -233,7 +230,6 @@ impl Domains {
     ) -> Result<Self> {
         let wanted = match kind {
             DavKind::Addressbook => return Ok(Self::Fixed(WatchDomain::Card)),
-            DavKind::Plain => return Ok(Self::Fixed(WatchDomain::Item)),
             DavKind::Calendar(wanted) => wanted,
         };
 

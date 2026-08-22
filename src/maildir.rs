@@ -28,7 +28,7 @@ use log::{debug, trace};
 
 use crate::{
     config::MaildirConfig,
-    event::{WatchDomain, WatchEvent},
+    event::{ItemSummary, WatchDomain, WatchEvent},
 };
 
 /// How long the watch sleeps between two listings, unless the config
@@ -47,7 +47,7 @@ pub fn watch(
     collection: &str,
     interval: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
-    mut on_event: impl FnMut(WatchEvent),
+    mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let client = MaildirClient::new(config.root.clone());
     let maildir = resolve(&client, collection)?;
@@ -73,7 +73,7 @@ pub fn watch(
         };
 
         for event in diff(&seen, &current) {
-            on_event(event);
+            on_event(event, None);
         }
 
         seen = current;
