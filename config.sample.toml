@@ -56,11 +56,17 @@ collection = "INBOX"
 # placeholders reach it as environment variables.
 #
 # Always available: $id and $collection. $id is the backend's own id: an IMAP
-# UID, a JMAP Email id, a Maildir file name, a WebDAV href. The envelope
-# variables ($subject, $date, $sender, $sender_name, $sender_address,
-# $recipient, $recipient_name, $recipient_address) are resolved on a second
-# connection, over IMAP only, and only for on-message-added. A flag hook gets
-# $flag instead, naming the one flag that moved.
+# UID, a JMAP Email id, a Maildir file name, a WebDAV href. A flag hook adds
+# $flag, naming the one flag that moved. The envelope variables ($subject,
+# $date, $sender, $sender_name, $sender_address, $recipient, $recipient_name,
+# $recipient_address) are resolved on a second connection, over IMAP only, and
+# only for on-message-added, so they belong to that hook alone.
+#
+# A notification naming anything else is refused when this file is read, since
+# an expunged message has no envelope to read and a template that asks for one
+# would fire nothing. Write `${name:default}` where a hook can do without the
+# value. A variable the hook may use but this one item lacks (a message with no
+# sender, an arrival whose resolution failed) expands to nothing instead.
 #
 # Every secret below is either `raw = "..."` or `command = "..."`, the command
 # being a string handed to the platform shell or a [program, args...] list, and
@@ -125,6 +131,7 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 imap.hook.on-message-added.notify.summary = "New mail from $sender"
 imap.hook.on-message-added.notify.body = "$subject"
 imap.hook.on-message-added.cmd = 'echo "$id arrived" >> ~/.local/state/carillon.log'
+#imap.hook.on-message-removed.notify.summary = "Mail ${subject:with no subject} deleted"
 #imap.hook.on-message-removed.cmd = 'echo "$id left" >> ~/.local/state/carillon.log'
 imap.hook.on-flag-added.flags = ["Seen"]
 imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]

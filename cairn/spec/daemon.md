@@ -19,6 +19,7 @@ The daemon SHALL read its accounts from a TOML config file, resolved from an exp
 - **GIVEN** a config describing one IMAP account with an `imap.hook.on-message-added` notify hook
 - **WHEN** the daemon runs and a message arrives
 - **THEN** a desktop notification fires, with no network delivery and no account with any service
+
 ### Requirement: Every configured account, or a chosen one
 Bare `carillon watch` SHALL watch every configured account at once, one thread each under a single shared shutdown. `-a/--account` SHALL narrow the watch to that account, and an unknown name SHALL be an error. One account's watch failure SHALL be logged and retried on its own without stalling the others.
 
@@ -33,7 +34,7 @@ Bare `carillon watch` SHALL watch every configured account at once, one thread e
 - **THEN** the failure is logged and retried for that account alone, and the other account keeps watching
 
 ### Requirement: An account watches one collection, one way
-An account SHALL name the one collection it watches, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection is a second account, which is also how it gets its own hooks. Every backend SHALL read the collection the same way, the DAV one included, whose `server` names the DAV root and whose collection is the path under it.
+An account SHALL name the one collection it watches, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection is a second account, which is also how it gets its own hooks. Every backend SHALL read the collection the same way, the DAV ones included, whose `server` names the DAV root and whose collection is the path under it.
 
 #### Scenario: A second collection
 - **GIVEN** an account watching one mailbox
@@ -41,7 +42,7 @@ An account SHALL name the one collection it watches, and MAY name the one method
 - **THEN** it is a second account, with its own hooks, and no flag exists to ask for it
 
 ### Requirement: The watch method belongs to the backend
-The method SHALL be configured under its backend (`imap.watch`, `jmap.watch`, `maildir.watch`, `dav.watch`) and named by its mechanism, the way a SASL mechanism and an HTTP auth scheme already are. Each backend SHALL declare only the methods it has, so a method it does not have is refused when the configuration is read rather than when the watch runs. Unset, an account SHALL watch the best way its backend has: IDLE for IMAP, a held event stream for JMAP, a poll for the backends with nothing else. Every backend SHALL offer the poll, whose interval MAY be given and otherwise takes what suits that backend.
+The method SHALL be configured under its backend (`imap.watch`, `jmap.watch`, `maildir.watch`, and `watch` under each of `caldav`, `carddav` and `dav`) and named by its mechanism, the way a SASL mechanism and an HTTP auth scheme already are. Each backend SHALL declare only the methods it has, so a method it does not have is refused when the configuration is read rather than when the watch runs. Unset, an account SHALL watch the best way its backend has: IDLE for IMAP, a held event stream for JMAP, a poll for the backends with nothing else. Every backend SHALL offer the poll, whose interval MAY be given and otherwise takes what suits that backend.
 
 #### Scenario: A server whose IDLE cannot be trusted
 - **GIVEN** an IMAP account whose server accepts IDLE and then never speaks
@@ -73,6 +74,7 @@ Every backend SHALL report changes in one vocabulary: an item added, an item rem
 - **GIVEN** a CardDAV account watching an addressbook
 - **WHEN** a contact is edited and its etag moves
 - **THEN** `carddav.hook.on-card-changed` fires, an event no mail backend accepts a hook for
+
 ### Requirement: A WebDAV collection is watchable
 The daemon SHALL watch a WebDAV collection by polling an RFC 6578 `sync-collection` report, under whichever of `caldav`, `carddav` and `dav` names the domain it holds, all three sharing one server, authentication and poll shape. It SHALL request `getetag`, and the content type only where a mixed calendar needs it, so a poll never carries a contact or an event; it SHALL keep an href to etag and domain picture of the collection, so that a member it has never seen reads as an arrival, a known member whose etag moved reads as an edit, and a member that vanished is still reported under the domain it had. A truncated report SHALL be drained immediately rather than at the next interval, and a sync token the server rejects SHALL cause a re-enumeration, which reports nothing because a re-baseline is not news.
 
@@ -85,6 +87,7 @@ The daemon SHALL watch a WebDAV collection by polling an RFC 6578 `sync-collecti
 - **GIVEN** a watch holding a sync token the server no longer honours
 - **WHEN** the next report is refused
 - **THEN** the collection is enumerated again, no event is fired for what was already there, and the watch continues from the fresh token
+
 ### Requirement: Arrivals are resolved only when a hook wants them
 A watch learns that an item arrived, not what it says. The daemon SHALL resolve an arrival into its summary (for mail: subject, sender, recipient, date) only when the active backend configures the arrival hook of that domain, and SHALL do so on a second connection, never the one holding the watch. Only a backend able to read one resolves anything; the others neither resolve nor offer the envelope variables. A resolution failure SHALL degrade to an unresolved event rather than ending the watch.
 
@@ -92,6 +95,7 @@ A watch learns that an item arrived, not what it says. The daemon SHALL resolve 
 - **GIVEN** an account whose only hook is `imap.hook.on-flag-added`
 - **WHEN** a message arrives
 - **THEN** no envelope is fetched and no second connection is opened
+
 ### Requirement: Ctrl+C is prompt on every path
 A requested shutdown SHALL be honoured within roughly a second on every path a watch can be waiting in: idling on a connection, sleeping between polls, backing off before a reconnect, or resolving an arrival's envelope. No path SHALL wait on a server that has stopped answering: every connection the daemon opens SHALL carry a read deadline and SHALL hand back the not-ready failures rather than letting the transport retry them away, since the deadline exists to be the wakeup that re-reads the flag.
 
@@ -101,7 +105,7 @@ A requested shutdown SHALL be honoured within roughly a second on every path a w
 - **THEN** the read deadline expires, the flag is seen, and the watch ends rather than waiting for the transport's own timeout
 
 ### Requirement: A hook failure never stops the watch
-A hook SHALL be a desktop notification, a shell command, or both. Its templates SHALL expand the event's variables, and the command SHALL receive the same variables in its environment. A hook that fails SHALL be logged and left behind: neither a missing notification daemon nor a broken script SHALL end the watch.
+A hook SHALL be a desktop notification, a shell command, or both. Its templates SHALL expand the event's variables, and the command SHALL receive the same variables in its environment. A hook that fails SHALL be logged and left behind: neither a missing notification daemon nor a broken script SHALL end the watch. A hook SHALL NOT half-fire for a reason the configuration could have been refused for: what a template may name is settled when the file is read, so the only failures left at watch time are the ones the machine around it produced.
 
 #### Scenario: The hook script exits non-zero
 - **GIVEN** an account whose `cmd` hook exits with an error
@@ -162,3 +166,17 @@ A CalDAV watch SHALL resolve what its collection holds from `supported-calendar-
 - **GIVEN** a CalDAV account watching a calendar advertising `VEVENT` alone
 - **WHEN** a member is added
 - **THEN** `on-event-added` fires without any further request, and the account's task hooks are refused when the configuration is read
+
+### Requirement: A hook templates against what its event carries
+Each hook SHALL declare the variables it can fill, and a notification naming anything else SHALL be refused when the configuration is read. `id` and `collection` SHALL be available to every hook, `flag` to a flag hook, and the envelope names only to the arrival hook of a backend that resolves one, which is IMAP alone. A `${name:default}` SHALL keep working whatever the name, a default being how a template says it can do without the value. A command SHALL NOT be validated, its placeholders reaching it as environment variables where an unset name is ordinary.
+
+#### Scenario: A removal that asks for an envelope
+- **GIVEN** an account whose `imap.hook.on-message-removed` notification body reads `$subject`
+- **WHEN** the configuration is read
+- **THEN** it is refused, naming the hook and the variables it may use, since an expunged message has no envelope to read
+
+#### Scenario: A variable that is legitimate but absent
+- **GIVEN** an account whose `imap.hook.on-message-added` notification summary reads `New mail from $sender`
+- **WHEN** a message arrives whose envelope carries no sender, or whose resolution failed
+- **THEN** the notification fires with that part empty, rather than being dropped
+

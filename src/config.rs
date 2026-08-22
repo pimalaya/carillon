@@ -24,9 +24,9 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
 #[cfg(feature = "imap")]
 use anyhow::anyhow;
+use anyhow::{Context, Result};
 #[cfg(feature = "imap")]
 use io_imap::types::{
     IntoStatic,
@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "dav")]
 use crate::event::WatchDomain;
-use crate::event::WatchEvent;
+use crate::{event::WatchEvent, hook};
 
 /// Root configuration: a map of named accounts.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -82,14 +82,25 @@ impl Config {
     /// resolves. Carillon has no interactive wizard; point the user at
     /// the sample so they can hand-edit one.
     pub fn load(config_paths: &[PathBuf]) -> Result<Config> {
-        match Config::from_paths_or_default(config_paths)? {
-            Some(config) => Ok(config),
-            None => anyhow::bail!(
+        let Some(config) = Config::from_paths_or_default(config_paths)? else {
+            anyhow::bail!(
                 "No configuration found. Copy `config.sample.toml` to \
                  `$XDG_CONFIG_HOME/carillon/config.toml`, edit it, then \
                  re-run carillon"
-            ),
+            );
+        };
+
+        // NOTE: what a hook's notification may name is as fixed as
+        // which hooks a backend has, and serde cannot check it: a
+        // template is a string until something expands it. Doing it
+        // here keeps both refusals at load time.
+        for (name, account) in &config.accounts {
+            account
+                .validate()
+                .with_context(|| format!("account `{name}` is misconfigured"))?;
         }
+
+        Ok(config)
     }
 }
 
@@ -133,6 +144,45 @@ pub struct AccountConfig {
     #[cfg(feature = "dav")]
     #[serde(default)]
     pub dav: Option<DavConfig>,
+}
+
+impl AccountConfig {
+    /// Refuses a hook whose notification names a variable its event
+    /// cannot fill, which serde cannot see because a template is only
+    /// a string until it is expanded.
+    pub fn validate(&self) -> Result<()> {
+        #[cfg(feature = "imap")]
+        if let Some(imap) = &self.imap {
+            imap.hook.validate()?;
+        }
+
+        #[cfg(feature = "jmap")]
+        if let Some(jmap) = &self.jmap {
+            jmap.hook.validate()?;
+        }
+
+        #[cfg(feature = "maildir")]
+        if let Some(maildir) = &self.maildir {
+            maildir.hook.validate()?;
+        }
+
+        #[cfg(feature = "dav")]
+        if let Some(caldav) = &self.caldav {
+            caldav.hook.validate()?;
+        }
+
+        #[cfg(feature = "dav")]
+        if let Some(carddav) = &self.carddav {
+            carddav.hook.validate()?;
+        }
+
+        #[cfg(feature = "dav")]
+        if let Some(dav) = &self.dav {
+            dav.hook.validate()?;
+        }
+
+        Ok(())
+    }
 }
 
 // ---- IMAP ---------------------------------------------------------
@@ -718,6 +768,162 @@ impl DavHookConfig {
         };
 
         hook.as_ref().map(Hook::Item)
+    }
+}
+
+#[cfg(feature = "imap")]
+impl ImapHookConfig {
+    /// Refuses a notification naming what its event cannot fill.
+    ///
+    /// IMAP is the one backend that resolves an arrival's envelope, so
+    /// it is the one whose arrival hook may name it.
+    pub fn validate(&self) -> Result<()> {
+        hook::validate(
+            self.on_message_added
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            hook::RESOLVED_ITEM,
+            "imap.hook.on-message-added",
+        )?;
+        hook::validate(
+            self.on_message_removed
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            hook::ITEM,
+            "imap.hook.on-message-removed",
+        )?;
+        hook::validate(
+            self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
+            hook::FLAG,
+            "imap.hook.on-flag-added",
+        )?;
+        hook::validate(
+            self.on_flag_removed
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            hook::FLAG,
+            "imap.hook.on-flag-removed",
+        )
+    }
+}
+
+#[cfg(feature = "jmap")]
+impl JmapHookConfig {
+    /// Refuses a notification naming what its event cannot fill.
+    pub fn validate(&self) -> Result<()> {
+        hook::validate(
+            self.on_message_added
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            hook::ITEM,
+            "jmap.hook.on-message-added",
+        )?;
+        hook::validate(
+            self.on_message_removed
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            hook::ITEM,
+            "jmap.hook.on-message-removed",
+        )?;
+        hook::validate(
+            self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
+            hook::FLAG,
+            "jmap.hook.on-flag-added",
+        )?;
+        hook::validate(
+            self.on_flag_removed
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            hook::FLAG,
+            "jmap.hook.on-flag-removed",
+        )
+    }
+}
+
+#[cfg(feature = "maildir")]
+impl MaildirHookConfig {
+    /// Refuses a notification naming what its event cannot fill.
+    pub fn validate(&self) -> Result<()> {
+        hook::validate(
+            self.on_message_added
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            hook::ITEM,
+            "maildir.hook.on-message-added",
+        )?;
+        hook::validate(
+            self.on_message_removed
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            hook::ITEM,
+            "maildir.hook.on-message-removed",
+        )?;
+        hook::validate(
+            self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
+            hook::FLAG,
+            "maildir.hook.on-flag-added",
+        )?;
+        hook::validate(
+            self.on_flag_removed
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            hook::FLAG,
+            "maildir.hook.on-flag-removed",
+        )
+    }
+}
+
+#[cfg(feature = "dav")]
+impl CaldavHookConfig {
+    /// Refuses a notification naming what its event cannot fill.
+    pub fn validate(&self) -> Result<()> {
+        for (hook, name) in [
+            (&self.on_event_added, "on-event-added"),
+            (&self.on_event_removed, "on-event-removed"),
+            (&self.on_event_changed, "on-event-changed"),
+            (&self.on_task_added, "on-task-added"),
+            (&self.on_task_removed, "on-task-removed"),
+            (&self.on_task_changed, "on-task-changed"),
+        ] {
+            let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
+            hook::validate(notify, hook::ITEM, &format!("caldav.hook.{name}"))?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "dav")]
+impl CarddavHookConfig {
+    /// Refuses a notification naming what its event cannot fill.
+    pub fn validate(&self) -> Result<()> {
+        for (hook, name) in [
+            (&self.on_card_added, "on-card-added"),
+            (&self.on_card_removed, "on-card-removed"),
+            (&self.on_card_changed, "on-card-changed"),
+        ] {
+            let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
+            hook::validate(notify, hook::ITEM, &format!("carddav.hook.{name}"))?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "dav")]
+impl DavHookConfig {
+    /// Refuses a notification naming what its event cannot fill.
+    pub fn validate(&self) -> Result<()> {
+        for (hook, name) in [
+            (&self.on_item_added, "on-item-added"),
+            (&self.on_item_removed, "on-item-removed"),
+            (&self.on_item_changed, "on-item-changed"),
+        ] {
+            let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
+            hook::validate(notify, hook::ITEM, &format!("dav.hook.{name}"))?;
+        }
+
+        Ok(())
     }
 }
 

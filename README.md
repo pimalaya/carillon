@@ -23,7 +23,7 @@ CLI to watch PIM collection changes, written in Rust
 - **Six backends**, mail and not only mail: IMAP idles, JMAP is pushed to, Maildir re-lists, and CalDAV, CardDAV and plain WebDAV each ask a collection what moved.
 - **One account, one collection, one method**: both are its config, so nothing is passed on the command line. Any backend can poll instead, for a server whose idle or push cannot be trusted.
 - **Events named after what they carry**: mail fires `on-message-*`, an addressbook `on-card-*`, a calendar `on-event-*` and `on-task-*`, an untyped collection `on-item-*`, and anything with flags `on-flag-*`, once per flag. Flag names are the same on every backend, so a filter written once fires everywhere.
-- **Hooks under their backend**: a desktop notification, a shell command, or both, with the event's fields as placeholders. Each backend takes only the events it can report, so a hook that could never fire is refused when the file is read.
+- **Hooks under their backend**: a desktop notification, a shell command, or both, with the event's fields as placeholders. Each backend takes only the events it can report, and each hook only the variables its event carries, so a hook that could never fire is refused when the file is read.
 - **Every account at once**, one thread each, reopening a dropped watch with a capped backoff and reading the credential again each time.
 - **Shared configuration** with `himalaya` and `himalaya-tui`, secrets read from your own password manager.
 ## Coverage
