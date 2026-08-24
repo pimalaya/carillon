@@ -8,7 +8,6 @@ CLI to watch PIM collection changes, written in Rust
 ## Table of contents
 
 - [Features](#features)
-- [Coverage](#coverage)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
@@ -20,55 +19,27 @@ CLI to watch PIM collection changes, written in Rust
 
 ## Features
 
-- **Watch mail, calendars and contacts**: **IMAP**, **JMAP**, **Maildir**, **CalDAV**, **CardDAV**
-- **Desktop notifications**, **shell commands**, or both, on every change
-- **Instant where the protocol allows it**: IMAP idle, JMAP push, a poll everywhere else
-- **Every account at once**, each reconnecting on its own when its server drops it
-- **One prompt setup**: `carillon configure` turns your email address into a tested account
-- **Secrets from your own password manager**, never written into the configuration
+- Mail backend support: **IMAP** <sup>[rfc2177](https://www.rfc-editor.org/rfc/rfc2177)</sup>, **JMAP** <sup>[rfc8621](https://www.rfc-editor.org/rfc/rfc8621)</sup>, **Maildir** <sup>[specs](https://cr.yp.to/proto/maildir.html)</sup>
+- Calendars and contacts backend support: **CalDAV**, **CardDAV** <sup>[rfc6578](https://www.rfc-editor.org/rfc/rfc6578)</sup>
+- **Watch** support: IMAP idle, JMAP event stream, collection poll everywhere else
+- **Hook** support: desktop notification, shell command, or both, on every change
+- **Simple auth** support for IMAP: anonymous, login, plain, oauthbearer, xoauth2, scram-sha-256
+- **HTTP auth** support for JMAP (basic, bearer, raw header) and DAV (basic, bearer)
+- **TLS** support:
+  - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature, enabled by default)
+  - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
+  - [Native TLS](https://crates.io/crates/native-tls) (requires `native-tls` feature)
+- **Discovery** support:
+  - PACC <sup>[specs](https://datatracker.ietf.org/doc/html/draft-ietf-mailmaint-pacc)</sup>
+  - Autoconfiguration (Thunderbird) <sup>[specs](https://wiki.mozilla.org/Thunderbird:Autoconfiguration)</sup>
+  - SRV DNS lookups <sup>[rfc6186](https://www.rfc-editor.org/rfc/rfc6186)</sup>
+  - DAV service discovery <sup>[rfc6764](https://www.rfc-editor.org/rfc/rfc6764)</sup>
+  - JMAP session <sup>[rfc8620](https://www.rfc-editor.org/rfc/rfc8620)</sup>
+- **Multi-account** watch: every configured account at once, each reconnecting on its own
+- **Interactive wizard**: `carillon configure` turns an email address into a tested account
 
 > [!TIP]
 > Carillon is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
-
-## Coverage
-
-| Spec         | What is covered |
-|--------------|-----------------|
-| [2177]       | IMAP idle: the held connection a watch waits on, woken by the server on every change |
-| [2971]       | IMAP identification, required by some providers right after authentication |
-| [4505]       | SASL anonymous, for servers accepting unauthenticated sessions |
-| [4616]       | SASL plain, the password mechanism |
-| [4918]       | WebDAV itself: the report a collection answers, and the etag that says an item moved |
-| [4959]       | SASL initial response, forced on or off for providers that advertise it and then refuse it |
-| [6186]       | Mail service SRV records, one of the ways the wizard finds a server from an address |
-| [6578]       | Collection synchronization: the token a poll carries, what changed since it, and what to do when the server refuses it |
-| [6764]       | CalDAV and CardDAV bootstrapping, how the wizard finds a calendar or an addressbook |
-| [7162]       | Quick mailbox resynchronization: server-named deltas where the server offers them, a local re-read and diff where it does not |
-| [7628]       | SASL oauthbearer, an OAuth 2.0 token issued by an external broker |
-| [7677]       | SASL scram-sha-256, the challenge-response mechanism |
-| [8620]       | The JMAP core: session discovery, the changes and get method shapes, request batching, and the event-source stream a push watch holds |
-| [8621]       | JMAP for mail: mailboxes, emails, and the change stream a watch polls |
-| [autoconfig] | Thunderbird autoconfiguration, the widest-published source of provider settings |
-| [maildir]    | The original Maildir layout, plus the Maildir++ subfolder convention |
-| [pacc]       | Provider account configuration, the successor the wizard prefers when a domain publishes one |
-
-[2177]: https://www.rfc-editor.org/rfc/rfc2177
-[2971]: https://www.rfc-editor.org/rfc/rfc2971
-[4505]: https://www.rfc-editor.org/rfc/rfc4505
-[4616]: https://www.rfc-editor.org/rfc/rfc4616
-[4918]: https://www.rfc-editor.org/rfc/rfc4918
-[4959]: https://www.rfc-editor.org/rfc/rfc4959
-[6186]: https://www.rfc-editor.org/rfc/rfc6186
-[6578]: https://www.rfc-editor.org/rfc/rfc6578
-[6764]: https://www.rfc-editor.org/rfc/rfc6764
-[7162]: https://www.rfc-editor.org/rfc/rfc7162
-[7628]: https://www.rfc-editor.org/rfc/rfc7628
-[7677]: https://www.rfc-editor.org/rfc/rfc7677
-[8620]: https://www.rfc-editor.org/rfc/rfc8620
-[8621]: https://www.rfc-editor.org/rfc/rfc8621
-[autoconfig]: https://wiki.mozilla.org/Thunderbird:Autoconfiguration
-[maildir]: https://cr.yp.to/proto/maildir.html
-[pacc]: https://datatracker.ietf.org/doc/html/draft-ietf-mailmaint-pacc
 
 ## Installation
 
@@ -114,21 +85,17 @@ nix run
 
 ## Configuration
 
-Run `carillon` with no command: it offers to generate an account discovered from your email address, which `carillon configure` does again later. The wizard searches the services your provider publishes, asks which one to watch and how to authenticate, picks the best watch method the server supports, tests the connection, then saves the account, appends it to the configuration already there, or prints it for you to place by hand.
+The configuration is loaded from the first existing path among:
 
-Everything discovery does not cover is written by hand: copy the annotated [config.sample.toml](./config.sample.toml), keep one backend and the hooks you want, delete the rest. It documents every key.
+- `$XDG_CONFIG_HOME/carillon/config.toml`
+- `$HOME/.config/carillon/config.toml`
+- `$HOME/.carillonrc`
 
-A configuration is loaded from the first valid path among:
+Override the path with `carillon -c <PATH>` or `CARILLON_CONFIG=<PATH>`. Multiple paths can be passed at once, separated by `:`; the first is the base and the rest are deep-merged on top. The full field reference lives in [config.sample.toml](./config.sample.toml).
 
-- $XDG_CONFIG_HOME/carillon/config.toml
-- $HOME/.config/carillon/config.toml
-- $HOME/.carillonrc
+Run `carillon` with no command to launch the wizard, `carillon configure` to run it again later. It discovers from your email address the services your provider publishes, asks which one to watch and how to authenticate, picks the best watch method the server supports, tests the connection, then saves the account or prints it for you to place by hand.
 
-Override the path with `-c <PATH>` or `CARILLON_CONFIG=<PATH>`. Multiple paths can be passed at once, separated by `:`. The first one is the base and the rest are deep-merged on top. The full field reference lives in [config.sample.toml](./config.sample.toml).
-
-Those are the paths [himalaya](https://github.com/pimalaya/himalaya) and [himalaya-tui](https://github.com/pimalaya/himalaya-tui) read too, and an account block is written the same way, but one file does not load in all three: every backend block is strict on each side and carries keys the others do not know.
-
-An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`) carrying everything that backend needs: the collection it watches under its own name, how it watches (`watch`), and what it fires (`hook`). Declaring several backends is allowed; `-b/--backend` then picks one.
+An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`) carrying the collection it watches, how it watches it (`watch`) and what it fires (`hook`). Declaring several is allowed, `-b/--backend` then selecting one.
 
 ## Usage
 

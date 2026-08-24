@@ -16,7 +16,6 @@ Everything below documents only what differs from the Pimalaya standards.
 Carillon owns no protocol code. It supervises watches, reads the configuration and fires the hooks, and everything on the wire belongs to the crate that speaks that protocol. Triage before patching:
 
 - how a change is learned belongs to the protocol crate: [io-imap](https://github.com/pimalaya/io-imap) for the idle watch, [io-jmap](https://github.com/pimalaya/io-jmap) for the changes poll, [io-maildir](https://github.com/pimalaya/io-maildir) for the listing poll, [io-webdav](https://github.com/pimalaya/io-webdav) for the collection poll;
-- the shared TOML shape, since one file backs three binaries, is settled with [himalaya](https://github.com/pimalaya/himalaya) rather than here;
 - the configuration schema, the backend selection, the supervision and the hooks live here.
 
 The clap, printer and logger primitives come from [pimalaya/cli](https://github.com/pimalaya/cli), the TOML loader and the secret resolution from [pimalaya/config](https://github.com/pimalaya/config), and the TCP and TLS plumbing from [pimalaya/stream](https://github.com/pimalaya/stream).

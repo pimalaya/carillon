@@ -15,11 +15,6 @@
 # authenticate, tests the connection, and writes the account here. Everything it
 # does not cover is written by hand, which is what this file documents: copy it,
 # keep one backend and the hooks you want, then delete the rest.
-#
-# The `[accounts.<name>]` block keeps the shape `himalaya` CLI v2 and
-# `himalaya-tui` read, so an account is recognisable across the three; a whole
-# file is not portable between them, every backend block being strict on each
-# side and carrying keys the others do not know.
 # ================================================================================
 
 [accounts.example]
@@ -185,7 +180,7 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #maildir.mailbox = "."
 
 # Root of the Maildir tree, subfolders being real nested directories, the
-# layout himalaya uses. Watch the root itself with collection = "." or "INBOX",
+# usual layout. Watch the root itself with collection = "." or "INBOX",
 # and a subfolder by its path, e.g. collection = "Archive".
 #maildir.root = "~/Mail/example"
 
