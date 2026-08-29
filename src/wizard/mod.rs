@@ -1,3 +1,8 @@
+//! # Wizard
+//!
+//! The account generator: what a first configuration is discovered from,
+//! prompted for and tested with, one module per backend.
+
 pub mod configure;
 #[cfg(feature = "dav")]
 pub mod dav;

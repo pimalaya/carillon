@@ -6,15 +6,14 @@
 #   - $HOME/.config/carillon/config.toml
 #   - $HOME/.carillonrc
 #
-# Override with `carillon -c <PATH>` or `CARILLON_CONFIG=<PATH>`, both accepting a
+# Override with `carillon -c <PATH>` or `CARILLON_CONFIG=<PATH>`, both taking a
 # `:`-delimited list: the first one is the base and the rest are deep-merged on
 # top of it.
 #
-# `carillon configure` generates an account from your email address: it discovers
-# the services your provider publishes, asks which one to watch and how to
-# authenticate, tests the connection, and writes the account here. Everything it
-# does not cover is written by hand, which is what this file documents: copy it,
-# keep one backend and the hooks you want, then delete the rest.
+# `carillon configure` generates an account from your email address, testing the
+# connection before writing it here. Everything it does not cover is written by
+# hand, which is what this file documents: copy it, keep one backend and the
+# hooks you want, then delete the rest.
 # ================================================================================
 
 [accounts.example]
@@ -31,38 +30,34 @@ default = true
 # blocks below. With more than one, `-b/--backend` selects the active one;
 # `-b auto`, the default, takes the first configured in that order.
 #
-# Each block carries the one collection it watches, under the name its own
-# domain uses and required: `imap.mailbox`, `jmap.mailbox`, `maildir.mailbox`,
-# `caldav.calendar` and `carddav.addressbook`. One account is one
-# backend is one collection; watching a second is a second account, which is also
-# how it gets its own hooks.
+# Each block carries the one collection it watches, required and named after its
+# own domain: `imap.mailbox`, `jmap.mailbox`, `maildir.mailbox`,
+# `caldav.calendar`, `carddav.addressbook`. Watching a second is a second
+# account, which is also how it gets its own hooks.
 #
 # Each block also carries the hooks that backend fires, under `<backend>.hook`
-# (`hooks` also reads). A hook is named after what its backend holds, so mail
-# fires `on-message-*`, an addressbook `on-card-*`, and a calendar `on-event-*`
-# and `on-task-*`. A backend takes only its own names, and only the events its
-# protocol can express, so anything else is refused when this file is read
-# rather than staying quiet forever.
+# (`hooks` also reads), named after what it holds: `on-message-*` for mail,
+# `on-card-*` for an addressbook, `on-event-*` and `on-task-*` for a calendar.
+# Anything else is refused when this file is read rather than staying quiet.
 #
 # Every hook fires a `notify` desktop notification, a `cmd`, or both. `cmd` is
 # either a string handed to the platform shell (/bin/sh -c on Unix, cmd /C on
-# Windows) or a [program, args...] list spawned directly. Either way the
-# placeholders reach it as environment variables.
+# Windows) or a [program, args...] list spawned directly, the placeholders
+# reaching it as environment variables either way.
 #
-# A hook templates against $id and against the collection under the same name
-# its backend configures it: $mailbox for mail, $calendar, $addressbook. $id is
-# the backend's own id: an IMAP UID, a JMAP Email id, a Maildir file name, a
-# WebDAV href. A flag hook adds $flag, naming the one flag that moved. The
-# envelope variables ($subject, $date, $sender, $sender_name, $sender_address,
-# $recipient, $recipient_name, $recipient_address) belong to the on-message-added
-# hook of IMAP and JMAP alone, those being the two that can read one: IMAP on a
-# second connection, JMAP from the request its poll already makes.
+# A hook templates against $id, which is the backend's own id (an IMAP UID, a
+# JMAP Email id, a Maildir file name, a WebDAV href), and against the collection
+# under the name its backend configures it: $mailbox, $calendar, $addressbook. A
+# flag hook adds $flag, naming the one flag that moved.
 #
-# A notification naming anything else is refused when this file is read, since
-# an expunged message has no envelope to read and a template that asks for one
-# would fire nothing. Write `${name:default}` where a hook can do without the
-# value. A variable the hook may use but this one item lacks (a message with no
-# sender, an arrival whose resolution failed) expands to nothing instead.
+# The envelope variables ($subject, $date, $sender, $sender_name,
+# $sender_address, $recipient, $recipient_name, $recipient_address) belong to the
+# on-message-added hook of IMAP and JMAP alone, the two that read one. A
+# notification naming anything else is refused when this file is read.
+#
+# Write `${name:default}` where a hook can do without the value: a variable the
+# hook may use but this one item lacks (a message with no sender, an arrival
+# whose resolution failed) expands to nothing.
 #
 # Every secret below is either `raw = "..."` or `command = "..."`, the command
 # being a string handed to the platform shell or a [program, args...] list, and
@@ -73,9 +68,9 @@ default = true
 # The mailbox this account watches. Required.
 imap.mailbox = "INBOX"
 
-# Server address: a bare authority (`imap.example.org[:port]`, read as
-# `imaps://<authority>`), or a full `imap://` (cleartext, optionally upgraded
-# with STARTTLS) or `imaps://` (implicit TLS) URL used verbatim.
+# Server address: a bare authority (`imap.example.org[:port]`) is read as
+# `imaps://<authority>`; an `imap://` (cleartext, optionally upgraded with
+# STARTTLS) or `imaps://` (implicit TLS) URL is used verbatim.
 imap.server = "imaps://imap.example.org"
 
 # Upgrade a cleartext connection with STARTTLS.
@@ -86,9 +81,9 @@ imap.server = "imaps://imap.example.org"
 #imap.tls.rustls.crypto = "ring"  # or "aws"
 #imap.tls.cert = "/path/to/custom/cert.pem"
 
-# Exactly one SASL mechanism among `plain`, `login`, `anonymous`,
-# `oauthbearer`, `xoauth2` and `scram-sha-256`. Omit the whole `imap.sasl`
-# table to skip authentication entirely, sending no `AUTHENTICATE` command.
+# Exactly one SASL mechanism among `plain`, `login`, `anonymous`, `oauthbearer`,
+# `xoauth2` and `scram-sha-256`. Omit the whole `imap.sasl` table to skip
+# authentication, sending no `AUTHENTICATE` command at all.
 imap.sasl.plain.username = "user@example.org"
 imap.sasl.plain.password.raw = "REPLACE_ME"
 #imap.sasl.plain.password.command = "pass show carillon/example"
@@ -116,18 +111,17 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #imap.id.fields = { name = true, version = true, vendor = true, support-url = true }
 
 # How this account learns about a change, IMAP offering two ways. Unset holds
-# the idle connection, re-issuing it every 29 seconds, which is short enough to
-# survive a NAT box that drops a quiet connection. A server known to hold one
-# open is asked less often, up to the 29 minutes RFC 2177 allows. Both values
-# are in seconds.
+# the idle connection, re-issued every 29 seconds, short enough to survive a NAT
+# box dropping a quiet connection; a server known to hold one open is asked less
+# often, up to the 29 minutes RFC 2177 allows. Both values are in seconds.
 #imap.watch.idle.timeout = 600
 #imap.watch.poll.interval = 60
 
 
 # Mail is immutable, so IMAP reports arrivals, departures and flags, never an
-# edit. A flag hook fires once for each flag that moved, so `$flag` always names
-# the flag it fired for; `flags = [...]` narrows it to the flags it lists, with
-# or without the leading `\` or `$` and whatever the case.
+# edit. A flag hook fires once per flag that moved, so `$flag` always names the
+# one it fired for; `flags = [...]` narrows it, matching with or without the
+# leading `\` or `$` and whatever the case.
 imap.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
 imap.hook.on-message-added.notify.body = "$subject"
 imap.hook.on-message-added.cmd = 'echo "$id arrived" >> ~/.local/state/carillon.log'
@@ -166,22 +160,24 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 
 # Same events as IMAP, JMAP keywords arriving under the same flag names. The
-# envelope is read from the request the poll already makes, so an arrival hook
+# envelope comes from the request the poll already makes, so an arrival hook
 # names $subject and $sender at no extra cost.
 #jmap.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
 #jmap.hook.on-message-added.notify.body = "$subject"
 #jmap.hook.on-message-removed.cmd = "true"
 #jmap.hook.on-flag-added.flags = ["Seen"]
 #jmap.hook.on-flag-removed.cmd = "true"
+
+
 # ---- Maildir: a listing poll ---------------------------------------------------
 
 # The mailbox this account watches, resolved under `root` through io-maildir's
 # store; "." and "INBOX" both name the root itself. Required.
 #maildir.mailbox = "."
 
-# Root of the Maildir tree, subfolders being real nested directories, the
-# usual layout. Watch the root itself with collection = "." or "INBOX",
-# and a subfolder by its path, e.g. collection = "Archive".
+# Root of the Maildir tree, subfolders being real nested directories, the usual
+# layout. `maildir.mailbox` watches the root itself with "." or "INBOX", and a
+# subfolder by its path, "Archive" for instance.
 #maildir.root = "~/Mail/example"
 
 # Maildir has one way: re-list on an interval, a couple of seconds when unset.
@@ -193,6 +189,7 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #maildir.hook.on-message-removed.cmd = "true"
 #maildir.hook.on-flag-added.flags = ["Seen"]
 #maildir.hook.on-flag-removed.cmd = "true"
+
 
 # ---- CalDAV: a sync-collection poll over a calendar (RFC 6578) ------------------
 
@@ -214,17 +211,17 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 # WebDAV has one way: ask sync-collection on an interval, a minute when unset.
 #caldav.watch.poll.interval = 60
 
-# A calendar holds events, tasks, or both, and the watch asks it which when it
-# starts: a calendar holding only one of them answers for all its members at
-# once, and hooks naming a component it does not hold are refused there. A
-# calendar holding both costs one property read per member the watch has not
-# seen, which reads its content type and never the event itself.
+# A calendar holds events, tasks or both, and the watch asks it which when it
+# starts: hooks naming a component it does not hold are refused there. Holding
+# both costs one property read per member the watch has not seen, which reads
+# its content type and never the event itself.
 #caldav.hook.on-event-added.notify.summary = "New event"
 #caldav.hook.on-event-changed.cmd = "true"
 #caldav.hook.on-event-removed.cmd = "true"
 #caldav.hook.on-task-added.notify.summary = "New task"
 #caldav.hook.on-task-changed.cmd = "true"
 #caldav.hook.on-task-removed.cmd = "true"
+
 
 # ---- CardDAV: the same poll over an addressbook --------------------------------
 
@@ -237,7 +234,7 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #carddav.watch.poll.interval = 60
 
 # A vCard is edited where it stands, which is what `on-card-changed` reports and
-# no mail backend has: its etag moved, and the poll never reads the card itself.
+# no mail backend has: its etag moved, the poll never reading the card itself.
 #carddav.hook.on-card-added.notify.summary = "New contact"
 #carddav.hook.on-card-changed.cmd = "true"
 #carddav.hook.on-card-removed.cmd = "true"

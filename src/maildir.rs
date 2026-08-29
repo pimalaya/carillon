@@ -1,10 +1,13 @@
-//! Maildir backend: a poll that diffs the mailbox against what it last
-//! saw.
+//! # Maildir
 //!
-//! A Maildir has no notification channel, so the watch re-lists it on
-//! an interval. The listing is file names only, never bodies, so a
-//! poll costs one directory read, and the flag letters live in those
-//! names. They are reported under their shared names, so one filter
+//! The Maildir backend: a poll that diffs the mailbox against what it
+//! last saw.
+//!
+//! A Maildir has no notification channel, so the watch re-lists it on an
+//! interval. The listing is file names only, never bodies, so a poll
+//! costs one directory read, and the flag letters live in those names.
+//!
+//! They are reported under their shared names, so one filter
 //! (`flags = ["Seen"]`) fires on every backend.
 
 use std::{
@@ -31,17 +34,17 @@ use crate::{
     event::{ItemSummary, WatchDomain, WatchEvent},
 };
 
-/// How long the watch sleeps between two listings, unless the config
-/// says otherwise. A directory read is cheap, so it can be short.
+/// How long the watch sleeps between two listings, unless the config says
+/// otherwise; short, a directory read being cheap.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// How long it sleeps at a time, so a shutdown is noticed promptly.
 const POLL_STEP: Duration = Duration::from_millis(200);
 
-/// Watches `mailbox` under the configured root until `shutdown` is set,
-/// calling `on_event` for every change.
+/// Watches `collection` under the configured root until `shutdown` is
+/// set, calling `on_event` for every change.
 ///
-/// The first listing is a baseline: it reports nothing, since every
-/// message already there is not news.
+/// The first listing is the baseline and reports nothing, a message
+/// already there not being news.
 pub fn watch(
     config: &MaildirConfig,
     collection: &str,
@@ -64,8 +67,8 @@ pub fn watch(
         let current = match list(&client, &maildir) {
             Ok(current) => current,
             // NOTE: a transient read failure (a rename mid-listing, a
-            // mount hiccup) must not end the watch; the next poll
-            // re-reads the whole mailbox anyway.
+            // mount hiccup) must not end the watch, the next poll
+            // re-reading the whole mailbox anyway.
             Err(err) => {
                 debug!("maildir listing failed, retrying next poll: {err:#}");
                 continue;
@@ -126,8 +129,8 @@ fn diff(
             continue;
         };
 
-        // NOTE: one event per flag, so a hook always knows which
-        // flag it fired for.
+        // NOTE: one event per flag, so a hook knows which flag it fired
+        // for.
         for flag in flags.difference(before) {
             events.push(WatchEvent::FlagAdded {
                 domain: WatchDomain::Message,
@@ -148,8 +151,8 @@ fn diff(
     events
 }
 
-/// Resolves the watched mailbox through the store, so the layout and
-/// the validation are io-maildir's rather than a hand-joined path.
+/// Resolves the watched mailbox through the store, so the layout and the
+/// validation are io-maildir's rather than a hand-joined path.
 fn resolve(client: &MaildirClient, collection: &str) -> Result<Maildir> {
     // NOTE: the empty path is the store root, which is the mailbox a
     // flat Maildir holds; `.` is how a config says so readably.
@@ -158,11 +161,10 @@ fn resolve(client: &MaildirClient, collection: &str) -> Result<Maildir> {
         collection => MaildirPath::from(collection),
     };
 
-    // NOTE: resolving through the client rather than joining the root
-    // by hand is what applies the store's layout (dot-prefixed flat
-    // names under Maildir++, real nested directories otherwise) and
-    // what turns a wrong name into an error instead of a listing that
-    // stays empty forever.
+    // NOTE: resolving through the client applies the store's layout
+    // (dot-prefixed flat names under Maildir++, nested directories
+    // otherwise) and turns a wrong name into an error rather than a
+    // listing that stays empty forever.
     client
         .load_maildir(name)
         .with_context(|| format!("Cannot open maildir `{collection}`"))
@@ -281,9 +283,8 @@ mod tests {
         assert!(diff(&listed, &listed).is_empty());
     }
 
-    /// The regression this file exists for: a subfolder is resolved
-    /// through the store, so it is found, and a wrong name fails
-    /// instead of listing a directory that is not there.
+    /// The regression this file exists for: a subfolder resolves through
+    /// the store, and a wrong name fails rather than listing nothing.
     #[test]
     fn a_subfolder_resolves_through_the_store() {
         let root = TempDir::new().expect("temp dir");
@@ -310,8 +311,9 @@ mod tests {
     }
 
     /// Reading a message moves its file from `new` to `cur` and appends
-    /// the `S` letter, keeping the name before `:2,`. The watch must
-    /// see one flag change, not a message leaving and another arriving.
+    /// the `S` letter, keeping the name before `:2,`.
+    ///
+    /// The watch must see one flag change, not a departure and an arrival.
     #[test]
     fn reading_a_message_is_a_flag_change_not_a_move() {
         let root = TempDir::new().expect("temp dir");

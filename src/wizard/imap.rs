@@ -1,17 +1,18 @@
-//! IMAP wizard.
+//! # IMAP wizard
 //!
-//! A discovery entry pins the endpoint, so [`configure_discovered`]
-//! reads the mechanisms the server advertises, picks one, prompts its
-//! credentials and opens the session. That session is both the
-//! connection test and where the watch method is decided: a server not
-//! advertising IDLE gets an explicit poll written into the account, and
-//! one advertising it is left alone, an unset `imap.watch` already
-//! meaning IDLE.
+//! A discovery entry pins the endpoint, so [`configure_discovered`] reads
+//! the mechanisms the server advertises, picks one, prompts its
+//! credentials and opens the session.
 //!
-//! The mechanism menu comes from the server rather than from
-//! discovery, which reports whether a provider takes a password or an
-//! OAuth token and never which mechanism carries it. Discovery's list
-//! is the fallback, for a server the probe could not reach.
+//! That session is both the connection test and where the watch method is
+//! decided: a server not advertising IDLE gets an explicit poll, one
+//! advertising it is left alone, an unset `imap.watch` already meaning
+//! IDLE.
+//!
+//! The mechanism menu comes from the server rather than from discovery,
+//! which reports whether a provider takes a password or an OAuth token
+//! and never which mechanism carries it. Discovery's list is the
+//! fallback, for a server the probe could not reach.
 
 use anyhow::{Result, bail};
 use io_imap::{has_imap_capability, rfc3501::capability::available_auth_mechanisms};
@@ -33,9 +34,8 @@ use crate::{
     },
 };
 
-// NOTE: the mechanisms split by credential kind, a password family
-// (login + secret) and a token family (login + API token); ANONYMOUS
-// carries none.
+// NOTE: the mechanisms split by credential kind, a password family and a
+// token family, ANONYMOUS carrying none.
 const PLAIN: &str = "PLAIN (username + password)";
 const LOGIN: &str = "LOGIN (username + password)";
 const SCRAM_SHA_256: &str = "SCRAM-SHA-256 (username + password)";
@@ -43,13 +43,14 @@ const ANONYMOUS: &str = "ANONYMOUS (no credentials)";
 const OAUTHBEARER: &str = "OAUTHBEARER (username + API token)";
 const XOAUTH2: &str = "XOAUTH2 (username + API token)";
 
-/// The interval an account falls back to when its server cannot hold
-/// an IDLE, which is what io-imap's own polling watch takes anyway.
+/// The interval an account falls back to when its server cannot hold an
+/// IDLE, which io-imap's own polling watch takes anyway.
 const POLL_INTERVAL: u64 = 60;
 
-/// Configures IMAP from a discovered entry: read the mechanisms the
-/// server advertises, pick one and its credentials, open the session,
-/// then keep IDLE or write a poll depending on what it advertised. The
+/// Configures IMAP from a discovered entry.
+///
+/// The mechanisms the server advertises are read, one and its credentials
+/// picked, the session opened, then IDLE kept or a poll written. The
 /// connection is tested here, so the caller has nothing left to prove.
 pub fn configure_discovered(
     account_name: &str,
@@ -63,11 +64,11 @@ pub fn configure_discovered(
     let login_hint = discovered.login_default(email);
     let mut config = config(endpoint, None);
 
-    // NOTE: the server is the only authority on what it accepts: discovery
-    // reports a provider's password and OAuth policy, not its mechanism
-    // list, so it would offer SCRAM-SHA-256 to a Gmail that has never
-    // implemented it. What the probe cannot read falls back to
-    // discovery, so a failed probe never leaves the menu empty.
+    // NOTE: the server is the only authority on what it accepts, discovery
+    // reporting a provider's password and OAuth policy and not its
+    // mechanism list, so it would offer SCRAM-SHA-256 to a Gmail that has
+    // never implemented it. A failed probe falls back to it all the same,
+    // rather than leaving the menu empty.
     let probed = probe_mechanisms(&config);
     let mechanism = prompt_mechanism(discovered.auth, probed.as_deref())?;
 
@@ -101,15 +102,12 @@ pub fn configure_discovered(
     Ok(config)
 }
 
-/// Opens an unauthenticated session purely to read the server's
-/// `CAPABILITY`, and returns the mechanisms it advertises, most
-/// preferred first and LOGIN last.
+/// Opens an unauthenticated session to read the server's `CAPABILITY`,
+/// most preferred mechanism first and LOGIN last.
 ///
-/// [`None`] when the probe failed or advertised nothing usable: the
-/// error is logged and never surfaced, since the menu falls back to
-/// what discovery reported rather than stopping. The connection is
-/// dropped without authenticating, and the session that does
-/// authenticate is opened again afterwards.
+/// [`None`] when the probe failed or advertised nothing usable, the error
+/// being logged and never surfaced: the menu falls back to what discovery
+/// reported rather than stopping.
 fn probe_mechanisms(config: &ImapConfig) -> Option<Vec<SaslMechanism>> {
     let spinner = Spinner::start("Reading IMAP capabilities");
 
@@ -140,10 +138,10 @@ fn probe_mechanisms(config: &ImapConfig) -> Option<Vec<SaslMechanism>> {
     }
 }
 
-/// Prompts the authentication mechanism: the probed list when the
-/// server advertised one, otherwise the list discovery keys (every
-/// family when it advertised none). A single candidate is selected
-/// without prompting.
+/// Prompts the authentication mechanism, among what the server advertised
+/// or, failing that, what discovery keys.
+///
+/// A single candidate is selected without prompting.
 fn prompt_mechanism(caps: AuthCaps, probed: Option<&[SaslMechanism]>) -> Result<SaslMechanism> {
     let mechanisms = offered(caps, probed);
     let labels: Vec<&str> = mechanisms.iter().map(mechanism_label).collect();
@@ -163,8 +161,9 @@ fn prompt_mechanism(caps: AuthCaps, probed: Option<&[SaslMechanism]>) -> Result<
 }
 
 /// Prompts the credentials for `mechanism` and builds its SASL config.
+///
 /// ANONYMOUS carries no login; every other mechanism needs one, plus a
-/// password (basic family) or an API token (OAuth family).
+/// password or an API token, whichever its family takes.
 fn build_sasl(
     mechanism: SaslMechanism,
     account_name: &str,
@@ -204,18 +203,18 @@ fn build_sasl(
             token: secret::configure_token("IMAP API token", &key, caps.oauth || !caps.any())?,
         }),
         SaslMechanism::Anonymous => unreachable!("handled above"),
-        // NOTE: io-sasl knows more mechanisms than the config can
-        // express, and the wizard only ever offers the six above, so
-        // this arm is unreachable through the menu. It bails rather
+        // NOTE: io-sasl knows more mechanisms than the config can express,
+        // and the menu only offers the six above, so this arm bails rather
         // than panics in case a caller hands one over directly.
         other => bail!("Unsupported SASL mechanism `{}`", other.as_str()),
     })
 }
 
-/// Whether the configuration can express a mechanism, which is what
-/// keeps the menu to what `imap.sasl` has a table for: a server
-/// advertising one carillon cannot write down is one mechanism fewer to
-/// choose from, not a prompt ending in an error.
+/// Whether the configuration can express a mechanism, which keeps the
+/// menu to what `imap.sasl` has a table for.
+///
+/// A server advertising one carillon cannot write down is one mechanism
+/// fewer to choose from, not a prompt ending in an error.
 fn is_expressible(mechanism: &SaslMechanism) -> bool {
     matches!(
         mechanism,
@@ -228,8 +227,8 @@ fn is_expressible(mechanism: &SaslMechanism) -> bool {
     )
 }
 
-/// The mechanisms the menu offers: what the server advertised when the
-/// probe read it, and what discovery keys otherwise.
+/// The mechanisms the menu offers: what the probe read, or what discovery
+/// keys when it read nothing.
 fn offered(caps: AuthCaps, probed: Option<&[SaslMechanism]>) -> Vec<SaslMechanism> {
     match probed {
         Some(mechanisms) if !mechanisms.is_empty() => mechanisms.to_vec(),
@@ -237,15 +236,12 @@ fn offered(caps: AuthCaps, probed: Option<&[SaslMechanism]>) -> Vec<SaslMechanis
     }
 }
 
-/// The mechanisms offered when no probe answered, keyed on what
-/// discovery advertised (every family when nothing was): most preferred
-/// first, LOGIN last, token mechanisms only when a token or an OAuth
-/// grant was advertised.
+/// The mechanisms offered when no probe answered, keyed on what discovery
+/// advertised, every family when nothing was.
 ///
-/// It is a guess, and a coarse one: a provider's advertised policy says
-/// a password is accepted, never which mechanism carries it. Only the
-/// server knows that, which is why this list is the fallback rather
-/// than the menu.
+/// A coarse guess: a provider's policy says a password is accepted, never
+/// which mechanism carries it. Only the server knows that, which is why
+/// this list is the fallback rather than the menu.
 fn discovered_mechanisms(caps: AuthCaps) -> Vec<SaslMechanism> {
     let mut mechanisms = Vec::new();
 
@@ -264,10 +260,10 @@ fn discovered_mechanisms(caps: AuthCaps) -> Vec<SaslMechanism> {
     mechanisms
 }
 
-/// The menu label for a mechanism, split by the credential it needs.
+/// The menu label of a mechanism, split by the credential it needs.
 ///
-/// Only the six the menu offers get one; anything else is named as
-/// IANA registered it, which is what an error would print too.
+/// Only the six the menu offers get one, anything else being named as
+/// IANA registered it.
 fn mechanism_label(mechanism: &SaslMechanism) -> &'static str {
     match mechanism {
         SaslMechanism::ScramSha256 => SCRAM_SHA_256,
@@ -280,9 +276,8 @@ fn mechanism_label(mechanism: &SaslMechanism) -> &'static str {
     }
 }
 
-/// Folds the endpoint and credentials into a config block watching the
-/// inbox, which is the mailbox a first account watches and the one
-/// every server has.
+/// Folds the endpoint and credentials into a block watching the inbox,
+/// the mailbox a first account watches and the one every server has.
 fn config(endpoint: &TcpEndpoint, sasl: Option<SaslConfig>) -> ImapConfig {
     let scheme = if endpoint.security == DiscoverySecurity::Tls {
         "imaps"
@@ -303,9 +298,10 @@ fn config(endpoint: &TcpEndpoint, sasl: Option<SaslConfig>) -> ImapConfig {
     }
 }
 
-/// The hook a generated account fires: a desktop notification on
-/// arrival, which is what someone watching a mailbox came for. IMAP
-/// resolves an arrival's envelope, so the notification may name it.
+/// The hook a generated account fires: a notification on arrival, which
+/// is what someone watching a mailbox came for.
+///
+/// IMAP resolves an arrival's envelope, so the notification may name it.
 fn hook() -> ImapHookConfig {
     ImapHookConfig {
         on_message_added: Some(ItemHook {
@@ -325,9 +321,9 @@ mod tests {
 
     #[test]
     fn the_server_decides_the_menu_and_discovery_only_stands_in() {
-        // NOTE: the Gmail shape: a provider whose policy names a password and
-        // an OAuth grant, on a server that has never implemented SCRAM.
-        // What it advertises is the menu, so SCRAM is not in it.
+        // NOTE: the Gmail shape, a provider whose policy names a password
+        // and a grant on a server that never implemented SCRAM. What it
+        // advertises is the menu, so SCRAM is not in it.
         let gmail = AuthCaps {
             basic: true,
             oauth: true,
@@ -343,8 +339,8 @@ mod tests {
         assert_eq!(offered(gmail, Some(&advertised)), advertised);
         assert!(discovered_mechanisms(gmail).contains(&SaslMechanism::ScramSha256));
 
-        // NOTE: a probe that read nothing, or nothing usable, falls back to
-        // the discovered list rather than leaving the menu empty.
+        // NOTE: a probe that read nothing, or nothing usable, falls back
+        // to the discovered list rather than leaving the menu empty.
         assert_eq!(offered(gmail, None), discovered_mechanisms(gmail));
         assert_eq!(offered(gmail, Some(&[])), discovered_mechanisms(gmail));
     }
@@ -383,8 +379,8 @@ mod tests {
             [SaslMechanism::OAuthBearer, SaslMechanism::XOAuth2]
         );
 
-        // NOTE: nothing advertised offers everything, so a service naming no
-        // method is still configurable.
+        // NOTE: nothing advertised offers everything, so a service naming
+        // no method is still configurable.
         assert_eq!(discovered_mechanisms(AuthCaps::default()).len(), 6);
     }
 

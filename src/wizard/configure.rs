@@ -1,25 +1,28 @@
-//! Command generating an account.
+//! # Configure
 //!
-//! The wizard generates, it never edits: it discovers an account from
-//! one prompt (see [`super::discover`]), tests it, then hands the
-//! resulting `[accounts.<name>]` table back as a file to create, a
-//! block to append, or a document on stdout. Everything discovery does
-//! not cover, meaning a second collection, the watch options and the
-//! hooks beyond the arrival one, is written by hand against the
-//! documented sample.
+//! The command generating an account.
+//!
+//! The wizard generates, it never edits: it discovers an account from one
+//! prompt (see [`super::discover`]), tests it, then hands the resulting
+//! `[accounts.<name>]` table back as a file to create, a block to append,
+//! or a document on stdout.
+//!
+//! Everything discovery does not cover, a second collection, the watch
+//! options and the hooks beyond the arrival one, is written by hand
+//! against the documented sample.
 //!
 //! It runs from `carillon configure`, and from the offer a bare
-//! `carillon` or a command needing an account raises when it finds no
-//! configuration. That offer is the only place the wizard introduces
-//! itself, with a welcome naming the file that is missing: the command
-//! asked for by name goes straight to the prompts.
+//! `carillon` or a command needing an account raises. That offer is the
+//! only place the wizard introduces itself, the command asked for by name
+//! going straight to the prompts.
 //!
-//! Appending is a plain text append rather than a re-serialization of
-//! the whole file, so comments, ordering and hand-written formatting
-//! come out untouched. Two rules guard it: the account name must be
-//! free, since two `[accounts.<name>]` tables make the whole document
-//! fail to parse, and the generated account claims the default only
-//! when no other account does.
+//! Appending is a plain text append rather than a re-serialization of the
+//! whole file, so comments, ordering and hand-written formatting come out
+//! untouched.
+//!
+//! Two rules guard it: the account name must be free, two
+//! `[accounts.<name>]` tables making the whole document fail to parse,
+//! and the generated account claims the default only when no other does.
 
 use std::{
     fmt,
@@ -41,28 +44,23 @@ use crate::{
 
 /// Configure an account interactively.
 ///
-/// This command discovers a provider's settings from an email address
-/// (or a server URL, or a local folder path), tests the connection,
-/// then saves the resulting account to the configuration file, appends
-/// it to the one already there, or prints it for you to place by hand.
-/// Anything discovery does not cover is written by hand.
+/// Discovers a provider's settings from an email address, a server URL or
+/// a local folder path, tests the connection, then saves the account to
+/// the configuration file, appends it to the one already there, or prints
+/// it for you to place by hand. Anything else is written by hand.
 #[derive(Debug, Parser)]
 pub struct ConfigureCommand;
 
 impl ConfigureCommand {
     /// Runs the wizard, then saves, appends or prints the account.
     ///
-    /// No welcome: whoever typed the command knows what it does. The
-    /// banner belongs to the offer a missing configuration raises,
-    /// which is where the wizard meets someone who did not ask for it.
-    /// The account name is not asked either, since it is only the TOML
-    /// table key, and renaming it is one edit in the file the wizard
-    /// just wrote.
+    /// No welcome, and no name prompt: whoever typed the command knows
+    /// what it does, and the name is only the TOML table key, one edit
+    /// away in the file the wizard just wrote.
     ///
-    /// A redirected stdout (`carillon configure > config.toml`) and the
-    /// JSON output both stay non-interactive: the document goes to
-    /// stdout and no file is touched. The prompts render on stderr, so
-    /// they stay out of the redirected document.
+    /// A redirected stdout and the JSON output both stay
+    /// non-interactive, the document going to stdout with no file
+    /// touched. The prompts render on stderr, out of that document.
     pub fn execute(self, printer: &mut impl Printer, config_paths: &[PathBuf]) -> Result<()> {
         if !stdin().is_terminal() {
             bail!(
@@ -79,7 +77,7 @@ impl ConfigureCommand {
 
         // NOTE: a second `default = true` would make the account every
         // command picks depend on map ordering, so the generated one
-        // claims the default only when no other account does.
+        // claims it only when no other account does.
         let default = !existing.as_ref().is_some_and(|config| config.has_default);
         account.default = default;
 
@@ -100,21 +98,19 @@ impl ConfigureCommand {
     }
 }
 
-/// What a configuration file already on disk constrains in the
-/// generated account: the names it takes, and whether one of its
-/// accounts already claims the default.
+/// What a configuration already on disk constrains in the generated
+/// account: the names it takes, and whether one claims the default.
 struct ExistingConfig {
     names: Vec<String>,
     has_default: bool,
 }
 
 impl ExistingConfig {
-    /// Reads the configuration at the given path, or `None` when no
-    /// file is there.
+    /// Reads the configuration at `path`, `None` when no file is there.
     ///
     /// A file that fails to parse is an error rather than a `None`:
-    /// appending to a broken document would bury the actual problem
-    /// under a second one.
+    /// appending to a broken document would bury the actual problem under
+    /// a second one.
     fn read(path: &Path) -> Result<Option<Self>> {
         if !path.exists() {
             return Ok(None);
@@ -143,21 +139,18 @@ pub struct GeneratedConfig {
 
 impl fmt::Display for GeneratedConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // NOTE: the trailing newline terminates the document, and it is
-        // also what flushes the line-buffered stdout.
+        // NOTE: the trailing newline terminates the document, and flushes
+        // the line-buffered stdout.
         writeln!(f, "{}", self.document.trim_end())
     }
 }
 
-/// Frames carillon, names the configuration file that is missing, and
-/// points at the sample for everything the wizard does not cover.
+/// Frames carillon, names the missing configuration file, and points at
+/// the sample for everything the wizard does not cover.
 ///
 /// Printed before the offer a bare `carillon` or a command needing an
-/// account raises when it finds no configuration, so the wizard
-/// introduces itself to someone who did not ask for it. `configure`
-/// skips it, since it was asked for by name.
-///
-/// On stderr, so a redirected stdout holds the document alone.
+/// account raises, so the wizard introduces itself to someone who did not
+/// ask for it. On stderr, so a redirected stdout holds the document alone.
 pub fn print_welcome(path: &Path) {
     eprintln!();
     eprintln!("Welcome to carillon, the CLI to watch PIM collection changes.");
@@ -182,13 +175,12 @@ pub fn print_welcome(path: &Path) {
     eprintln!();
 }
 
-/// The name discovery proposes, suffixed until the configuration does
-/// not already hold it.
+/// The name discovery proposes, suffixed until the configuration does not
+/// already hold it.
 ///
-/// Not prompted: the name is only the TOML table key, and whoever wants
-/// another one renames it in the file. It still has to be free, since a
-/// second `[accounts.<name>]` table makes the whole document fail to
-/// parse, taking the accounts that used to work down with it.
+/// It has to be free: a second `[accounts.<name>]` table makes the whole
+/// document fail to parse, taking the accounts that used to work down
+/// with it.
 fn account_name(base: &str, existing: Option<&ExistingConfig>) -> String {
     let taken = existing
         .map(|config| config.names.as_slice())
@@ -211,8 +203,8 @@ fn account_name(base: &str, existing: Option<&ExistingConfig>) -> String {
     }
 }
 
-/// Offers to write the generated account to a configuration file that
-/// does not exist yet, printing it instead when the offer is declined.
+/// Offers to write the account to a configuration file not there yet,
+/// printing it instead when the offer is declined.
 fn save_or_print(printer: &mut impl Printer, path: &Path, config: GeneratedConfig) -> Result<()> {
     let prompt = format!("Save this account to {}?", path.display());
 
@@ -236,8 +228,8 @@ fn save_or_print(printer: &mut impl Printer, path: &Path, config: GeneratedConfi
     Ok(())
 }
 
-/// Offers to append the generated account to the configuration file
-/// already there, printing it instead when the offer is declined.
+/// Offers to append the account to the configuration file already there,
+/// printing it instead when the offer is declined.
 fn append_or_print(printer: &mut impl Printer, path: &Path, config: GeneratedConfig) -> Result<()> {
     let prompt = format!("Append account `{}` to {}?", config.name, path.display());
 
@@ -250,11 +242,10 @@ fn append_or_print(printer: &mut impl Printer, path: &Path, config: GeneratedCon
         .open(path)
         .with_context(|| format!("Open the config file {}", path.display()))?;
 
-    // NOTE: appending text keeps every comment and every hand-written
-    // line of the file as they are, which parsing and re-serializing
-    // the whole document would not. The leading newline separates the
-    // two tables, and terminates the last line when the file ends
-    // without one.
+    // NOTE: appending text keeps every comment and hand-written line as
+    // it is, which re-serializing the whole document would not. The
+    // leading newline separates the two tables, and terminates the last
+    // line when the file ends without one.
     write!(file, "\n{config}")
         .with_context(|| format!("Append to the config file {}", path.display()))?;
 
@@ -263,11 +254,10 @@ fn append_or_print(printer: &mut impl Printer, path: &Path, config: GeneratedCon
     Ok(())
 }
 
-/// Tells where the account landed, under which name, and what to run
-/// next.
+/// Tells where the account landed, under which name, and what to run next.
 ///
-/// The name matters here because it was never asked for: an account
-/// that did not claim the default is only reachable through `-a`.
+/// The name matters because it was never asked for: an account that did
+/// not claim the default is only reachable through `-a`.
 fn print_saved(path: &Path, config: &GeneratedConfig) {
     let name = &config.name;
 
@@ -302,8 +292,8 @@ mod tests {
         env::temp_dir().join(format!("carillon-configure-{id}.toml"))
     }
 
-    /// A minimal account watching a Maildir root, the one backend
-    /// needing no network to describe.
+    /// A minimal account watching a Maildir root, the one backend needing
+    /// no network to describe.
     #[cfg(feature = "maildir")]
     #[cfg_attr(
         not(any(feature = "imap", feature = "jmap", feature = "dav")),
@@ -322,8 +312,8 @@ mod tests {
         }
     }
 
-    /// An IMAP account the way the wizard builds one: an endpoint, a
-    /// SASL credential read from a command, a hook.
+    /// An IMAP account the way the wizard builds one: an endpoint, a SASL
+    /// credential read from a command, a hook.
     #[cfg(feature = "imap")]
     fn imap_account() -> crate::config::AccountConfig {
         use std::process::Command;

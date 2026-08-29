@@ -1,16 +1,18 @@
-//! Hook runner: fires the desktop notification and the shell command a
+//! # Hook
+//!
+//! The runner firing the desktop notification and the shell command a
 //! change is configured to trigger.
 //!
-//! Which hook a change calls for is its backend's to answer, since the
-//! tables are named after the domain each backend holds; what arrives
-//! here is the hook that answer resolved to, so one runner serves them
-//! all.
+//! Which hook a change calls for is its backend's to answer, the tables
+//! being named after the domain each backend holds; what arrives here is
+//! the hook that answer resolved to, so one runner serves them all.
 //!
-//! Notification summaries and bodies are templates expanded with
-//! [`subst`] (shell-style `$name` / `${name}`); the same variables are
-//! exported as environment variables on the spawned command, so both
-//! shapes template against one vocabulary. A failing hook is logged and
-//! never propagated, since a broken script must not stop the watch.
+//! Summaries and bodies are [`subst`] templates (`$name` / `${name}`),
+//! and the same variables are exported as environment variables on the
+//! spawned command, so both shapes template against one vocabulary.
+//!
+//! A failing hook is logged and never propagated, since a broken script
+//! must not stop the watch.
 
 use std::collections::BTreeMap;
 
@@ -28,8 +30,9 @@ use crate::{
 const ID_VAR: &str = "id";
 /// What a flag hook adds: the one flag its firing is about.
 const FLAG_VAR: &str = "flag";
-/// What an arrival adds, where the backend can read one. Nothing else
-/// resolves an envelope, so nothing else may name these.
+/// What an arrival adds, where its backend can read an envelope.
+///
+/// Nothing else resolves one, so nothing else may name these.
 const ENVELOPE_VARS: &[&str] = &[
     "subject",
     "date",
@@ -41,31 +44,30 @@ const ENVELOPE_VARS: &[&str] = &[
     "recipient_address",
 ];
 
-/// The collection a watch is on: what its backend calls it, and which
-/// one it is.
+/// The collection a watch is on: what its backend calls it, and which one
+/// it is.
 ///
-/// The name travels with the value because it is the backend's word,
-/// not carillon's: mail watches a `mailbox`, CalDAV a `calendar`,
-/// CardDAV an `addressbook`, and only a collection with no domain to
-/// name is a `collection`.
+/// The name travels with the value because it is the backend's word, not
+/// carillon's: mail watches a `mailbox`, CalDAV a `calendar`, CardDAV an
+/// `addressbook`.
 pub struct HookCollection<'a> {
+    /// The word the backend names its collection with.
     pub name: &'static str,
+    /// The collection itself, as the account configured it.
     pub value: &'a str,
 }
 
-/// What a hook's notification may name, which is what its event
-/// carries and no more.
+/// What a hook's notification may name, which is what its event carries
+/// and no more.
 ///
-/// It is both halves of the contract: the loader expands a template
-/// against it to refuse a name no firing could ever fill, and the
-/// runner seeds it empty so a name that is legitimate but absent from
-/// one item expands to nothing rather than dropping the notification.
+/// Both halves of the contract: the loader expands a template against it
+/// to refuse a name no firing could ever fill, and the runner seeds it
+/// empty so a legitimate name absent from one item expands to nothing.
 #[derive(Clone, Copy)]
 pub struct Vocabulary {
     /// What this backend calls the collection it watches.
     collection: &'static str,
-    /// Whether an envelope is resolved for this hook, which only the
-    /// IMAP arrival is.
+    /// Whether an arrival's envelope is resolved for this hook.
     envelope: bool,
     /// Whether this hook is about one flag.
     flag: bool,
@@ -131,10 +133,9 @@ impl<'a> VariableMap<'a> for Vocabulary {
 
 /// Refuses a notification naming anything its hook cannot fill.
 ///
-/// The check is the expansion itself, run against the vocabulary and
-/// nothing else, so it refuses exactly what a firing would and lets a
-/// `${name:default}` through, a default being how a template says it
-/// can do without the value.
+/// The check is the expansion itself, run against the vocabulary alone,
+/// so it refuses exactly what a firing would and lets `${name:default}`
+/// through: a default is how a template does without the value.
 pub fn validate(notify: Option<&NotifyConfig>, vocabulary: Vocabulary, hook: &str) -> Result<()> {
     let Some(notify) = notify else {
         return Ok(());
@@ -152,8 +153,7 @@ pub fn validate(notify: Option<&NotifyConfig>, vocabulary: Vocabulary, hook: &st
     Ok(())
 }
 
-/// Fires `hook` for `event`, with `summary` filled in when an arrival
-/// was resolved.
+/// Fires `hook` for `event`, with the summary a resolved arrival carries.
 pub fn run(
     hook: Hook<'_>,
     event: &WatchEvent,
@@ -181,8 +181,7 @@ fn run_item_hook(hook: &ItemHook, vars: BTreeMap<&'static str, String>) {
     fire(hook.notify.as_ref(), hook.cmd.as_ref(), &vars);
 }
 
-/// Fires a flag-level hook for the one flag that moved, honouring its
-/// optional filter.
+/// Fires a flag-level hook for the flag that moved, through its filter.
 fn run_flag_hook(hook: &FlagHook, id: &str, collection: HookCollection<'_>, flag: &str) {
     if !hook.flags.is_empty() && !matches_filter(hook, flag) {
         trace!("flag hook skipped: `{flag}` is not in the filter");
@@ -199,10 +198,9 @@ fn run_flag_hook(hook: &FlagHook, id: &str, collection: HookCollection<'_>, flag
 
 /// The variables an item-level hook templates against.
 ///
-/// The envelope ones carry a value only for a resolved arrival, and
-/// are present and empty otherwise: an envelope with no `From`, or an
-/// arrival whose resolution failed, must leave a gap in the
-/// notification rather than take the whole notification down.
+/// The envelope ones carry a value only for a resolved arrival and are
+/// present and empty otherwise: an envelope with no `From`, or a failed
+/// resolution, leaves a gap rather than dropping the notification.
 fn item_vars(
     id: &str,
     collection: HookCollection<'_>,
@@ -249,8 +247,7 @@ fn seeded(vocabulary: Vocabulary) -> BTreeMap<&'static str, String> {
         .collect()
 }
 
-/// Inserts the three variables naming one party: the combined form, the
-/// personal name and the address.
+/// Inserts the three variables naming one party: combined, name, address.
 fn insert_party(
     vars: &mut BTreeMap<&'static str, String>,
     keys: (&'static str, &'static str, &'static str),
@@ -315,9 +312,9 @@ fn fire_notification(config: &NotifyConfig, vars: &BTreeMap<&'static str, String
 
 /// Spawns the hook command with the variables in its environment.
 ///
-/// Both TOML shapes (a string handed to the platform shell, a list
-/// spawned directly) are flattened into one [`std::process::Command`]
-/// at deserialization time, so the runtime path is uniform here.
+/// Both TOML shapes, a string handed to the platform shell and a list
+/// spawned directly, are flattened into one [`std::process::Command`] at
+/// deserialization time, so there is one runtime path here.
 fn run_command(cmd: &HookCmd, vars: &BTreeMap<&'static str, String>) -> Result<()> {
     let status = cmd
         .clone()
@@ -361,8 +358,7 @@ mod tests {
     }
 
     /// The regression this validation exists for: a removal whose body
-    /// asks for an envelope fired nothing and only warned, because an
-    /// expunged message has no envelope to read.
+    /// asked for an envelope fired nothing and only warned.
     #[test]
     fn an_envelope_variable_is_refused_where_nothing_resolves_one() {
         let notify = notified("$subject");

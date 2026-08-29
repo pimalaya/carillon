@@ -93,7 +93,9 @@ The configuration is loaded from the first existing path among:
 
 Override the path with `carillon -c <PATH>` or `CARILLON_CONFIG=<PATH>`. Multiple paths can be passed at once, separated by `:`; the first is the base and the rest are deep-merged on top. The full field reference lives in [config.sample.toml](./config.sample.toml).
 
-Run `carillon` with no command to launch the wizard, `carillon configure` to run it again later. It discovers from your email address the services your provider publishes, asks which one to watch and how to authenticate, picks the best watch method the server supports, tests the connection, then saves the account or prints it for you to place by hand.
+Run `carillon` with no command to launch the wizard, `carillon configure` to run it again later. It discovers the services your provider publishes from your email address, asks which one to watch and how to authenticate, then tests the connection.
+
+The watch method is never asked: an account takes the best one its backend supports. The result is saved, appended to the configuration already there, or printed for you to place by hand.
 
 An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`) carrying the collection it watches, how it watches it (`watch`) and what it fires (`hook`). Declaring several is allowed, `-b/--backend` then selecting one.
 

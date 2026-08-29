@@ -1,18 +1,20 @@
-//! WebDAV backend: an RFC 6578 `sync-collection` poll over a DAV
+//! # WebDAV
+//!
+//! The WebDAV backend: an RFC 6578 `sync-collection` poll over a DAV
 //! collection, whichever domain it holds.
 //!
-//! CalDAV and CardDAV are WebDAV, so one poll serves both of
-//! carillon's DAV backends; what differs is what a member is called,
-//! and that is [`DavKind`]. An addressbook holds cards, known before
-//! the first request. A calendar holds events, tasks, or both, so it
-//! is asked what it supports when the watch starts.
+//! CalDAV and CardDAV are WebDAV, so one poll serves both DAV backends;
+//! what differs is what a member is called, and that is [`DavKind`]. An
+//! addressbook holds cards, known before the first request; a calendar
+//! holds events, tasks or both, so it is asked when the watch starts.
 //!
-//! The report asks for `getetag` only, so a poll carries no vCard and
-//! no VEVENT. It reports created and updated members together, so the
+//! The report asks for `getetag` only, so a poll carries no vCard and no
+//! VEVENT. Created and updated members are reported together, so the
 //! backend keeps an href to etag picture and reads the difference: an
 //! unseen href is an arrival, a known one whose etag moved is an edit.
-//! The domain of each member is remembered beside its etag, a removal
-//! having only an href left to be recognised by.
+//!
+//! Each member's domain is remembered beside its etag, a removal having
+//! only an href left to be recognised by.
 
 use std::{
     collections::BTreeMap,
@@ -54,11 +56,9 @@ use crate::{
 /// How long the watch waits between two reports, unless the config
 /// says otherwise.
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
-/// How long a poll may sit in a read before looking at the shutdown
-/// flag again.
+/// How long a poll may sit in a read before looking at the shutdown flag.
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
-/// How long the watch sleeps at a time between polls, so a shutdown is
-/// noticed promptly.
+/// How long the watch sleeps at a time, so a shutdown is noticed promptly.
 const POLL_STEP: Duration = Duration::from_millis(200);
 /// Per-read scratch buffer.
 const READ_BUF: usize = 8 * 1024;
@@ -86,8 +86,7 @@ pub enum DavKind {
 ///
 /// The stream carries a read deadline and hands back the failures that
 /// only mean "not ready yet", so a poll against a server that stopped
-/// answering ends at the next deadline instead of holding the thread
-/// for as long as the transport would.
+/// answering ends at the next deadline rather than holding the thread.
 pub fn open(config: DavServer<'_>) -> Result<WebdavClientStd> {
     let url = Url::parse(config.server)
         .with_context(|| format!("Invalid DAV server URL `{}`", config.server))?;
@@ -133,9 +132,9 @@ pub fn open(config: DavServer<'_>) -> Result<WebdavClientStd> {
 /// Watches the configured collection until `shutdown` is set, calling
 /// `on_event` for every change.
 ///
-/// The first report runs without a token: it enumerates the collection
-/// and is the baseline, so it reports nothing. Everything after it is
-/// read against that picture.
+/// The first report runs with no token: it enumerates the collection and
+/// is the baseline, so it reports nothing. Everything after is read
+/// against that picture.
 pub fn watch(
     config: DavServer<'_>,
     kind: DavKind,
@@ -157,14 +156,14 @@ pub fn watch(
             break;
         }
 
-        // NOTE: a truncated report means the server stopped early and
-        // the rest is waiting behind the token it just handed back, so
-        // it is drained now rather than at the next interval.
+        // NOTE: a truncated report means the server stopped early and the
+        // rest waits behind the token it just handed back, so it is
+        // drained now rather than at the next interval.
         loop {
             let delta = match sync(&mut client, &collection, token.as_deref(), shutdown) {
                 Ok(delta) => delta,
                 // NOTE: a rejected token means the server's history no
-                // longer reaches that far. Enumerating again is the
+                // longer reaches that far, so enumerating again is the
                 // only answer, and a re-baseline is not news.
                 Err(err) if is_invalid_token(&err) => {
                     warn!("dav sync token rejected, re-enumerating the collection");
@@ -202,12 +201,11 @@ pub fn watch(
 /// domain it turned out to hold.
 type Known = BTreeMap<String, (Option<String>, WatchDomain)>;
 
-/// How a member's domain is decided, once the collection has been
-/// asked what it holds.
+/// How a member's domain is decided, once the collection has been asked
+/// what it holds.
 enum Domains {
-    /// Every member is the same thing, which is what an addressbook, a
-    /// plain collection and a single-component calendar all are. Costs
-    /// nothing per member.
+    /// Every member is the same thing, which an addressbook and a
+    /// single-component calendar both are, and which costs nothing.
     Fixed(WatchDomain),
     /// A calendar holding several components, where a member has to be
     /// recognised by the `component` parameter of its content type.
@@ -215,13 +213,12 @@ enum Domains {
 }
 
 impl Domains {
-    /// Asks the collection what it holds, which only a calendar has to
-    /// be asked.
+    /// Asks the collection what it holds, which only a calendar has to be
+    /// asked.
     ///
-    /// A calendar advertising one component answers for all its
-    /// members at once. Hooks naming a component it does not hold are
-    /// refused here, since a hook that could never fire is a
-    /// configuration error rather than a quiet no-op.
+    /// A calendar advertising one component answers for every member at
+    /// once. Hooks naming a component it does not hold are refused here,
+    /// a hook that could never fire being a configuration error.
     fn resolve(
         client: &mut WebdavClientStd,
         collection: &str,
@@ -235,9 +232,8 @@ impl Domains {
 
         let held = components(client, collection, shutdown)?;
 
-        // NOTE: a server that does not answer the property leaves the
-        // hooks as the only statement of what the calendar holds,
-        // which is what the account said it wanted.
+        // NOTE: a server not answering the property leaves the hooks as
+        // the only statement of what the calendar holds.
         let held = if held.is_empty() {
             wanted.clone()
         } else {
@@ -307,8 +303,8 @@ fn reconcile(
     let mut events = Vec::new();
 
     for href in delta.vanished {
-        // NOTE: a vanished member is gone, so what it was can only
-        // come from what the watch remembered of it.
+        // NOTE: a vanished member is gone, so what it was can only come
+        // from what the watch remembered of it.
         if let Some((_etag, domain)) = known.remove(&href) {
             events.push(WatchEvent::ItemRemoved { domain, id: href });
         }
@@ -316,8 +312,8 @@ fn reconcile(
 
     for change in delta.changed {
         match known.get(&change.href) {
-            // NOTE: an href never seen before is an arrival, and the
-            // one place a member's domain has to be worked out.
+            // NOTE: an href never seen before is an arrival, and the one
+            // place a member's domain has to be worked out.
             None => {
                 let Some(domain) = domains.of(client, &change.href, shutdown) else {
                     continue;
@@ -329,10 +325,9 @@ fn reconcile(
                     id: change.href,
                 });
             }
-            // NOTE: RFC 6578 does not say whether a member was created
-            // or updated, so a known href is an edit, and only when its
-            // etag actually moved: a server is free to re-report a
-            // member that did not change.
+            // NOTE: RFC 6578 does not say whether a member was created or
+            // updated, so a known href is an edit, and only when its etag
+            // moved: a server may re-report an unchanged member.
             Some((before, domain)) => {
                 let domain = *domain;
                 let moved = *before != change.etag;
@@ -360,8 +355,8 @@ fn reconcile(
 /// difference against.
 ///
 /// A mixed calendar reads every member's content type in one PROPFIND
-/// here, rather than one request per member, so the cost of holding
-/// two kinds of thing is paid once at startup.
+/// rather than one request per member, so holding two kinds of thing is
+/// paid for once, at startup.
 fn baseline(
     client: &mut WebdavClientStd,
     collection: &str,
@@ -391,11 +386,11 @@ fn baseline(
     Ok((known, delta.sync_token))
 }
 
-/// Reads the components a CalDAV calendar holds, mapped onto the
-/// domains its hooks are named after.
+/// Reads the components a CalDAV calendar holds, mapped onto the domains
+/// its hooks are named after.
 ///
-/// An empty answer is a server that does not carry the property, not a
-/// calendar holding nothing.
+/// An empty answer is a server not carrying the property, not a calendar
+/// holding nothing.
 fn components(
     client: &mut WebdavClientStd,
     collection: &str,
@@ -421,8 +416,7 @@ fn components(
                 Some(name) if name.eq_ignore_ascii_case("VEVENT") => WatchDomain::Event,
                 Some(name) if name.eq_ignore_ascii_case("VTODO") => WatchDomain::Task,
                 // NOTE: VJOURNAL, VFREEBUSY and VTIMEZONE name no hook,
-                // so a calendar holding them holds nothing carillon
-                // reports.
+                // so a calendar holding them holds nothing to report.
                 _ => continue,
             };
 
@@ -471,9 +465,8 @@ fn content_type(
         .map(ToString::to_string))
 }
 
-/// Reads a CalDAV content type's `component` parameter (RFC 4791
-/// §10.1), which is what tells a VEVENT from a VTODO without reading
-/// either.
+/// Reads a content type's `component` parameter (RFC 4791 §10.1), which
+/// tells a VEVENT from a VTODO without reading either.
 fn component(content_type: Option<&str>) -> Option<WatchDomain> {
     let value = content_type?
         .split(';')
@@ -620,9 +613,10 @@ fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
     !shutdown.load(Ordering::SeqCst)
 }
 
-/// Opens the collection and runs one report, which is what `check`
-/// needs: it proves the transport, the credential and that the
-/// collection is where the config says.
+/// Opens the collection and runs one report, which is what `check` needs.
+///
+/// It proves the transport, the credential, and that the collection is
+/// where the configuration says.
 pub fn probe(config: DavServer<'_>, collection: &str, shutdown: &Arc<AtomicBool>) -> Result<()> {
     let mut client = open(config)?;
     let collection = path(&client, collection);
@@ -633,9 +627,9 @@ pub fn probe(config: DavServer<'_>, collection: &str, shutdown: &Arc<AtomicBool>
 
 /// Resolves the account's collection into the request path.
 ///
-/// An absolute path is taken as it stands; anything else is read under
-/// the server URL's own path, so the backend `server` names the DAV
-/// root and the collection names what to watch under it.
+/// An absolute path is taken as it stands, anything else read under the
+/// server URL's own path: `server` names the DAV root, the collection
+/// what to watch under it.
 fn path(client: &WebdavClientStd, collection: &str) -> String {
     if collection.starts_with('/') {
         return collection.to_string();

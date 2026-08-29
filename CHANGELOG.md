@@ -18,7 +18,9 @@ First release, renamed from mirador. The binary, the config directory, the `CARI
 
 - Watched an IMAP mailbox, over a held RFC 2177 idle connection or a poll.
 
-  The watch is io-imap's own, so carillon owns no watcher, and it needs no QRESYNC: io-imap re-reads the mailbox and diffs locally against a server that lacks it. `imap.sasl` takes one of `plain`, `login`, `anonymous`, `oauthbearer`, `xoauth2` and `scram-sha-256`, and the RFC 4959 SASL-IR and RFC 2971 ID quirks are configurable for the providers that need them.
+  The watch is io-imap's own, so carillon owns no watcher, and it needs no QRESYNC: io-imap re-reads the mailbox and diffs locally against a server that lacks it.
+
+  `imap.sasl` takes one of `plain`, `login`, `anonymous`, `oauthbearer`, `xoauth2` and `scram-sha-256`, and the RFC 4959 SASL-IR and RFC 2971 ID quirks are configurable for the providers that need them.
 
 - Watched a JMAP mailbox, over the RFC 8620 event stream or an `Email/changes` poll.
 
@@ -34,11 +36,15 @@ First release, renamed from mirador. The binary, the config directory, the `CARI
 
 - Fired a desktop notification, a shell command, or both, on every change.
 
-  Hooks live under the `hook` table of the backend that fires them (`hooks` also reads), named after what that backend holds: `on-message-*` over IMAP, JMAP and Maildir, `on-card-*` over CardDAV, `on-event-*` and `on-task-*` over CalDAV, and `on-flag-*` wherever flags exist. A `cmd` is a string handed to the platform shell or a `[program, args…]` list spawned directly, and the placeholders reach it as environment variables either way.
+  Hooks live under the `hook` table of the backend that fires them (`hooks` also reads), named after what that backend holds: `on-message-*` over IMAP, JMAP and Maildir, `on-card-*` over CardDAV, `on-event-*` and `on-task-*` over CalDAV, and `on-flag-*` wherever flags exist.
+
+  A `cmd` is a string handed to the platform shell or a `[program, args…]` list spawned directly, and the placeholders reach it as environment variables either way.
 
 - Checked every hook against what its backend and its event can carry, when the configuration is read.
 
-  A hook a backend can never fire is refused, and so is a notification naming a variable its event cannot fill. `$id` is available everywhere, the collection under the name its backend configures it as (`$mailbox`, `$calendar`, `$addressbook`), `$flag` on a flag hook, and the envelope names on the IMAP and JMAP arrival hooks alone. Write `${name:default}` where a hook can do without the value.
+  A hook a backend can never fire is refused, and so is a notification naming a variable its event cannot fill.
+
+  `$id` is available everywhere, the collection under the name its backend configures it as (`$mailbox`, `$calendar`, `$addressbook`), `$flag` on a flag hook, and the envelope names on the IMAP and JMAP arrival hooks alone. Write `${name:default}` where a hook can do without the value.
 
 - Reported flags under one set of names whatever the backend spells them as.
 
@@ -54,7 +60,11 @@ First release, renamed from mirador. The binary, the config directory, the `CARI
 
 - Generated a working account from one prompt with `carillon configure` (alias `wizard`).
 
-  It discovers the services reachable from an email address, asks which one to watch and how to authenticate against it, collects the credential through the OS keyring and OAuth-broker picker, and tests the connection before writing anything. The IMAP mechanism menu is read from the server's own `CAPABILITY`, and the watch method is never asked: an account takes the best one its backend has. A DAV account is completed from the server, its calendars or addressbooks listed under the home-set. The account is then saved, appended to the configuration already there, or printed on stdout.
+  It discovers the services reachable from an email address, asks which one to watch and how to authenticate against it, collects the credential through the OS keyring and OAuth-broker picker, and tests the connection before writing anything.
+
+  The IMAP mechanism menu is read from the server's own `CAPABILITY`, and the watch method is never asked: an account takes the best one its backend has. A DAV account is completed from the server, its calendars or addressbooks listed under the home-set.
+
+  The account is then saved, appended to the configuration already there, or printed on stdout.
 
 - Offered that wizard from a bare `carillon`, and from any command finding no configuration.
 

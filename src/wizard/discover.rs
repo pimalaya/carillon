@@ -1,30 +1,26 @@
-//! Account discovery, the half of the wizard that decides what the
-//! account watches.
+//! # Discover
 //!
-//! What becomes of the discovered account, a file to create, a block to
-//! append or a document on stdout, belongs to [`super::configure`],
-//! which is also where the welcome and the prompts around this one
-//! live.
+//! The half of the wizard deciding what the account watches.
 //!
-//! One prompt takes an email address, a server URL, or a local folder
-//! path, and its shape orients the setup:
+//! One prompt takes an email address, a server URL or a local folder
+//! path, and its shape orients the setup: an email or a bare domain
+//! searches every service carillon can watch (see [`super::search`]).
 //!
-//! - an email (or bare domain) searches every service carillon can
-//!   watch (see [`super::search`]) and every reachable one becomes a
-//!   selectable entry; picking one then prompts its authentication
-//!   method among those advertised;
-//! - a `scheme://` URL discovers from its host, its scheme narrowing
-//!   the results;
-//! - an existing folder is a local Maildir.
+//! A `scheme://` URL discovers from its host, the scheme narrowing the
+//! results, and an existing folder is a local Maildir. Picking a
+//! discovered service then prompts its authentication method, among those
+//! it advertised.
 //!
-//! The wizard only configures what it can discover automatically. When
-//! discovery finds nothing for the given input it stops and points at
-//! the documented sample, rather than prompting for a hand-entered
-//! config.
+//! The wizard configures only what it can discover automatically: finding
+//! nothing, it stops and points at the documented sample rather than
+//! prompting for a hand-entered config.
 //!
-//! carillon runs no OAuth 2.0 grant itself: a grant only unlocks the
+//! carillon runs no OAuth 2.0 grant itself, a grant only unlocking the
 //! external token brokers (Ortie, pizauth, oama) behind the API token
-//! credential prompt (see [`super::secret`]).
+//! prompt (see [`super::secret`]).
+//!
+//! What becomes of the discovered account belongs to
+//! [`super::configure`], which is also where the welcome lives.
 
 use std::path::PathBuf;
 
@@ -53,13 +49,12 @@ use crate::{
     wizard::search::{self, Discovered, DiscoveredKind},
 };
 
-/// Discovers one account from a single prompt, tests it, and hands
-/// back the name it proposes with the account itself.
+/// Discovers one account from a single prompt, tests it, and hands back
+/// the name it proposes with the account itself.
 ///
-/// Every flow tests the connection it configured, since that
-/// connection is also what tells the wizard the collection to watch
-/// and the best method to watch it with. What happens to the account
-/// afterwards belongs to [`super::configure`].
+/// Every flow tests what it configured, that connection being also what
+/// tells the wizard the collection to watch and the best method to watch
+/// it with.
 pub fn run() -> Result<(String, AccountConfig)> {
     let input = prompt::text("Email:", None)?;
     let input = input.trim();
@@ -68,9 +63,8 @@ pub fn run() -> Result<(String, AccountConfig)> {
         bail!("Empty input: enter an email address, a server URL, or a folder path");
     }
 
-    // NOTE: the account name is just the TOML table key, so it is
-    // derived from the input rather than prompted; the user renames it
-    // by hand.
+    // NOTE: the account name is only the TOML table key, so it is derived
+    // from the input rather than prompted.
     let account_name = default_account_name(input);
     let account = build_account(&account_name, input)?;
 
@@ -80,9 +74,9 @@ pub fn run() -> Result<(String, AccountConfig)> {
 /// Orients the setup from the input shape, then folds the configured
 /// backend into a fresh [`AccountConfig`].
 ///
-/// The account is left non-default here. Whether it claims the default
-/// depends on what the configuration already holds, which discovery
-/// does not read, so [`super::configure`] decides it.
+/// The account is left non-default: claiming it depends on what the
+/// configuration already holds, which discovery does not read, so
+/// [`super::configure`] decides.
 fn build_account(account_name: &str, input: &str) -> Result<AccountConfig> {
     let account = AccountConfig::default();
 
@@ -101,9 +95,8 @@ fn configure_discovered(
     input: &str,
     mut account: AccountConfig,
 ) -> Result<AccountConfig> {
-    // NOTE: a `scheme://host` URL discovers from its host, and its scheme
-    // narrows the results; an email or bare domain discovers from the
-    // domain with no scheme filter.
+    // NOTE: a `scheme://host` URL discovers from its host and narrows on
+    // its scheme; an email or bare domain discovers with no filter.
     let (email, scheme) = if input.contains("://") {
         let url = Url::parse(input).with_context(|| format!("Invalid server URL `{input}`"))?;
         let host = url.host_str().unwrap_or_default().to_string();
@@ -196,12 +189,11 @@ fn configure_local(_account: AccountConfig, input: &str) -> Result<AccountConfig
     bail!("`{input}` looks like a folder path, but no local backend is compiled in")
 }
 
-/// Keeps only the discovered entries a `scheme://` URL asked for:
-/// `imap` and `imaps` keep IMAP (with `imaps` requiring an
-/// implicit-TLS endpoint), the HTTP-family schemes keep every service
-/// that speaks over HTTP, since a DAV root and a JMAP session are told
-/// apart by the path rather than by the scheme. An unknown scheme is
-/// rejected outright.
+/// Keeps only the discovered entries a `scheme://` URL asked for.
+///
+/// `imap` and `imaps` keep IMAP, `imaps` requiring an implicit-TLS
+/// endpoint; an HTTP-family scheme keeps every service speaking HTTP, a
+/// DAV root and a JMAP session being told apart by their path.
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 fn retain_scheme(found: &mut Vec<Discovered>, scheme: &str) -> Result<()> {
     match scheme {
@@ -221,11 +213,10 @@ fn retain_scheme(found: &mut Vec<Discovered>, scheme: &str) -> Result<()> {
     Ok(())
 }
 
-/// Stops the wizard when discovery found nothing to configure for
-/// `input`: it prints where to go next (a hand-written config, seeded
-/// from the documented sample) and errors out, rather than dropping
-/// into a hand-entry flow. carillon's wizard only ever configures what
-/// it can discover automatically.
+/// Stops the wizard when discovery found nothing to configure.
+///
+/// It names the documented sample to seed a hand-written config from,
+/// then errors out: the wizard only ever configures what it discovered.
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 fn stop_undiscovered(input: &str) -> Result<AccountConfig> {
     bail!(
@@ -245,9 +236,8 @@ fn retain_supported(found: &mut Vec<Discovered>) {
     });
 }
 
-/// Proposes a default account name from the input shape: the first
-/// label of the domain (of an email, host, or bare domain), or the
-/// folder name of a local path.
+/// The account name the input proposes: the first label of its domain, or
+/// the folder name of a local path.
 fn default_account_name(input: &str) -> String {
     if is_path(input) {
         return root(input)
@@ -282,8 +272,7 @@ fn root(input: &str) -> PathBuf {
 }
 
 /// Whether the input names a filesystem path (absolute, home-relative,
-/// explicitly relative, or a `file://` URL) rather than a network
-/// endpoint.
+/// explicitly relative or a `file://` URL) rather than an endpoint.
 fn is_path(input: &str) -> bool {
     input.starts_with("file://")
         || input.starts_with('/')

@@ -1,9 +1,9 @@
-//! Backend selection for cross-protocol commands.
+//! # Backend
 //!
-//! Same shape as [himalaya CLI's `Backend`]: `Auto` picks the first
-//! configured backend in a fixed priority order; the named variants
-//! pin the active backend to that protocol and bail when the account
-//! has no matching config block.
+//! The backend selection cross-protocol commands share, in the shape
+//! [himalaya CLI's `Backend`] has: `Auto` takes the first configured
+//! block in a fixed priority order, a named variant pins that protocol
+//! and bails when the account declares none.
 //!
 //! CalDAV and CardDAV are two names rather than one, since what a
 //! collection holds is what its events are called, and a backend that
@@ -37,22 +37,27 @@ pub enum Backend {
 
 #[allow(unused)]
 impl Backend {
+    /// Whether an `imap` block may be used.
     pub fn allows_imap(self) -> bool {
         matches!(self, Self::Auto | Self::Imap)
     }
 
+    /// Whether a `jmap` block may be used.
     pub fn allows_jmap(self) -> bool {
         matches!(self, Self::Auto | Self::Jmap)
     }
 
+    /// Whether a `maildir` block may be used.
     pub fn allows_maildir(self) -> bool {
         matches!(self, Self::Auto | Self::Maildir)
     }
 
+    /// Whether a `caldav` block may be used.
     pub fn allows_caldav(self) -> bool {
         matches!(self, Self::Auto | Self::Caldav)
     }
 
+    /// Whether a `carddav` block may be used.
     pub fn allows_carddav(self) -> bool {
         matches!(self, Self::Auto | Self::Carddav)
     }

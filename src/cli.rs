@@ -1,8 +1,10 @@
-//! Top-level CLI parser and subcommand dispatcher.
+//! # Parser
 //!
-//! Nothing works without a configuration, so the two invocations that
-//! can find none, a bare `carillon` and a command needing an account,
-//! both offer to generate one rather than failing on it.
+//! The top-level CLI parser and subcommand dispatcher.
+//!
+//! Nothing works without a configuration, so the two invocations that can
+//! find none, a bare `carillon` and a command needing an account, both
+//! offer to generate one rather than failing on it.
 
 use std::{
     io::{IsTerminal, stdin},
@@ -47,33 +49,27 @@ use crate::{
 pub struct Cli {
     /// The command to run.
     ///
-    /// Omitted, a bare `carillon` offers to generate a configuration
-    /// when it finds none, since running the binary with no argument is
-    /// what a newcomer does first, and shows this help otherwise.
+    /// Omitted, a bare `carillon` offers to generate a configuration when
+    /// it finds none, and shows this help otherwise.
     #[command(subcommand)]
     pub command: Option<Command>,
-
     /// Override the default configuration file path.
     ///
-    /// Paths are shell-expanded then canonicalized; multiple paths
-    /// may be delimited by `:` and are merged left-to-right.
+    /// Paths are shell-expanded then canonicalized; multiple paths may be
+    /// delimited by `:` and are merged left-to-right.
     #[arg(short, long = "config", global = true, env = "CARILLON_CONFIG")]
     #[arg(value_name = "PATH", value_parser = path_parser, value_delimiter = ':')]
     pub config_paths: Vec<PathBuf>,
-
     #[command(flatten)]
     pub account: AccountFlag,
-
     /// Force a specific backend.
     ///
-    /// Carillon only opens one connection per `watch`, so when more
-    /// than one of `imap`, `jmap`, `maildir`, `caldav`, `carddav` is
-    /// declared on the account this flag picks which one is used. With
-    /// `auto` (default), the priority order is IMAP, JMAP, Maildir,
-    /// CalDAV, CardDAV; the first configured block wins.
+    /// One connection is opened per `watch`, so this picks the block an
+    /// account declaring several is watched over. `auto`, the default,
+    /// takes the first configured, in the order IMAP, JMAP, Maildir,
+    /// CalDAV, CardDAV.
     #[arg(short, long, global = true, default_value_t)]
     pub backend: Backend,
-
     #[command(flatten)]
     pub json: JsonFlag,
     #[command(flatten)]
@@ -102,13 +98,9 @@ pub enum Command {
 impl Cli {
     /// Runs the parsed command, or meets a bare invocation.
     ///
-    /// With no command there is nothing to run, so this is where a
-    /// newcomer lands: a missing configuration raises the offer, and an
-    /// existing one gets the help, which is also what a script or a
-    /// JSON caller gets since neither can answer a prompt. A file that
-    /// exists but fails to parse counts as a configuration, so the
-    /// offer never proposes to write over a broken one: the parse error
-    /// surfaces when a real command reads it.
+    /// A missing configuration raises the offer, anything else the help,
+    /// which is also what a script or a JSON caller gets. A broken file
+    /// counts as a configuration, so the offer never writes over one.
     pub fn execute(self, printer: &mut impl Printer) -> Result<()> {
         let config_paths = self.config_paths.as_ref();
         let account_name = self.account.name.as_deref();
@@ -123,8 +115,7 @@ impl Cli {
                 let path = Config::target_path(config_paths)?;
 
                 // NOTE: a bare invocation has nothing to run after the
-                // offer, so a declined one falls back to the help. The
-                // wizard already says what to run next when it ran.
+                // offer, so a declined one falls back to the help.
                 if offer_configuration(printer, config_paths, &path)? {
                     return Ok(());
                 }
@@ -140,6 +131,8 @@ impl Cli {
 }
 
 impl Command {
+    /// Runs the subcommand against the account and backend the global
+    /// flags name.
     pub fn execute(
         self,
         printer: &mut impl Printer,
@@ -159,32 +152,26 @@ impl Command {
 
 /// Loads the configuration a command runs against.
 ///
-/// A missing configuration is met with the wizard rather than with an
-/// error: the welcome frames what carillon is and offers to generate an
-/// account, then the command carries on either way. Accepting is what
-/// gives it a chance to work; declining leaves it to fail on the
-/// configuration it still has not got.
+/// A missing configuration is met with the wizard rather than an error:
+/// accepting gives the command a chance to work, declining leaves it to
+/// fail on the configuration it still has not got.
 pub fn load_config(printer: &mut impl Printer, config_paths: &[PathBuf]) -> Result<Config> {
     if let Some(config) = Config::load(config_paths)? {
         return Ok(config);
     }
 
-    // NOTE: the target path is where `-c` pointed, or the default
-    // location when it named none, so a mistyped path shows up as
-    // itself rather than as a generic first run.
+    // NOTE: the target path is where `-c` pointed, so a mistyped path
+    // shows up as itself rather than as a generic first run.
     let path = Config::target_path(config_paths)?;
 
-    // NOTE: nobody is there to answer a prompt in a script or a systemd
-    // unit, and a JSON consumer wants a failure it can read, so both
-    // skip the offer and fail below.
+    // NOTE: nobody answers a prompt in a script or a systemd unit, and a
+    // JSON consumer wants a failure it can read, so both fail below.
     if !printer.is_json() && stdin().is_terminal() {
         offer_configuration(printer, config_paths, &path)?;
     }
 
-    // NOTE: the wizard also prints the account instead of writing it,
-    // so having run it proves nothing: the configuration is looked up
-    // again, and the command fails the ordinary way when nothing
-    // landed.
+    // NOTE: the wizard also prints the account instead of writing it, so
+    // having run it proves nothing: the configuration is looked up again.
     match Config::load(config_paths)? {
         Some(config) => Ok(config),
         None => bail!(
@@ -194,14 +181,11 @@ pub fn load_config(printer: &mut impl Printer, config_paths: &[PathBuf]) -> Resu
     }
 }
 
-/// Welcomes, then offers to generate a first configuration. Returns
-/// whether the wizard ran.
+/// Welcomes, then offers a first configuration, saying whether it ran.
 ///
-/// Raised from the two places nothing can happen without a
-/// configuration: a bare invocation, and a command that needs an
-/// account. It is a hook rather than a gate, so declining it decides
-/// nothing: what happens next is the caller's business, and for a
-/// command that is simply carrying on.
+/// Raised from the two places nothing can happen without a configuration:
+/// a bare invocation, and a command needing an account. It is a hook
+/// rather than a gate, so what a decline leads to is the caller's.
 fn offer_configuration(
     printer: &mut impl Printer,
     config_paths: &[PathBuf],

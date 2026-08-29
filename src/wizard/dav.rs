@@ -1,15 +1,17 @@
-//! CalDAV and CardDAV wizard.
+//! # DAV wizard
 //!
-//! Discovery names a context root, which is not yet something to
-//! watch: an account watches one collection, and which collections
-//! exist is behind the credential. So [`configure_discovered`] prompts
-//! the HTTP authentication scheme, connects, walks the principal and
-//! the home-set, and offers the calendars or the addressbooks it holds.
-//! That walk is the connection test.
+//! Discovery names a context root, which is not yet something to watch:
+//! an account watches one collection, and which collections exist is
+//! behind the credential.
 //!
-//! The connection is opened here rather than through [`crate::dav`]:
-//! the watch arms a read deadline so a poll cannot outlive a Ctrl+C,
-//! and a listing has no such deadline to respect.
+//! So [`configure_discovered`] prompts the HTTP authentication scheme,
+//! connects, walks the principal and the home-set, and offers the
+//! calendars or the addressbooks it holds. That walk is the connection
+//! test.
+//!
+//! The connection is opened here rather than through [`crate::dav`]: the
+//! watch arms a read deadline so a poll cannot outlive a Ctrl+C, and a
+//! listing has no such deadline to respect.
 
 use anyhow::{Context, Result, bail};
 use io_webdav::client::WebdavClientStd;
@@ -32,21 +34,24 @@ use crate::{
 const BASIC: &str = "Basic (username + password)";
 const BEARER: &str = "Bearer (API token)";
 
-/// The iCalendar components a calendar may hold, as RFC 4791 §5.2.3
-/// names them in `supported-calendar-component-set`.
+/// The iCalendar components a calendar may hold, as RFC 4791 §5.2.3 names
+/// them in `supported-calendar-component-set`.
 const VEVENT: &str = "VEVENT";
 const VTODO: &str = "VTODO";
 
 /// The DAV backend a discovered entry configured.
 pub enum Dav {
+    /// A calendar to watch.
     Caldav(Box<CaldavConfig>),
+    /// An addressbook to watch.
     Carddav(Box<CarddavConfig>),
 }
 
-/// Configures CalDAV or CardDAV from a discovered entry: the context
-/// root is pinned, the scheme is picked among those advertised
-/// (skipped when only one qualifies), then the collection to watch is
-/// chosen among those the account holds.
+/// Configures CalDAV or CardDAV from a discovered entry, whose context
+/// root is pinned.
+///
+/// The scheme is picked among those advertised, skipped when only one
+/// qualifies, then the collection to watch among those the account holds.
 pub fn configure_discovered(
     account_name: &str,
     email: &str,
@@ -95,9 +100,10 @@ pub fn configure_discovered(
     }
 }
 
-/// Opens the connection the listing runs on, which is also the
-/// connection test: a bad credential or an unreachable host fails here
-/// rather than yielding an account that cannot connect.
+/// Opens the connection the listing runs on, which is also the test.
+///
+/// A bad credential or an unreachable host fails here rather than
+/// yielding an account that cannot connect.
 fn connect(label: &str, server: &Url, auth: &DavAuthConfig) -> Result<WebdavClientStd> {
     let spinner = Spinner::start(format!("Testing {label} connection"));
 
@@ -118,9 +124,11 @@ fn connect(label: &str, server: &Url, auth: &DavAuthConfig) -> Result<WebdavClie
     }
 }
 
-/// Prompts the HTTP authentication scheme from `caps` (both offered
-/// when none was advertised), then its credentials. The Bearer token
-/// flow shows the OAuth brokers only when a grant was advertised.
+/// Prompts the HTTP authentication scheme from `caps`, both offered when
+/// none was advertised, then its credentials.
+///
+/// The Bearer flow shows the OAuth brokers only when a grant was
+/// advertised.
 fn prompt_auth(
     label: &str,
     account_name: &str,
@@ -160,8 +168,8 @@ fn prompt_auth(
     })
 }
 
-/// Lists the calendars of the account and asks which one to watch,
-/// returning the home-set they hang under with the chosen one.
+/// Lists the calendars of the account and asks which one to watch, with
+/// the home-set they hang under.
 fn prompt_calendar(client: &mut WebdavClientStd) -> Result<(Url, Choice)> {
     let home = client.calendar_home_set()?;
     let calendars = client.list_calendars()?;
@@ -185,7 +193,7 @@ fn prompt_calendar(client: &mut WebdavClientStd) -> Result<(Url, Choice)> {
 }
 
 /// Lists the addressbooks of the account and asks which one to watch,
-/// returning the home-set they hang under with the chosen one.
+/// with the home-set they hang under.
 fn prompt_addressbook(client: &mut WebdavClientStd) -> Result<(Url, Choice)> {
     let home = client.addressbook_home_set()?;
     let addressbooks = client.list_addressbooks()?;
@@ -208,7 +216,7 @@ fn prompt_addressbook(client: &mut WebdavClientStd) -> Result<(Url, Choice)> {
     Ok((home, choice))
 }
 
-/// One listed collection, as the pick list shows it and as the account
+/// One listed collection, as the pick list shows it and the account
 /// records it.
 struct Choice {
     label: String,
@@ -240,8 +248,8 @@ fn pick(prompt: &str, mut choices: Vec<Choice>) -> Result<Choice> {
     Ok(prompt::item(prompt, choices, None)?)
 }
 
-/// The pick-list label of a collection: its display name, falling back
-/// to the last segment of its URL, which is what the account records.
+/// The pick-list label of a collection: its display name, falling back to
+/// the last segment of its URL, which the account records.
 fn label(display_name: Option<&str>, id: &str) -> String {
     match display_name.map(str::trim).filter(|name| !name.is_empty()) {
         Some(name) => format!("{name} ({id})"),
@@ -255,10 +263,11 @@ fn path(home: &Url, id: &str) -> String {
     format!("{}/{id}/", home.path().trim_end_matches('/'))
 }
 
-/// The origin of the home-set, which is what `server` names: the
-/// collection is stored as an absolute path, so the root it hangs
-/// under has to be the authority actually serving it rather than the
-/// context root discovery started from, which may sit elsewhere.
+/// The origin of the home-set, which is what `server` names.
+///
+/// The collection is stored as an absolute path, so its root has to be
+/// the authority actually serving it rather than the context root
+/// discovery started from, which may sit elsewhere.
 fn origin(mut url: Url) -> String {
     url.set_path("");
     url.set_query(None);
@@ -267,11 +276,12 @@ fn origin(mut url: Url) -> String {
     url.to_string()
 }
 
-/// The hooks a generated calendar account fires: a desktop
-/// notification for every component the calendar advertises, since a
-/// hook naming a component it does not hold is refused when the watch
-/// starts. A calendar advertising none accepts any, so both are
-/// written.
+/// The hooks a generated calendar account fires: a notification for every
+/// component the calendar advertises.
+///
+/// A hook naming a component it does not hold is refused when the watch
+/// starts, and a calendar advertising none accepts any, so both are
+/// written there.
 fn caldav_hook(components: &[String]) -> CaldavHookConfig {
     let holds = |component: &str| {
         components.is_empty()
@@ -295,8 +305,8 @@ fn carddav_hook() -> CarddavHookConfig {
     }
 }
 
-/// A notification naming the item it fired for, which is all a DAV
-/// poll knows: it reads etags, never the event or the card itself.
+/// A notification naming the item it fired for, which is all a DAV poll
+/// knows: it reads etags, never the event or the card itself.
 fn notify(summary: &str) -> ItemHook {
     ItemHook {
         notify: Some(NotifyConfig {

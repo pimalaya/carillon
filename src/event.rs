@@ -1,21 +1,23 @@
-//! The change vocabulary every backend speaks, so that one hook
-//! runner serves all of them.
+//! # Event
 //!
-//! What a change is about travels with it as a [`WatchDomain`], which
-//! is what lets a hook be named after a message, a card, an event or
-//! a task while the runner below stays one shape. Not every backend
-//! can report every kind of change, which is the protocol talking
-//! rather than a gap: mail is immutable, so nothing mail reports an
-//! edit, and a WebDAV poll reads etags, so flags are unknown to it
+//! The change vocabulary every backend speaks, so that one hook runner
+//! serves them all.
+//!
+//! What a change is about travels with it as a [`WatchDomain`], which is
+//! what lets a hook be named after a message, a card, an event or a task
+//! while the runner below stays one shape.
+//!
+//! Not every backend reports every kind of change, which is the protocol
+//! talking rather than a gap: mail is immutable, so nothing mail reports
+//! an edit, and a WebDAV poll reads etags, so flags are unknown to it
 //! rather than empty.
 
 /// What a change is about, which is the noun its hook is named after.
 ///
 /// A backend fills it from what it holds: mail is always a message, a
 /// CardDAV member a card, and a CalDAV member an event or a task.
-// NOTE: which domains exist is the vocabulary's business; which of
-// them can be constructed depends on the backends compiled in, so a
-// reduced feature set leaves some unused by construction.
+// NOTE: which domains can be constructed depends on the backends
+// compiled in, so a reduced feature set leaves some unused.
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WatchDomain {
@@ -30,8 +32,7 @@ pub enum WatchDomain {
 }
 
 /// A change in a watched collection, keyed by the backend's own id.
-// NOTE: same reason as above: a reduced feature set leaves some
-// variants unused by construction.
+// NOTE: same reason as above, for the variants.
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WatchEvent {

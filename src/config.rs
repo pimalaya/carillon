@@ -1,19 +1,18 @@
-//! Carillon configuration.
+//! # Configuration
 //!
-//! The `[accounts.<name>]` block keeps the shape used by
-//! [himalaya CLI v2] and [himalaya TUI]: each backend lives under its
-//! own protocol key, declaring more than one is allowed, and the
-//! runtime picks the active one via `-b/--backend`. A whole file is
-//! not portable between the three binaries, every backend block being
-//! `deny_unknown_fields` on each side and carrying keys the others do
-//! not know.
+//! The TOML schema: one `[accounts.<name>]` block per account, in the
+//! shape [himalaya CLI v2] and [himalaya TUI] use, each backend under its
+//! own protocol key.
 //!
-//! Everything a backend needs lives under that backend: the collection
-//! it watches, under the name its own domain uses, how it watches, and
-//! the hooks it fires. What it reports and what a hook may template
-//! against are both the backend's, so each table declares only its own
-//! events and its own variables, and anything else is refused when the
-//! file is read.
+//! Declaring more than one backend is allowed, `-b/--backend` picking the
+//! active one. A whole file is not portable between the three binaries:
+//! every backend block is `deny_unknown_fields` on each side and carries
+//! keys the others do not know.
+//!
+//! Everything a backend needs lives under it: the collection it watches,
+//! under its own domain's name, how it watches, and the hooks it fires.
+//! What it reports and what a hook may template against are the backend's
+//! too, so anything else is refused when the file is read.
 //!
 //! [himalaya CLI v2]: https://github.com/pimalaya/himalaya
 //! [himalaya TUI]: https://github.com/pimalaya/himalaya-tui
@@ -55,25 +54,23 @@ use crate::{
     hook::{self, HookCollection, Vocabulary},
 };
 
-/// The documented sample configuration, pointed at wherever a
-/// configuration is missing and wherever the wizard stops short.
+/// The documented sample, pointed at wherever a configuration is missing
+/// and wherever the wizard stops short.
 pub const CONFIG_SAMPLE_URL: &str =
     "https://github.com/pimalaya/carillon/blob/master/config.sample.toml";
 
-/// The order a rendered account groups its keys in, most defining
-/// first: whether the account is the default, then the backend it
-/// watches.
+/// The order a rendered account groups its keys in, most defining first.
 ///
-/// A key outside this list still renders, after the ones listed, so a
-/// field added to [`AccountConfig`] can never go missing from a
-/// generated document just because nobody updated this table.
+/// A key outside this list still renders, after the listed ones, so a
+/// field added to [`AccountConfig`] can never go missing from a generated
+/// document because nobody updated this table.
 const RENDER_ORDER: [&str; 6] = ["default", "imap", "jmap", "maildir", "caldav", "carddav"];
 
-/// The keys a backend group leads with, in reading order: the
-/// collection it watches (under whichever name its domain uses), the
-/// server it watches it on, then the credential it authenticates with.
-/// Everything else follows alphabetically, since it only adjusts what
-/// those three state.
+/// The keys a backend group leads with, in reading order: the collection
+/// it watches, the server, then the credential.
+///
+/// Everything else follows alphabetically, only adjusting what those
+/// three state.
 const BACKEND_ORDER: [&str; 6] = [
     "mailbox",
     "calendar",
@@ -83,15 +80,16 @@ const BACKEND_ORDER: [&str; 6] = [
     "auth",
 ];
 
-/// Whether a value is what its type defaults to, which is what keeps a
-/// generated document down to what was actually configured.
+/// Whether a value is what its type defaults to, which keeps a generated
+/// document down to what was actually configured.
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
 }
 
 /// Ranks one dotted line inside its backend group, `imap.server = …`
-/// being ranked on `server`. The SASL table is the IMAP spelling of
-/// `auth`, so it ranks with it.
+/// ranking on `server`.
+///
+/// The SASL table is the IMAP spelling of `auth`, so it ranks with it.
 fn backend_rank(group: &str, line: &str) -> usize {
     let Some(key) = line
         .split_once(" = ")
@@ -139,21 +137,20 @@ impl TomlConfig for Config {
 }
 
 impl Config {
-    /// Loads the config from `config_paths`, or [`None`] when no file
-    /// resolves.
+    /// Loads the config from `config_paths`, [`None`] when none resolves.
     ///
     /// A missing file is not an error here: what to do about it is the
-    /// caller's, and for an interactive one that is to offer the
-    /// wizard (see [`crate::cli::load_config`]).
+    /// caller's, and for an interactive one that is to offer the wizard
+    /// (see [`crate::cli::load_config`]).
     pub fn load(config_paths: &[PathBuf]) -> Result<Option<Config>> {
         let Some(config) = Config::from_paths_or_default(config_paths)? else {
             return Ok(None);
         };
 
-        // NOTE: what a hook's notification may name is as fixed as
-        // which hooks a backend has, and serde cannot check it: a
-        // template is a string until something expands it. Doing it
-        // here keeps both refusals at load time.
+        // NOTE: what a notification may name is as fixed as which hooks a
+        // backend has, and serde cannot check it, a template being a
+        // string until something expands it. Here, both are refused at
+        // load time.
         for (name, account) in &config.accounts {
             account
                 .validate()
@@ -166,17 +163,15 @@ impl Config {
 
 /// Per-account configuration.
 ///
-/// `deny_unknown_fields` is intentionally omitted here so an account
-/// written for `himalaya` CLI v2 or `himalaya-tui` is still recognised:
-/// their account-level fields (`smtp`, `m2dir`, `display-name`,
-/// `signature`, …) coexist silently. The backend blocks are strict, so
-/// the tolerance stops at this level.
+/// `deny_unknown_fields` is deliberately omitted, so the account-level
+/// fields of himalaya CLI v2 and himalaya-tui coexist silently. The
+/// backend blocks are strict, so the tolerance stops at this level.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct AccountConfig {
+    /// Use this account when `-a/--account` names none.
     #[serde(default, skip_serializing_if = "is_default")]
     pub default: bool,
-
     #[cfg(feature = "imap")]
     #[serde(default)]
     pub imap: Option<ImapConfig>,
@@ -195,21 +190,16 @@ pub struct AccountConfig {
 }
 
 impl AccountConfig {
-    /// Renders this account as an `[accounts.<name>]` block, ready to
-    /// be written to a configuration file or appended to one.
+    /// Renders this account as an `[accounts.<name>]` block, to be written
+    /// to a configuration file or appended to one.
     ///
-    /// The serializer decides what is written, so a field left at its
-    /// default is omitted and nothing has to be listed here twice.
-    /// What this adds is reading order: the flattened dotted keys come
-    /// out alphabetically, which buries `imap.server` under the
-    /// credentials that authenticate against it and runs every group
-    /// together. The groups are reordered, the endpoint is lifted to
-    /// the top of its own, and a blank line separates them.
+    /// The serializer decides what is written, so a defaulted field is
+    /// omitted. What this adds is reading order: alphabetical dotted keys
+    /// bury `imap.server` under the credentials authenticating against it.
     pub fn render(&self, name: &str) -> Result<String> {
-        // NOTE: borrowed rather than built into a `Config`, which
-        // would mean cloning the account to render it. The emitter
-        // only looks for an `accounts` table, so any shape carrying
-        // one will do.
+        // NOTE: borrowed rather than built into a `Config`, which would
+        // mean cloning the account to render it. The emitter only looks
+        // for an `accounts` table, so any shape carrying one will do.
         #[derive(Serialize)]
         struct AccountDocument<'a> {
             accounts: HashMap<&'a str, &'a AccountConfig>,
@@ -220,8 +210,8 @@ impl AccountConfig {
         };
         let rendered = pimalaya_config::toml::to_string(&document)?;
 
-        // NOTE: the emitter writes the header itself, and everything below
-        // it is one dotted key per line.
+        // NOTE: the emitter writes the header itself, everything below it
+        // being one dotted key per line.
         let (header, body) = match rendered.split_once('\n') {
             Some((header, body)) => (header, body),
             None => return Ok(rendered),
@@ -252,9 +242,8 @@ impl AccountConfig {
                 document.push('\n');
             }
 
-            // NOTE: a backend reads the way it is explained: what it watches,
-            // where, who it authenticates as, then everything the
-            // account only adjusts.
+            // NOTE: a backend reads the way it is explained: what it
+            // watches, where, who it authenticates as, then the rest.
             lines.sort_by_key(|line| backend_rank(&key, line));
 
             for line in lines {
@@ -266,9 +255,8 @@ impl AccountConfig {
         Ok(document)
     }
 
-    /// Refuses a hook whose notification names a variable its event
-    /// cannot fill, which serde cannot see because a template is only
-    /// a string until it is expanded.
+    /// Refuses a hook whose notification names a variable its event cannot
+    /// fill, which serde cannot see: a template is a string until expanded.
     pub fn validate(&self) -> Result<()> {
         #[cfg(feature = "imap")]
         if let Some(imap) = &self.imap {
@@ -303,43 +291,36 @@ impl AccountConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ImapConfig {
-    /// The mailbox this account watches, and the only one it
-    /// watches: watching a second is a second account, which is also
-    /// how it gets its own hooks.
+    /// The one mailbox this account watches.
+    ///
+    /// Watching a second is a second account, which is also how it gets
+    /// its own hooks.
     pub mailbox: String,
-
-    /// IMAP server address. Either a bare authority
-    /// (`imap.example.org[:port]`, treated as `imaps://<authority>`
-    /// by default) or a full URL with `imap://` (cleartext, with
-    /// optional STARTTLS upgrade) or `imaps://` (implicit TLS) used
-    /// verbatim.
+    /// IMAP server address.
+    ///
+    /// A bare authority (`imap.example.org[:port]`) is read as
+    /// `imaps://<authority>`; an `imap://` (cleartext, optionally upgraded
+    /// with STARTTLS) or `imaps://` URL is used verbatim.
     pub server: String,
-
     #[serde(default)]
     pub tls: TlsConfig,
     #[serde(default, skip_serializing_if = "is_default")]
     pub starttls: bool,
-
-    /// Optional SASL credentials. When omitted, the connection skips
-    /// authentication entirely (no `AUTHENTICATE` is sent).
+    /// The SASL credentials, omitted to skip authentication entirely.
     pub sasl: Option<SaslConfig>,
-
-    /// Forces the RFC 4959 SASL-IR initial response on or off. Unset
-    /// follows the advertised `SASL-IR` capability, which Coremail
-    /// (126.com, 163.com) advertises falsely; set it to `false` there.
+    /// Forces the RFC 4959 SASL-IR initial response on or off.
+    ///
+    /// Unset follows the advertised `SASL-IR` capability, which Coremail
+    /// (126.com, 163.com) advertises falsely: set it to `false` there.
     #[serde(default)]
     pub sasl_ir: Option<bool>,
-
-    /// RFC 2971 `ID` extension quirks. Some providers (notably
-    /// mail.qq.com, fastmail) require an `ID` exchange straight after
-    /// authentication; set `id.auto = true` to opt in.
+    /// RFC 2971 `ID` quirks, `id.auto = true` opting in to the exchange
+    /// mail.qq.com and Fastmail require straight after authentication.
     #[serde(default)]
     pub id: ImapIdConfig,
-
     /// How this account learns about a change. Unset holds IDLE.
     #[serde(default)]
     pub watch: Option<ImapWatchConfig>,
-
     /// The hooks this backend fires.
     #[serde(default, alias = "hooks")]
     pub hook: ImapHookConfig,
@@ -350,29 +331,24 @@ pub struct ImapConfig {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ImapIdConfig {
-    /// When `true`, the auth coroutine chains an `ID` round-trip
-    /// after the tagged auth response. Default `false` skips ID
-    /// entirely.
+    /// Chains an `ID` round-trip after the tagged auth response.
     #[serde(default, skip_serializing_if = "is_default")]
     pub auto: bool,
-
-    /// Parameters sent with the auto-ID command. Empty (default)
-    /// sends `ID NIL`. For each entry: `true` substitutes carillon's
-    /// canned value for the well-known keys (`name`, `version`,
-    /// `vendor`, `support-url`) or `NIL` for unknown keys; `false`
-    /// always sends `NIL`. Keys absent from this map are not
-    /// transmitted.
+    /// Parameters sent with the auto-ID command, empty sending `ID NIL`.
+    ///
+    /// `true` sends carillon's canned value for the well-known keys
+    /// (`name`, `version`, `vendor`, `support-url`) and `NIL` for the
+    /// others, `false` always `NIL`. An absent key is not transmitted.
     #[serde(default)]
     pub fields: HashMap<String, bool>,
 }
 
-/// Resolves an [`ImapIdConfig`] into the wire-level parameter list
-/// passed to the io-imap auth coroutines.
+/// Resolves an [`ImapIdConfig`] into the wire parameters the io-imap auth
+/// coroutines take.
 ///
-/// [`None`] when `auto = false`; otherwise a vec where each entry
-/// maps the user-supplied key to either carillon's canned value
-/// (when the user set `true` and the key is well-known) or `NIL`.
-/// Unknown keys with `true` log a warning and fall back to `NIL`.
+/// [`None`] when `auto = false`. Each entry maps its key to carillon's
+/// canned value or to `NIL`, an unknown key asked for a canned value
+/// warning and falling back to `NIL`.
 #[cfg(feature = "imap")]
 pub fn resolve_auto_id_params(
     config: &ImapIdConfig,
@@ -424,27 +400,21 @@ fn canned_imap_id_value(key: &str) -> Option<&'static str> {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct JmapConfig {
     /// The mailbox this account watches, matched by name and
-    /// case-insensitively, falling back to the special-use role for
-    /// "INBOX".
+    /// case-insensitively, `INBOX` falling back to the special-use role.
     pub mailbox: String,
-
-    /// JMAP server address. Either a bare authority (`fastmail.com`,
-    /// `mail.example.org:8080`) for automatic discovery via
-    /// `GET /.well-known/jmap`, or a full URL pointing directly at
-    /// the session endpoint.
+    /// JMAP server address.
+    ///
+    /// A bare authority (`fastmail.com`, `mail.example.org:8080`) is
+    /// discovered through `GET /.well-known/jmap`, a full URL points
+    /// straight at the session endpoint.
     pub server: String,
-
     #[serde(default)]
     pub tls: TlsConfig,
-
-    /// Authentication. Exactly one of `header`, `bearer`, `basic`.
+    /// Authentication: exactly one of `header`, `bearer`, `basic`.
     pub auth: JmapAuthConfig,
-
-    /// How this account learns about a change. Unset holds an
-    /// EventSource stream.
+    /// How this account learns about a change. Unset holds the stream.
     #[serde(default)]
     pub watch: Option<JmapWatchConfig>,
-
     /// The hooks this backend fires.
     #[serde(default, alias = "hooks")]
     pub hook: JmapHookConfig,
@@ -469,18 +439,14 @@ pub enum JmapAuthConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct MaildirConfig {
-    /// The mailbox this account watches, resolved under `root`
-    /// through io-maildir's store; `.` and "INBOX" both name the
-    /// root itself.
+    /// The mailbox this account watches, resolved under `root` through
+    /// io-maildir's store; `.` and `INBOX` both name the root itself.
     pub mailbox: String,
-
     #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_path")]
     pub root: PathBuf,
-
     /// How this account learns about a change. Unset polls.
     #[serde(default)]
     pub watch: Option<MaildirWatchConfig>,
-
     /// The hooks this backend fires.
     #[serde(default, alias = "hooks")]
     pub hook: MaildirHookConfig,
@@ -609,10 +575,10 @@ pub struct SaslScramSha256Config {
 
 #[cfg(feature = "imap")]
 impl SaslConfig {
-    /// Resolves the SASL config into a runtime [`Sasl`]. `host` and
-    /// `port` come from the live server URL; they are only used by
-    /// OAUTHBEARER (echoed in the GS2 header) and ignored by every
-    /// other mechanism.
+    /// Resolves the SASL config into a runtime [`Sasl`].
+    ///
+    /// `host` and `port` come from the live server URL, and only
+    /// OAUTHBEARER uses them, echoed in its GS2 header.
     pub fn try_into_sasl(self, host: impl ToString, port: u16) -> Result<Sasl> {
         Ok(match self {
             SaslConfig::Anonymous(c) => Sasl::Anonymous(SaslAnonymousCreds { message: c.message }),
@@ -637,7 +603,7 @@ impl SaslConfig {
             }),
             // NOTE: an empty nonce means "draw one for me": the client
             // fills it before the exchange, an I/O-free coroutine having
-            // no way to generate randomness itself.
+            // no way to generate randomness.
             SaslConfig::ScramSha256(c) => Sasl::ScramSha256(SaslScramCreds {
                 username: c.username,
                 password: c.password.get()?,
@@ -648,9 +614,9 @@ impl SaslConfig {
     }
 }
 
-// NOTE: each backend names the collection it watches in its own
-// domain's word, and a hook templates against that same word, so the
-// name is declared once here and read by both.
+// NOTE: each backend names the collection it watches in its own domain's
+// word, and a hook templates against that same word, so the name is
+// declared once here and read by both.
 
 #[cfg(feature = "imap")]
 impl ImapConfig {
@@ -722,11 +688,10 @@ impl CarddavConfig {
     }
 }
 
-// NOTE: the hooks live under their backend, and each backend declares
-// only the events it reports, so a hook it cannot fire is refused when
-// the file is read rather than staying quiet forever. The events are
-// named after their domain, which is why the tables below do not share
-// a shape: mail has no edit and WebDAV has no flags.
+// NOTE: each backend declares only the events it reports, so a hook it
+// cannot fire is refused when the file is read rather than staying quiet
+// forever. The events are named after their domain, which is why the
+// tables below do not share a shape: mail has no edit, WebDAV no flags.
 
 /// Hooks an IMAP watch fires.
 #[cfg(feature = "imap")]
@@ -805,11 +770,10 @@ pub struct CarddavHookConfig {
     pub on_card_changed: Option<ItemHook>,
 }
 
-/// The hook one event resolved to, in whichever of the two shapes a
-/// hook is written.
-// NOTE: which shapes exist is the vocabulary's business; which of them
-// can be constructed depends on the backends compiled in, so a build
-// with no flag-carrying backend leaves one unused by construction.
+/// The hook one event resolved to, in either of the two shapes a hook is
+/// written in.
+// NOTE: which shapes can be constructed depends on the backends compiled
+// in, so a build with no flag-carrying backend leaves one unused.
 #[allow(dead_code)]
 pub enum Hook<'a> {
     /// An item-level hook: added, removed or changed.
@@ -872,7 +836,7 @@ impl MaildirHookConfig {
 #[cfg(feature = "dav")]
 impl CaldavHookConfig {
     /// The hook `event` calls for, which on a calendar depends on the
-    /// component the member turned out to be.
+    /// component its member turned out to be.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
         let hook = match event {
             WatchEvent::ItemAdded {
@@ -905,8 +869,8 @@ impl CaldavHookConfig {
         hook.as_ref().map(Hook::Item)
     }
 
-    /// The components this table has hooks for, which is what a
-    /// calendar advertising only some of them is checked against.
+    /// The components this table has hooks for, which a calendar
+    /// advertising only some of them is checked against.
     pub fn domains(&self) -> Vec<WatchDomain> {
         let mut domains = Vec::new();
 
@@ -947,8 +911,8 @@ impl CarddavHookConfig {
 impl ImapHookConfig {
     /// Refuses a notification naming what its event cannot fill.
     ///
-    /// IMAP is the one backend that resolves an arrival's envelope, so
-    /// it is the one whose arrival hook may name it.
+    /// IMAP resolves an arrival's envelope, on a second connection, so
+    /// its arrival hook may name one.
     pub fn validate(&self) -> Result<()> {
         hook::validate(
             self.on_message_added
@@ -1095,12 +1059,9 @@ impl CarddavHookConfig {
 
 /// Hook that fires for item-level events: added, removed, changed.
 ///
-/// Placeholders use shell-style `$name` / `${name}` syntax in the
-/// notification summary and body. Always available: `id`, `collection`.
-/// The envelope names (`subject`, `date`, `sender`, `sender_name`,
-/// `sender_address`, `recipient`, `recipient_name`,
-/// `recipient_address`) are resolved only for an arrival, and only by
-/// a backend that can read one, which today is IMAP alone.
+/// Summary and body template on `$name` / `${name}`, with `$id` and the
+/// collection always available. The envelope names (`$subject`, `$sender`,
+/// …) belong to an arrival on IMAP or JMAP, which read one.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ItemHook {
@@ -1110,10 +1071,9 @@ pub struct ItemHook {
 
 /// Hook that fires for flag-level events, once per flag that moved.
 ///
-/// `flags` optionally narrows it to the flags it names, matched
-/// case-insensitively with or without an IMAP backslash or a keyword
-/// dollar. The flag a firing is about reaches the templates as
-/// `$flag`.
+/// `flags` narrows it to the flags it names, matched case-insensitively
+/// with or without an IMAP backslash or a keyword dollar. The flag a
+/// firing is about reaches the templates as `$flag`.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct FlagHook {
@@ -1133,20 +1093,18 @@ pub struct NotifyConfig {
     pub body: String,
 }
 
-/// Shell-command payload. Deserialization delegates to
-/// [`pimalaya_config::command`]: a TOML string is wrapped through the
-/// platform shell (`/bin/sh -c <line>` on Unix, `cmd /C <line>` on
-/// Windows), a TOML list `[program, args…]` is spawned directly with
-/// no shell. Template vars are exported as environment variables on
-/// the spawned process in both shapes.
+/// Shell-command payload, deserialized by [`pimalaya_config::command`].
+///
+/// A TOML string goes through the platform shell (`/bin/sh -c <line>` on
+/// Unix, `cmd /C <line>` on Windows), a TOML list `[program, args…]` is
+/// spawned directly. Both shapes take the variables in their environment.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct HookCmd(#[serde(with = "command")] pub Command);
 
 impl Clone for HookCmd {
     fn clone(&self) -> Self {
-        // NOTE: `Command` itself is not `Clone`; rebuild a fresh one
-        // with the same program + args (mirrors `Secret`'s manual
-        // impl).
+        // NOTE: `Command` is not `Clone`, so a fresh one is rebuilt from
+        // the same program and args, as `Secret` does.
         let mut new = Command::new(self.0.get_program());
         new.args(self.0.get_args());
         Self(new)
@@ -1154,11 +1112,11 @@ impl Clone for HookCmd {
 }
 
 // NOTE: CalDAV and CardDAV are WebDAV, so the transport half is one
-// shape; what differs is the domain the collection holds, and that is
-// what names the events. Three blocks rather than one is what lets a
-// card hook on a calendar be refused when the file is read. The shape
-// is written out three times rather than shared through a flattened
-// struct, since serde cannot deny unknown fields across a flatten.
+// shape; what differs is the domain the collection holds, which is what
+// names the events. Two blocks rather than one is what lets a card hook
+// on a calendar be refused when the file is read, and they are written
+// out rather than flattened because serde cannot deny unknown fields
+// across a flatten.
 
 /// CalDAV configuration: one watched calendar, polled through RFC 6578
 /// `sync-collection`.
@@ -1166,17 +1124,15 @@ impl Clone for HookCmd {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CaldavConfig {
-    /// The calendar this account watches, read as a path under
-    /// `server`, or as an absolute path when it starts with a slash.
+    /// The calendar this account watches, read as a path under `server`,
+    /// or as an absolute path when it starts with a slash.
     pub calendar: String,
-
-    /// The DAV server URL, `http://` or `https://`, naming the DAV
-    /// root the calendar hangs under.
+    /// The DAV server URL, `http://` or `https://`, naming the root the
+    /// calendar hangs under.
     pub server: String,
     #[serde(default)]
     pub tls: TlsConfig,
-    /// Authentication. Defaults to none, for a calendar that is
-    /// readable without it.
+    /// Authentication, none by default, for a calendar readable without.
     #[serde(default, skip_serializing_if = "DavAuthConfig::is_none")]
     pub auth: DavAuthConfig,
     /// How this account learns about a change. Unset polls.
@@ -1195,14 +1151,12 @@ pub struct CarddavConfig {
     /// The addressbook this account watches, read as a path under
     /// `server`, or as an absolute path when it starts with a slash.
     pub addressbook: String,
-
-    /// The DAV server URL, `http://` or `https://`, naming the DAV
-    /// root the addressbook hangs under.
+    /// The DAV server URL, `http://` or `https://`, naming the root the
+    /// addressbook hangs under.
     pub server: String,
     #[serde(default)]
     pub tls: TlsConfig,
-    /// Authentication. Defaults to none, for an addressbook that is
-    /// readable without it.
+    /// Authentication, none by default, for a book readable without.
     #[serde(default, skip_serializing_if = "DavAuthConfig::is_none")]
     pub auth: DavAuthConfig,
     /// How this account learns about a change. Unset polls.
@@ -1213,8 +1167,8 @@ pub struct CarddavConfig {
     pub hook: CarddavHookConfig,
 }
 
-/// The transport half of a DAV backend, which a calendar, an
-/// addressbook and a plain collection share.
+/// The transport half of a DAV backend, shared by a calendar and an
+/// addressbook.
 #[cfg(feature = "dav")]
 pub struct DavServer<'a> {
     pub server: &'a str,
@@ -1254,8 +1208,7 @@ pub enum DavAuthConfig {
     /// No `Authorization` header at all.
     #[default]
     None,
-    /// HTTP Basic (RFC 7617), what most CalDAV and CardDAV servers ask
-    /// for.
+    /// HTTP Basic (RFC 7617), what most DAV servers ask for.
     Basic {
         #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_string")]
         username: String,
@@ -1267,16 +1220,16 @@ pub enum DavAuthConfig {
 
 #[cfg(feature = "dav")]
 impl DavAuthConfig {
-    /// Whether the server is reached with no `Authorization` header,
-    /// which is what a generated document leaves out.
+    /// Whether the server is reached with no `Authorization` header, which
+    /// is what a generated document leaves out.
     pub fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }
 }
 
-// NOTE: the method lives under its backend, and each backend declares
-// only the methods it has, so asking IMAP to push or Maildir to idle
-// is refused when the config is read rather than when the watch runs.
+// NOTE: each backend declares only the methods it has, so asking IMAP to
+// push or Maildir to idle is refused when the config is read rather than
+// when the watch runs.
 
 /// How an IMAP account learns about a change.
 #[cfg(feature = "imap")]
@@ -1285,8 +1238,8 @@ impl DavAuthConfig {
 pub enum ImapWatchConfig {
     /// Hold an IDLE connection and let the server speak first.
     Idle(IdleWatchConfig),
-    /// Re-read the mailbox on an interval, for a server whose IDLE
-    /// cannot be trusted.
+    /// Re-read the mailbox on an interval, for an IDLE that cannot be
+    /// trusted.
     Poll(PollWatchConfig),
 }
 
@@ -1306,8 +1259,8 @@ pub enum JmapWatchConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum MaildirWatchConfig {
-    /// Re-list the directory on an interval, which a filesystem with
-    /// no notification channel leaves as the only way.
+    /// Re-list the directory on an interval, the only way a filesystem
+    /// with no notification channel leaves.
     Poll(PollWatchConfig),
 }
 
@@ -1316,8 +1269,8 @@ pub enum MaildirWatchConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DavWatchConfig {
-    /// Ask `sync-collection` on an interval, which is what WebDAV
-    /// offers a client with no public endpoint.
+    /// Ask `sync-collection` on an interval, what WebDAV offers a client
+    /// with no public endpoint.
     Poll(PollWatchConfig),
 }
 
@@ -1329,10 +1282,9 @@ pub struct IdleWatchConfig {
     /// Seconds an IDLE is held before it is re-issued, unset taking
     /// io-imap's own default of 29.
     ///
-    /// Short enough survives a NAT middle-box that drops a quiet
-    /// connection, at a round trip per interval; a server known to
-    /// hold one open is asked less often, up to the 29 minutes RFC
-    /// 2177 allows.
+    /// Short survives a NAT middle-box dropping a quiet connection, at a
+    /// round trip per interval; a server known to hold one open is asked
+    /// less often, up to the 29 minutes RFC 2177 allows.
     #[serde(default)]
     pub timeout: Option<u64>,
 }
@@ -1350,8 +1302,8 @@ impl IdleWatchConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PushWatchConfig {
-    /// Seconds between the server's keep-alive pings on the stream. A
-    /// ping is also what proves the connection is still there.
+    /// Seconds between the server's keep-alive pings, which are also what
+    /// proves the stream is still there.
     #[serde(default = "default_push_ping")]
     pub ping: u64,
 }
@@ -1360,9 +1312,8 @@ pub struct PushWatchConfig {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PollWatchConfig {
-    /// Seconds between two rounds. Unset takes what suits the backend:
-    /// a couple of seconds for a local directory read, longer for a
-    /// remote collection.
+    /// Seconds between two rounds, unset taking what suits the backend: a
+    /// couple of seconds for a directory read, longer for a remote one.
     #[serde(default)]
     pub interval: Option<u64>,
 }

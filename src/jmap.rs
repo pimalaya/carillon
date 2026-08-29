@@ -1,9 +1,12 @@
-//! JMAP backend: session opening, authentication and the mailbox watch.
+//! # JMAP
 //!
-//! The watch polls `Email/changes` and resolves the ids it names
-//! through `Email/get`, keeping the ones inside the watched mailbox. A
-//! push subscription (RFC 8620 §7.2) would replace the interval with a
-//! wake-up and leave the reconciliation below untouched.
+//! The JMAP backend: session opening, authentication and the mailbox
+//! watch.
+//!
+//! The watch polls `Email/changes` and resolves the ids it names through
+//! `Email/get`, keeping the ones inside the watched mailbox. The push
+//! subscription (RFC 8620 §7.2) only replaces the interval with a
+//! wake-up, leaving that reconciliation untouched.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -62,11 +65,10 @@ pub fn open(config: &JmapConfig) -> Result<(JmapClientStd, Url)> {
     let auth = http_auth(config.auth.clone())?;
     let mut client = JmapClientStd::connect(&url, &tls, auth)?;
 
-    // NOTE: io-jmap arms a five-second read deadline so a caller can be
-    // woken up, but pimalaya-stream retries that wakeup away for a
-    // minute by default. Handing the failures back is what bounds a
-    // poll against a server that stopped answering, and therefore how
-    // long a Ctrl+C waits.
+    // NOTE: io-jmap arms a five-second read deadline to wake a caller up,
+    // which pimalaya-stream retries away for a minute by default. Handing
+    // the failures back is what bounds a poll against a server that
+    // stopped answering, and so how long a Ctrl+C waits.
     if let Some(stream) = client.stream.as_any_mut().downcast_mut::<Stream>() {
         stream.retry = Retry::Never;
     }
@@ -76,8 +78,8 @@ pub fn open(config: &JmapConfig) -> Result<(JmapClientStd, Url)> {
     Ok((client, url))
 }
 
-/// Renders the configured authentication as the HTTP `Authorization`
-/// header value io-jmap presents on every request.
+/// Renders the configuration as the `Authorization` header value io-jmap
+/// presents on every request.
 pub fn http_auth(config: JmapAuthConfig) -> Result<SecretString> {
     Ok(match config {
         JmapAuthConfig::Header(token) => token.get()?,
@@ -95,9 +97,8 @@ pub fn http_auth(config: JmapAuthConfig) -> Result<SecretString> {
 
 /// Parses a JMAP server string into a URL.
 ///
-/// Accepts a bare authority, discovered through
-/// `GET /.well-known/jmap`, or a full URL pointing straight at the
-/// session endpoint.
+/// A bare authority is discovered through `GET /.well-known/jmap`, a full
+/// URL points straight at the session endpoint.
 pub fn parse_server(server: &str) -> Result<Url> {
     match Url::parse(server) {
         Ok(url) => Ok(url),
@@ -129,9 +130,8 @@ pub fn watch_poll(
         }
 
         // NOTE: the connection slept as long as the interval, which a
-        // server is free to have found long enough to close, so a
-        // round that fails is given a fresh one before the session is
-        // given up.
+        // server is free to have found long enough to close, so a failed
+        // round is given a fresh one before the session is given up.
         let outcome = round(
             &mut client,
             &mailbox_id,
@@ -158,18 +158,12 @@ pub fn watch_poll(
     Ok(())
 }
 
-/// Watches `collection` over an EventSource stream, until `shutdown`
-/// is set.
+/// Watches `collection` over an EventSource stream, until `shutdown` is
+/// set.
 ///
-/// The server is asked to close the stream after the first state
-/// change (RFC 8620 §7.3 `closeafter=state`), which leaves the loop
-/// looking like an IMAP IDLE: subscribe, wait, read what moved,
-/// subscribe again.
-///
-/// The subscription holds its own connection, since the one it holds
-/// is the one the server closes: reading the stream over the client's
-/// connection would leave every `Email/changes` after a change writing
-/// into a socket the server had just hung up.
+/// Asked to close after the first state change (RFC 8620 §7.3
+/// `closeafter=state`), the stream leaves the loop looking like an IMAP
+/// IDLE. It holds its own connection, being the one the server hangs up.
 pub fn watch_push(
     config: &JmapConfig,
     collection: &str,
@@ -198,11 +192,10 @@ pub fn watch_push(
     Ok(())
 }
 
-/// Dials a fresh connection for `client`, keeping the session it has
-/// already read.
+/// Dials a fresh connection, keeping the session already read.
 ///
-/// The session is what the API URL and the account id come from, and
-/// it does not move when the transport does, so it is not read again.
+/// The session carries the API URL and the account id, and does not move
+/// when the transport does, so it is not read again.
 fn reconnect(client: &mut JmapClientStd, config: &JmapConfig) -> Result<()> {
     let (fresh, _url) = open(config)?;
     client.set_stream(fresh.stream);
@@ -211,8 +204,8 @@ fn reconnect(client: &mut JmapClientStd, config: &JmapConfig) -> Result<()> {
     Ok(())
 }
 
-/// Opens the session and reads the collection as it stands, which is
-/// what a later change is a change against.
+/// Opens the session and reads the collection as it stands, which is what
+/// a later change is a change against.
 fn arm(config: &JmapConfig, collection: &str) -> Result<(JmapClientStd, String, Known, String)> {
     let (mut client, _url) = open(config)?;
     let mailbox_id = resolve_mailbox(&mut client, collection)?;
@@ -254,9 +247,9 @@ fn round(
         .cloned()
         .collect();
 
-    // NOTE: nothing is reported until every request the round makes
-    // has answered, so a round that fails part way leaves the state
-    // and the picture where they were and can simply be run again.
+    // NOTE: nothing is reported until every request the round makes has
+    // answered, so a round failing part way leaves the state and the
+    // picture where they were, and can simply be run again.
     let mut reported = Vec::new();
 
     for id in &changes.destroyed {
@@ -286,8 +279,7 @@ fn round(
 
     for email in fetched {
         // NOTE: the envelope rides the same response the reconciliation
-        // reads, so an arrival costs no second request and a backend
-        // that already knows what arrived says so.
+        // reads, so an arrival costs no second request.
         let summary = resolve.then(|| summarize(&email));
 
         for event in reconcile(known, mailbox_id, email) {
@@ -307,8 +299,7 @@ fn round(
     Ok(())
 }
 
-/// Folds an `Email/get` result into what an arrival hook templates
-/// against.
+/// Folds an `Email/get` result into what an arrival hook templates on.
 fn summarize(email: &JmapEmail) -> ItemSummary {
     let mut summary = ItemSummary {
         subject: email.subject.clone(),
@@ -332,8 +323,8 @@ fn summarize(email: &JmapEmail) -> ItemSummary {
 /// Holds an EventSource subscription until the server reports a state
 /// change, and says whether one arrived.
 ///
-/// A frame with an empty `changed` map is the server's keep-alive, and
-/// a read that times out is the wakeup this loop arms to look at the
+/// A frame with an empty `changed` map is the server's keep-alive, and a
+/// read that times out is the wakeup this loop arms to look at the
 /// shutdown flag: neither is news.
 fn subscribe(
     client: &mut JmapClientStd,
@@ -353,9 +344,8 @@ fn subscribe(
         shutdown.clone(),
     )?;
 
-    // NOTE: the subscription is what the server hangs up on, so it is
-    // held on a connection of its own and the client's is left for the
-    // round that follows to use.
+    // NOTE: the subscription is what the server hangs up on, so it holds
+    // a connection of its own and leaves the client's to the next round.
     let (mut stream, _url) = open(config)?;
     let mut buf = [0u8; READ_BUF];
     let mut arg: Option<Vec<u8>> = None;
@@ -398,12 +388,11 @@ fn is_timeout(err: &io::Error) -> bool {
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
     )
 }
-/// Reconciles one resolved email against what the watch knows, and
-/// reports what moved.
+/// Reconciles one resolved email against what the watch knows, and reports
+/// what moved.
 ///
-/// A message leaving the watched mailbox is a removal here, the same
-/// way an IMAP move out of the mailbox is: the watch reports what the
-/// mailbox holds, not what the account holds.
+/// A message leaving the watched mailbox is a removal, as an IMAP move out
+/// of it is: the watch reports what the mailbox holds, not the account.
 fn reconcile(known: &mut Known, mailbox_id: &str, email: JmapEmail) -> Vec<WatchEvent> {
     let Some(id) = email.id else {
         return Vec::new();
@@ -435,8 +424,8 @@ fn reconcile(known: &mut Known, mailbox_id: &str, email: JmapEmail) -> Vec<Watch
 
     let mut events = Vec::new();
 
-    // NOTE: one event per keyword, so a hook always knows which
-    // flag it fired for.
+    // NOTE: one event per keyword, so a hook knows which flag it fired
+    // for.
     for flag in keywords.difference(&before) {
         events.push(WatchEvent::FlagAdded {
             domain: WatchDomain::Message,
@@ -482,9 +471,9 @@ fn baseline(client: &mut JmapClientStd, mailbox_id: &str) -> Result<Known> {
 
 /// Resolves a mailbox name into the id every other call speaks.
 ///
-/// Matches the name case-insensitively, then falls back to the
-/// special-use role, so `INBOX` finds the inbox on a server that names
-/// it in another language.
+/// The name matches case-insensitively, then falls back to the
+/// special-use role, so `INBOX` finds the inbox on a server naming it in
+/// another language.
 fn resolve_mailbox(client: &mut JmapClientStd, mailbox: &str) -> Result<String> {
     let listed = client
         .mailbox_get(Default::default())
@@ -520,10 +509,10 @@ fn get_options(envelope: bool) -> JmapEmailGetOptions {
         JmapEmailProperty::Keywords,
     ];
 
-    // NOTE: the envelope is asked for only when a hook consumes one,
-    // the same rule IMAP resolves an arrival under, except that here
-    // it costs properties on a request already being made rather than
-    // a second connection.
+    // NOTE: the envelope is asked for only when a hook consumes one, the
+    // rule IMAP resolves an arrival under, except that here it costs
+    // properties on a request already being made rather than a second
+    // connection.
     if envelope {
         properties.push(JmapEmailProperty::Subject);
         properties.push(JmapEmailProperty::ReceivedAt);
@@ -576,8 +565,7 @@ fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
     !shutdown.load(Ordering::SeqCst)
 }
 
-/// What the watch knows of the collection: a message id to its
-/// keywords.
+/// What the watch knows of the collection: a message id to its keywords.
 type Known = BTreeMap<String, BTreeSet<String>>;
 
 #[cfg(test)]
@@ -586,9 +574,8 @@ mod tests {
 
     use crate::jmap::*;
 
-    /// The envelope a hook templates against comes out of the same
-    /// response the reconciliation reads, so an arrival costs no
-    /// second request.
+    /// The envelope a hook templates against comes out of the response the
+    /// reconciliation reads, so an arrival costs no second request.
     #[test]
     fn an_envelope_is_read_from_the_round_s_own_response() {
         let email = JmapEmail {

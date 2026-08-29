@@ -1,12 +1,14 @@
-//! Service discovery for the wizard, from one email address.
+//! # Search
+//!
+//! The service discovery the wizard runs, from one email address.
 //!
 //! The typed address feeds io-pim-discovery's parallel discovery (fixed
-//! provider rules, PACC, Mozilla autoconfig, RFC 6186 SRV, RFC 6764
-//! DAV resolve, RFC 8620 JMAP resolve), and every reachable service
-//! carillon can watch becomes one selectable entry carrying the
-//! authentication capabilities it advertised. The concrete method is
-//! picked once the service is chosen, so a service appears exactly once
-//! in the list.
+//! provider rules, PACC, Mozilla autoconfig, RFC 6186 SRV, RFC 6764 DAV
+//! resolve, RFC 8620 JMAP resolve), and every reachable service carillon
+//! can watch becomes one entry carrying what it advertised.
+//!
+//! The concrete authentication method is picked once the service is
+//! chosen, so a service appears exactly once in the list.
 
 use std::{collections::BTreeSet, env, fmt, time::Duration};
 
@@ -24,20 +26,21 @@ use io_pim_discovery::{
 use pimalaya_stream::tls::{Rustls, Tls};
 use url::Url;
 
-/// DNS-over-TCP resolver backing discovery when `CARILLON_DNS_RESOLVER`
-/// is unset and no system resolver is found: Cloudflare's `1.1.1.1`.
+/// The resolver of last resort, Cloudflare's `1.1.1.1` over TCP.
 const DEFAULT_RESOLVER: &str = "tcp://1.1.1.1:53";
 
-/// Upper bound on the parallel discovery fan-out. An unreachable
-/// endpoint (a firewalled port, a black-hole host) must not stall the
-/// interactive wizard, so mechanisms that have not reported by then are
-/// abandoned and only what completed in time is offered.
+/// Upper bound on the parallel discovery fan-out.
+///
+/// An unreachable endpoint (a firewalled port, a black-hole host) must
+/// not stall an interactive wizard, so a mechanism that has not reported
+/// by then is abandoned and only what completed is offered.
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// One selectable service to watch, carrying the authentication
 /// capabilities it advertised.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Discovered {
+    /// The service itself, with the endpoint to watch.
     pub kind: DiscoveredKind,
     /// Login hint advertised by the mechanism (usually the email).
     pub username: Option<String>,
@@ -55,8 +58,7 @@ pub enum DiscoveredKind {
     /// A CalDAV context root, whose calendars are listed once the
     /// credential is known.
     Caldav(String),
-    /// A CardDAV context root, whose addressbooks are listed the same
-    /// way.
+    /// A CardDAV context root, whose addressbooks are listed the same way.
     Carddav(String),
 }
 
@@ -69,29 +71,28 @@ pub struct TcpEndpoint {
 }
 
 /// The authentication capabilities a service advertised, folded across
-/// all its discovered methods. It decides what the per-service auth
-/// prompt offers: which SASL mechanisms or HTTP schemes, and whether
-/// the OAuth token brokers appear. carillon reads a token an external
-/// manager (such as Ortie) issues but never runs a grant itself, so
-/// OAuth is not a method of its own here: it only unlocks the brokers
-/// behind the API token flow (see [`super::secret`]).
+/// all its discovered methods.
+///
+/// They decide which SASL mechanisms or HTTP schemes the prompt offers,
+/// and whether the OAuth brokers appear: carillon runs no grant itself,
+/// so a grant only unlocks them (see [`super::secret`]).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AuthCaps {
-    /// Basic/password auth: SASL PLAIN/LOGIN/SCRAM for IMAP, Basic for
-    /// the HTTP services. Often an app password (e.g. Fastmail).
+    /// Password auth: SASL PLAIN, LOGIN or SCRAM for IMAP, Basic for the
+    /// HTTP services, often an app password.
     pub basic: bool,
-    /// A static bearer/API token: SASL OAUTHBEARER/XOAUTH2 for IMAP,
-    /// Bearer for the HTTP services.
+    /// A static API token: SASL OAUTHBEARER or XOAUTH2 for IMAP, Bearer
+    /// for the HTTP services.
     pub bearer: bool,
-    /// An OAuth 2.0 grant is advertised, so a broker can issue the
-    /// token.
+    /// An OAuth 2.0 grant is advertised, so a broker can issue the token.
     pub oauth: bool,
 }
 
 impl AuthCaps {
-    /// Whether any capability was advertised. When none was (a
-    /// mechanism that names no auth), the auth prompt offers every
-    /// method so the user is never left without a choice.
+    /// Whether any capability was advertised.
+    ///
+    /// When none was, the prompt offers every method, so a mechanism
+    /// naming no auth never leaves the user without a choice.
     pub fn any(self) -> bool {
         self.basic || self.bearer || self.oauth
     }
@@ -114,10 +115,11 @@ impl fmt::Display for Discovered {
 }
 
 impl Discovered {
-    /// Best default login for the credential prompt: the advertised
-    /// username when it looks like an address, else the searched email
-    /// when the user typed a full one, else nothing (a bare domain,
-    /// whose synthesized `@domain` form is rejected here).
+    /// The default login the credential prompt shows.
+    ///
+    /// The advertised username when it looks like an address, else the
+    /// searched email when a full one was typed, else nothing: the
+    /// synthesized `@domain` form of a bare domain is rejected here.
     pub fn login_default(&self, email: &str) -> Option<String> {
         self.username
             .clone()
@@ -125,9 +127,8 @@ impl Discovered {
             .or_else(|| looks_like_address(email).then(|| email.to_string()))
     }
 
-    /// Ranks an entry for the selection list, in the order the backend
-    /// selector already picks a configured block: IMAP, JMAP, CalDAV,
-    /// CardDAV.
+    /// Ranks an entry in the order the backend selector already picks a
+    /// configured block: IMAP, JMAP, CalDAV, CardDAV.
     fn rank(&self) -> u8 {
         match self.kind {
             DiscoveredKind::Imap(_) => 0,
@@ -138,9 +139,8 @@ impl Discovered {
     }
 }
 
-/// Searches every service reachable from `email` that carillon can
-/// watch, and returns one selectable entry per service, ordered by
-/// [`Discovered::rank`].
+/// Searches every service reachable from `email` that carillon can watch,
+/// one entry per service, ordered by [`Discovered::rank`].
 pub fn search(email: &str) -> Result<Vec<Discovered>> {
     let client = DiscoveryComposeClientStd::new(discovery_resolver(), discovery_tls());
     let services = BTreeSet::from([
@@ -161,9 +161,9 @@ pub fn search(email: &str) -> Result<Vec<Discovered>> {
         });
     }
 
-    // NOTE: the HTTP services are keyed on their endpoint, since the
-    // mechanisms overlap: SRV and PACC routinely name the same root,
-    // and offering it twice is a choice with no difference.
+    // NOTE: the HTTP services are keyed on their endpoint, the mechanisms
+    // overlapping: SRV and PACC routinely name the same root, and
+    // offering it twice is a choice with no difference.
     for (service, kind) in [
         (
             DiscoveryService::Jmap,
@@ -204,9 +204,7 @@ pub fn search(email: &str) -> Result<Vec<Discovered>> {
 }
 
 /// Folds a service's advertised methods into its [`AuthCaps`]: password
-/// into `basic`, bearer into `bearer`, and every OAuth grant into
-/// `oauth` (which only unlocks the token brokers, never a self-run
-/// grant).
+/// into `basic`, bearer into `bearer`, every grant into `oauth`.
 fn caps_of(auth: &[DiscoveryAuthMethod]) -> AuthCaps {
     let mut caps = AuthCaps::default();
 
@@ -221,9 +219,8 @@ fn caps_of(auth: &[DiscoveryAuthMethod]) -> AuthCaps {
     caps
 }
 
-/// Picks the best endpoint for a TCP service: the most secure one wins,
-/// so a domain advertising both implicit TLS and STARTTLS keeps the
-/// former.
+/// Picks the most secure endpoint of a TCP service, so a domain
+/// advertising both implicit TLS and STARTTLS keeps the former.
 fn best_tcp(
     configs: &[DiscoveryServiceConfig],
     service: DiscoveryService,
@@ -262,19 +259,19 @@ fn best_tcp(
     ))
 }
 
-/// Whether a string is a full `local@domain` address (both parts
-/// non-empty), rejecting the bare-domain `@domain` form.
+/// Whether a string is a full `local@domain` address, which rejects the
+/// bare-domain `@domain` form.
 fn looks_like_address(value: &str) -> bool {
     value
         .split_once('@')
         .is_some_and(|(local, domain)| !local.is_empty() && !domain.is_empty())
 }
 
-/// Resolver used by discovery: the `CARILLON_DNS_RESOLVER` override
-/// first, then the system resolver (`/etc/resolv.conf` on unix, the
-/// network adapters on windows), then the Cloudflare default. This
-/// avoids leaking the email domain to a third-party resolver and works
-/// around networks that block the default.
+/// The resolver discovery runs on.
+///
+/// The `CARILLON_DNS_RESOLVER` override first, then the system resolver,
+/// then [`DEFAULT_RESOLVER`]: preferring the system one keeps the email
+/// domain from leaking, and works on a network blocking the default.
 fn discovery_resolver() -> Url {
     if let Ok(resolver) = env::var("CARILLON_DNS_RESOLVER")
         && let Ok(url) = resolver.parse()
@@ -291,8 +288,8 @@ fn discovery_resolver() -> Url {
         .expect("DEFAULT_RESOLVER must be a valid URL")
 }
 
-/// TLS profile for the HTTPS-bound discovery mechanisms; they only
-/// speak HTTP/1.1 to `_well-known` endpoints.
+/// The TLS profile of the HTTPS-bound mechanisms, which speak HTTP/1.1
+/// to well-known endpoints and nothing else.
 fn discovery_tls() -> Tls {
     Tls {
         rustls: Rustls {
@@ -326,8 +323,8 @@ mod tests {
             }
         );
 
-        // NOTE: the Fastmail shape, bearer plus an OAuth grant and no
-        // Basic, is one "API token" method whose brokers are unlocked.
+        // NOTE: the Fastmail shape, bearer plus a grant and no Basic, is
+        // one API token method whose brokers are unlocked.
         let fastmail = caps_of(&[DiscoveryAuthMethod::Bearer, oauth]);
         assert!(fastmail.token());
         assert!(!fastmail.basic);

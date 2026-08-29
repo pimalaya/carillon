@@ -1,8 +1,10 @@
-//! `carillon check` command: opens the configured backend(s) so
-//! credential and connectivity errors surface before the first real
-//! `watch` run. Mirrors `himalaya account check`: each backend
-//! allowed by `--backend` is tried in turn, and the result is
-//! collected into a per-backend report.
+//! # Check
+//!
+//! The `carillon check` command, opening the backends an account declares
+//! so a credential or connectivity error surfaces before the first watch.
+//!
+//! Mirrors `himalaya account check`: each backend `--backend` allows is
+//! tried in turn, and the result collected into a per-backend report.
 
 #[cfg(feature = "dav")]
 use std::sync::{Arc, atomic::AtomicBool};
@@ -26,15 +28,14 @@ use crate::{config::JmapConfig, jmap};
 
 /// Validate the account configuration.
 ///
-/// Loads the TOML configuration, picks the active account (via the
-/// global `--account` flag or the default), and checks each backend
-/// allowed by `--backend`. The check tries to instantiate a client
-/// per backend, which exercises the same handshake / authentication
-/// paths the other commands would take.
+/// Every backend `--backend` allows on the account, `-a` naming it or the
+/// default one, is opened the way a watch would, so a bad credential or
+/// an unreachable server is reported here rather than at the first change.
 #[derive(Debug, Parser)]
 pub struct CheckCommand;
 
 impl CheckCommand {
+    /// Opens each allowed backend of the account and reports on it.
     pub fn execute(
         self,
         printer: &mut impl Printer,
@@ -139,29 +140,36 @@ fn check_maildir(maildir_config: MaildirConfig) -> BackendCheck {
 
 #[cfg(feature = "dav")]
 fn check_dav(backend: &'static str, server: DavServer<'_>, collection: &str) -> BackendCheck {
-    // NOTE: opening proves the transport, and one report proves the
-    // credential and that the collection is really there, which is
-    // what a watch would find out on its first poll.
+    // NOTE: opening proves the transport, and one report the credential
+    // and that the collection is there, as a first poll would.
     let shutdown = Arc::new(AtomicBool::new(false));
     let result = dav::probe(server, collection, &shutdown);
 
     BackendCheck::from(backend, result)
 }
 
+/// What `check` reports: one account, and one line per backend tried.
 #[derive(Clone, Debug, Serialize)]
 pub struct CheckReport {
+    /// The account that was checked.
     pub account: String,
+    /// One entry per backend `--backend` allowed on it.
     pub backends: Vec<BackendCheck>,
 }
 
+/// The outcome of opening one backend.
 #[derive(Clone, Debug, Serialize)]
 pub struct BackendCheck {
+    /// The backend name, as the configuration spells it.
     pub backend: &'static str,
+    /// Whether it opened.
     pub ok: bool,
+    /// Why it did not, rendered with its causes.
     pub error: Option<String>,
 }
 
 impl BackendCheck {
+    /// Folds one backend's outcome into its report entry.
     fn from(backend: &'static str, result: Result<()>) -> Self {
         match result {
             Ok(()) => Self {

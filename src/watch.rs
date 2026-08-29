@@ -1,16 +1,17 @@
-//! `carillon watch` command: watches accounts and fires their hooks on
-//! every change until Ctrl+C.
+//! # Watch
 //!
-//! Bare `watch` watches every configured account at once, one thread
-//! each under a single shared shutdown; `-a/--account` narrows it to
-//! one. What an account watches is its own collection, so there is
-//! nothing to override on the command line.
+//! The `carillon watch` command, watching accounts and firing their hooks
+//! on every change until Ctrl+C.
 //!
-//! One account is one thread, and that thread is [`watch_account`]:
-//! everything that can fail per account, meaning backend selection,
-//! reconnect backoff and envelope resolution, happens inside it. A
-//! failure ends the session, never the process, so one unreachable
-//! server cannot stop the other accounts watching.
+//! Bare `watch` takes every configured account at once, one thread each
+//! under a single shared shutdown, `-a/--account` narrowing it to one.
+//! What an account watches is its own collection, so there is nothing to
+//! override on the command line.
+//!
+//! One account is one thread, and that thread is [`watch_account`], so
+//! backend selection, reconnect backoff and envelope resolution all fail
+//! inside it: a failure ends the session, never the process, and one
+//! unreachable server cannot stop the other accounts watching.
 
 use std::{
     path::PathBuf,
@@ -69,6 +70,7 @@ const BACKOFF_STEP: Duration = Duration::from_millis(200);
 pub struct WatchCommand;
 
 impl WatchCommand {
+    /// Spawns one thread per selected account and joins them on Ctrl+C.
     pub fn execute(
         self,
         printer: &mut impl Printer,
@@ -110,8 +112,7 @@ impl WatchCommand {
     }
 }
 
-/// Selects the accounts to watch: the named one, or every configured
-/// account when no name is given.
+/// The accounts to watch: the one named, or every configured one.
 fn select_accounts(
     config: &mut Config,
     account_name: Option<&str>,
@@ -171,8 +172,8 @@ fn watch_account(
         }
 
         // NOTE: a session that stayed up is evidence the server is
-        // healthy, so the next failure starts from the floor rather
-        // than inheriting an old outage's backoff.
+        // healthy, so the next failure starts from the floor rather than
+        // inheriting an old outage's backoff.
         if started.elapsed() >= HEALTHY_THRESHOLD {
             backoff = INITIAL_BACKOFF;
         }
@@ -185,13 +186,12 @@ fn watch_account(
     Ok(())
 }
 
-/// Runs one watch session against the account's active backend, with
-/// the method that backend was asked for.
+/// Runs one session against the account's active backend, with the method
+/// that backend was asked for.
 ///
-/// Which methods exist, and which events have hooks, are both the
-/// backend's, declared in its own config, so anything it cannot do was
-/// already refused when the file was read: nothing here can be asked
-/// for the impossible.
+/// Which methods exist and which events have hooks are both declared in
+/// the backend's own config, so anything it cannot do was already refused
+/// when the file was read.
 fn watch_session(
     account: &str,
     config: &AccountConfig,
@@ -432,9 +432,10 @@ fn resolve_added(
     }
 }
 
-/// Sleeps the current backoff in small steps so a shutdown is noticed
-/// promptly, then doubles it toward the ceiling. Returns false when a
-/// shutdown was requested.
+/// Sleeps the current backoff, then doubles it toward the ceiling.
+///
+/// The sleep runs in small steps so a shutdown is noticed promptly, and
+/// returns false as soon as one is requested.
 fn sleep_backoff(backoff: &mut Duration, shutdown: &Arc<AtomicBool>) -> bool {
     let mut left = *backoff;
 

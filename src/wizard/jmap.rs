@@ -1,11 +1,12 @@
-//! JMAP wizard.
+//! # JMAP wizard
 //!
 //! A discovery entry pins the session endpoint, so
-//! [`configure_discovered`] picks the HTTP authentication scheme,
-//! prompts its credentials and opens the session. That session is both
-//! the connection test and where the watch method is decided: a server
-//! publishing no event-source URL cannot be pushed to, so the account
-//! gets an explicit poll; every other one is left alone, an unset
+//! [`configure_discovered`] picks the HTTP authentication scheme, prompts
+//! its credentials and opens the session.
+//!
+//! That session is both the connection test and where the watch method is
+//! decided: a server publishing no event-source URL cannot be pushed to
+//! and gets an explicit poll, every other one being left alone, an unset
 //! `jmap.watch` already meaning the held event stream.
 
 use anyhow::{Result, bail};
@@ -27,14 +28,14 @@ const BASIC: &str = "Basic (username + password)";
 const BEARER: &str = "Bearer (API token)";
 
 /// The interval an account falls back to when its server publishes no
-/// event-source URL, which is what the polling watch takes anyway.
+/// event-source URL, which the polling watch takes anyway.
 const POLL_INTERVAL: u64 = 30;
 
-/// Configures JMAP from a discovered entry: the endpoint is pinned, the
-/// HTTP authentication scheme is picked among the advertised ones
-/// (skipped when only one qualifies), then its credentials are
-/// prompted. The connection is tested here, so the caller has nothing
-/// left to prove.
+/// Configures JMAP from a discovered entry, whose endpoint is pinned.
+///
+/// The HTTP authentication scheme is picked among the advertised ones,
+/// skipped when only one qualifies, then its credentials prompted. The
+/// connection is tested here, so the caller has nothing left to prove.
 pub fn configure_discovered(
     account_name: &str,
     email: &str,
@@ -78,9 +79,11 @@ pub fn configure_discovered(
     Ok(config)
 }
 
-/// Prompts the HTTP authentication scheme from `caps` (both offered
-/// when none was advertised), then its credentials. The Bearer token
-/// flow shows the OAuth brokers only when a grant was advertised.
+/// Prompts the HTTP authentication scheme from `caps`, both offered when
+/// none was advertised, then its credentials.
+///
+/// The Bearer flow shows the OAuth brokers only when a grant was
+/// advertised.
 fn prompt_auth(
     account_name: &str,
     login_hint: Option<&str>,
@@ -115,9 +118,8 @@ fn prompt_auth(
     })
 }
 
-/// Folds the endpoint and credentials into a config block watching the
-/// inbox, which is the mailbox a first account watches and the one
-/// every server has.
+/// Folds the endpoint and credentials into a block watching the inbox,
+/// the mailbox a first account watches and the one every server has.
 fn config(server: String, auth: JmapAuthConfig) -> JmapConfig {
     JmapConfig {
         mailbox: String::from("INBOX"),
@@ -129,9 +131,10 @@ fn config(server: String, auth: JmapAuthConfig) -> JmapConfig {
     }
 }
 
-/// The hook a generated account fires: a desktop notification on
-/// arrival, which is what someone watching a mailbox came for. JMAP
-/// reads an arrival's envelope from the request its round already
+/// The hook a generated account fires: a notification on arrival, which
+/// is what someone watching a mailbox came for.
+///
+/// JMAP reads an arrival's envelope from the request its round already
 /// makes, so the notification may name it.
 fn hook() -> JmapHookConfig {
     JmapHookConfig {

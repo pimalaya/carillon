@@ -1,9 +1,11 @@
-//! Maildir wizard.
+//! # Maildir wizard
 //!
 //! Nothing is discovered here: the input named a folder, so the only
-//! question left is whether it really is one. The root itself is what
-//! the account watches, which `.` names in io-maildir's store, and a
-//! subfolder is one edit away in the file the wizard just wrote.
+//! question left is whether it really is one.
+//!
+//! The root itself is what the account watches, which `.` names in
+//! io-maildir's store, and a subfolder is one edit away in the file the
+//! wizard just wrote.
 
 use std::path::PathBuf;
 
@@ -11,9 +13,10 @@ use anyhow::{Result, bail};
 
 use crate::config::{ItemHook, MaildirConfig, MaildirHookConfig, NotifyConfig};
 
-/// Configures Maildir from a folder path, checking it is there: a
-/// watch on a directory that does not exist reports nothing, forever,
-/// and that is the failure the wizard is meant to catch.
+/// Configures Maildir from a folder path, checking it is there.
+///
+/// A watch on a directory that does not exist reports nothing, forever,
+/// which is the failure the wizard is meant to catch.
 pub fn configure(root: PathBuf) -> Result<MaildirConfig> {
     if !root.is_dir() {
         bail!("No such folder `{}`", root.display());
@@ -27,9 +30,10 @@ pub fn configure(root: PathBuf) -> Result<MaildirConfig> {
     })
 }
 
-/// The hook a generated account fires: a desktop notification on
-/// arrival. A Maildir listing knows a file name and no more, so the
-/// notification names the item rather than its envelope.
+/// The hook a generated account fires: a notification on arrival.
+///
+/// A Maildir listing knows a file name and no more, so the notification
+/// names the item rather than its envelope.
 fn hook() -> MaildirHookConfig {
     MaildirHookConfig {
         on_message_added: Some(ItemHook {

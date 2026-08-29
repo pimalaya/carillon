@@ -1,10 +1,12 @@
-//! IMAP backend: session opening, the mailbox watch, and the envelope
+//! # IMAP
+//!
+//! The IMAP backend: session opening, the mailbox watch, and the envelope
 //! resolution a hook may ask for.
 //!
-//! The watch is io-imap's `ImapMailboxWatch`, which holds IDLE and
-//! reports UID-keyed deltas, named by the server under QRESYNC and
-//! diffed locally without it. This module only translates them, so
-//! carillon owns no watcher.
+//! The watch is io-imap's `ImapMailboxWatch`, which holds IDLE and reports
+//! UID-keyed deltas, named by the server under QRESYNC and diffed locally
+//! without it. This module only translates them, so carillon owns no
+//! watcher.
 //!
 //! A delta names a UID, never a subject, so [`Resolver`] reads the
 //! envelope on a second connection.
@@ -61,16 +63,15 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How long the watch worker, and the resolver, may sit in a read
 /// before looking at the shutdown flag again.
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
-/// Per-read scratch buffer for the resolver. Only envelopes are read,
-/// never a body.
+/// Per-read scratch buffer for the resolver, which reads envelopes only.
 const READ_BUF: usize = 8 * 1024;
 
-/// Opens an authenticated IMAP session, returning the client and the
-/// capabilities the handshake reported.
+/// Opens an authenticated session, with the capabilities the handshake
+/// reported.
 ///
-/// Every protocol decision (transport from the scheme, STARTTLS
-/// ordering, the `ID` quirk, the SASL-IR policy) belongs to io-imap's
-/// session coroutine; this only resolves the config into its inputs.
+/// Every protocol decision (transport from the scheme, STARTTLS ordering,
+/// the `ID` quirk, the SASL-IR policy) belongs to io-imap's session
+/// coroutine; this only resolves the config into its inputs.
 pub fn open(config: &ImapConfig) -> Result<(ImapClientStd, Vec<Capability<'static>>)> {
     let mut tls: Tls = config.tls.clone().into();
     tls.rustls.alpn = vec![String::from("imap")];
@@ -83,8 +84,8 @@ pub fn open(config: &ImapConfig) -> Result<(ImapClientStd, Vec<Capability<'stati
             let host = server
                 .host_str()
                 .ok_or_else(|| anyhow!("Cannot derive host from IMAP server `{server}`"))?;
-            // NOTE: url does not know the imap(s) default ports, so fall
-            // back to the same scheme defaults io-imap connects with.
+            // NOTE: url knows no imap(s) default port, so the fallback is
+            // the scheme default io-imap connects with.
             let port = server.port().unwrap_or(default_port(server.scheme()));
             sasl.try_into_sasl(host, port)
         })
@@ -117,8 +118,8 @@ pub fn watch_idle(
     watch(config, collection, timeout, None, shutdown, on_event)
 }
 
-/// Watches `collection` the same way, but re-reading on an interval
-/// instead of holding IDLE.
+/// Watches `collection` the same way, re-reading on an interval instead
+/// of holding IDLE.
 ///
 /// For a server whose IDLE cannot be trusted: it costs a re-read per
 /// interval and notices a change that much later, which is why it is
@@ -135,6 +136,7 @@ pub fn watch_poll(
     watch(config, collection, None, Some(interval), shutdown, on_event)
 }
 
+/// Opens the session, drains its watch stream, and closes it either way.
 fn watch(
     config: &ImapConfig,
     collection: &str,
@@ -154,8 +156,8 @@ fn watch(
     let stream = client.watch_mailbox(watched, &capability, opts)?;
 
     let result = drain(&stream, shutdown, &mut on_event);
-    // NOTE: close winds the worker down cleanly, whether we are leaving
-    // because of a shutdown or because the connection failed.
+    // NOTE: close winds the worker down cleanly, whether the exit is a
+    // shutdown or a failed connection.
     let closed = stream.close();
 
     result.or_else(|err| closed.map_err(Into::into).and(Err(err)))
@@ -221,17 +223,12 @@ fn render_flags(flags: &[Flag<'static>]) -> BTreeSet<String> {
     flags.iter().map(|flag| flag.to_string()).collect()
 }
 
-/// A second connection, opened lazily, that turns a UID into the
-/// envelope a notification wants.
+/// A second connection, opened lazily, turning a UID into the envelope a
+/// notification wants.
 ///
-/// The watch connection is busy holding IDLE, so resolving rides its
-/// own session. It opens on the first arrival a hook asks about, and
-/// re-opens once if the server dropped it in between.
-///
-/// The coroutines are pumped here rather than through the client's own
-/// blocking runner, so that a shutdown is noticed between reads: a
-/// resolve against a server that stopped answering must not be what
-/// holds a Ctrl+C.
+/// The watch connection is busy holding IDLE, so resolving rides its own,
+/// opened on the first arrival a hook asks about and pumped here rather
+/// than by the client's runner, so a silent server cannot hold a Ctrl+C.
 pub struct Resolver<'a> {
     config: &'a ImapConfig,
     mailbox: &'a str,
@@ -240,8 +237,7 @@ pub struct Resolver<'a> {
 }
 
 impl<'a> Resolver<'a> {
-    /// Prepares a resolver; no connection is opened until something is
-    /// resolved.
+    /// Prepares a resolver, opening nothing until something is resolved.
     pub fn new(config: &'a ImapConfig, mailbox: &'a str, shutdown: &'a Arc<AtomicBool>) -> Self {
         Self {
             config,
@@ -251,8 +247,8 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Fetches the envelope of `uid`, reconnecting once when the
-    /// pooled session turns out to be dead.
+    /// Fetches the envelope of `uid`, reconnecting once when the session
+    /// turns out to be dead.
     pub fn summary(&mut self, uid: &str) -> Result<ItemSummary> {
         match self.fetch(uid) {
             Ok(summary) => Ok(summary),
@@ -277,10 +273,9 @@ impl<'a> Resolver<'a> {
 
         if self.client.is_none() {
             let (mut client, _capability) = open(self.config)?;
-            // NOTE: the same arrangement the watch worker makes: a read
-            // deadline to be woken up by, and no retry strategy to
-            // swallow the wakeup, so the loop below can look at the
-            // shutdown flag between reads.
+            // NOTE: the arrangement the watch worker makes: a read
+            // deadline to be woken up by, and no retry strategy to swallow
+            // the wakeup, so the loop below sees the shutdown flag.
             client.stream.set_read_timeout(Some(READ_TIMEOUT))?;
             client.stream.stop_retrying();
             self.client = Some(client);
@@ -318,9 +313,9 @@ impl<'a> Resolver<'a> {
 /// Runs one coroutine over the resolver's connection, checking the
 /// shutdown flag between reads.
 ///
-/// This is what the client's own runner does, minus the part where a
-/// silent server can hold the thread for as long as the transport
-/// allows: here a read deadline expires into another look at the flag.
+/// What the client's own runner does, minus the part where a silent
+/// server holds the thread for as long as the transport allows: here a
+/// read deadline expires into another look at the flag.
 fn pump<C, T, E>(
     client: &mut ImapClientStd,
     mut coroutine: C,
@@ -410,9 +405,9 @@ fn nstring(value: &NString<'static>) -> Option<String> {
 
 /// Parses an IMAP server string into a URL.
 ///
-/// Accepts a bare authority (`imap.example.org[:port]`), treated as
-/// `imaps://<authority>` so a portless value stays secure, or a full
-/// URL with an `imap://`, `imaps://` or `unix://` scheme used verbatim.
+/// A bare authority (`imap.example.org[:port]`) is read as
+/// `imaps://<authority>`, so a portless value stays secure; an `imap://`,
+/// `imaps://` or `unix://` URL is used verbatim.
 pub fn parse_server(server: &str) -> Result<Url> {
     match Url::parse(server) {
         Ok(url) => Ok(url),
