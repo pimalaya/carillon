@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Changed
 
 - **BREAKING**: renamed `completions` and `manuals` to `completion` and `manual`, the plural staying as a hidden alias.
+- Spawned a credential command once per checked account, rather than once per backend naming it.
+
+  An account whose CalDAV and CardDAV tables read the same `pass` or `gpg` entry unlocked its store twice; `carillon check` now resolves the whole account through one resolver, so the key unlocks once.
 
 ## [0.1.0] - 2026-08-22
 

@@ -38,6 +38,7 @@ use io_jmap::{
     },
 };
 use log::{debug, trace};
+use pimalaya_config::secret::SecretResolver;
 use pimalaya_stream::{retry::Retry, stream::Stream, tls::Tls};
 use secrecy::{ExposeSecret, SecretString};
 use url::Url;
@@ -56,13 +57,15 @@ const EMAIL_TYPE: &str = "Email";
 /// How long it sleeps at a time, so a shutdown is noticed promptly.
 const POLL_STEP: Duration = Duration::from_millis(200);
 
-/// Opens a JMAP session against the configured server.
-pub fn open(config: &JmapConfig) -> Result<(JmapClientStd, Url)> {
+/// Opens a JMAP session against the configured server, resolving its
+/// credential through `resolver`, so a caller opening several backends of
+/// one account spawns each distinct credential command once.
+pub fn open(config: &JmapConfig, resolver: &mut SecretResolver) -> Result<(JmapClientStd, Url)> {
     let mut tls: Tls = config.tls.clone().into();
     tls.rustls.alpn = vec![String::from("http/1.1")];
 
     let url = parse_server(&config.server)?;
-    let auth = http_auth(config.auth.clone())?;
+    let auth = http_auth(config.auth.clone(), resolver)?;
     let mut client = JmapClientStd::connect(&url, &tls, auth)?;
 
     // NOTE: io-jmap arms a five-second read deadline to wake a caller up,
@@ -80,15 +83,18 @@ pub fn open(config: &JmapConfig) -> Result<(JmapClientStd, Url)> {
 
 /// Renders the configuration as the `Authorization` header value io-jmap
 /// presents on every request.
-pub fn http_auth(config: JmapAuthConfig) -> Result<SecretString> {
+///
+/// `resolver` spawns each distinct credential command once, so a caller
+/// opening several backends of one account unlocks their store once.
+pub fn http_auth(config: JmapAuthConfig, resolver: &mut SecretResolver) -> Result<SecretString> {
     Ok(match config {
-        JmapAuthConfig::Header(token) => token.get()?,
+        JmapAuthConfig::Header(token) => resolver.resolve(token)?,
         JmapAuthConfig::Bearer { token } => {
-            let token = token.get()?;
+            let token = resolver.resolve(token)?;
             format!("Bearer {}", token.expose_secret()).into()
         }
         JmapAuthConfig::Basic { username, password } => {
-            let credentials = format!("{username}:{}", password.get()?.expose_secret());
+            let credentials = format!("{username}:{}", resolver.resolve(password)?.expose_secret());
             let encoded = BASE64_STANDARD.encode(credentials.into_bytes());
             format!("Basic {encoded}").into()
         }
@@ -197,7 +203,7 @@ pub fn watch_push(
 /// The session carries the API URL and the account id, and does not move
 /// when the transport does, so it is not read again.
 fn reconnect(client: &mut JmapClientStd, config: &JmapConfig) -> Result<()> {
-    let (fresh, _url) = open(config)?;
+    let (fresh, _url) = open(config, &mut SecretResolver::new())?;
     client.set_stream(fresh.stream);
     debug!("reconnected the jmap client");
 
@@ -207,7 +213,7 @@ fn reconnect(client: &mut JmapClientStd, config: &JmapConfig) -> Result<()> {
 /// Opens the session and reads the collection as it stands, which is what
 /// a later change is a change against.
 fn arm(config: &JmapConfig, collection: &str) -> Result<(JmapClientStd, String, Known, String)> {
-    let (mut client, _url) = open(config)?;
+    let (mut client, _url) = open(config, &mut SecretResolver::new())?;
     let mailbox_id = resolve_mailbox(&mut client, collection)?;
 
     let known = baseline(&mut client, &mailbox_id)?;
@@ -346,7 +352,7 @@ fn subscribe(
 
     // NOTE: the subscription is what the server hangs up on, so it holds
     // a connection of its own and leaves the client's to the next round.
-    let (mut stream, _url) = open(config)?;
+    let (mut stream, _url) = open(config, &mut SecretResolver::new())?;
     let mut buf = [0u8; READ_BUF];
     let mut arg: Option<Vec<u8>> = None;
     let mut changed = false;

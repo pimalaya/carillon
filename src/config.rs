@@ -41,7 +41,8 @@ use io_sasl::{
 #[cfg(feature = "imap")]
 use log::warn;
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
-use pimalaya_config::secret::Secret;
+use pimalaya_config::secret::{Secret, SecretResolver};
+#[cfg(feature = "imap")]
 use pimalaya_config::{command, toml::TomlConfig};
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 use pimalaya_stream::tls::{Rustls, RustlsCrypto, Tls, TlsProvider};
@@ -578,35 +579,41 @@ impl SaslConfig {
     /// Resolves the SASL config into a runtime [`Sasl`].
     ///
     /// `host` and `port` come from the live server URL, and only
-    /// OAUTHBEARER uses them, echoed in its GS2 header.
-    pub fn try_into_sasl(self, host: impl ToString, port: u16) -> Result<Sasl> {
+    /// OAUTHBEARER uses them, echoed in its GS2 header. `resolver` spawns
+    /// each distinct credential command once.
+    pub fn try_into_sasl(
+        self,
+        host: impl ToString,
+        port: u16,
+        resolver: &mut SecretResolver,
+    ) -> Result<Sasl> {
         Ok(match self {
             SaslConfig::Anonymous(c) => Sasl::Anonymous(SaslAnonymousCreds { message: c.message }),
             SaslConfig::Login(c) => Sasl::Login(SaslLoginCreds {
                 username: c.username,
-                password: c.password.get()?,
+                password: resolver.resolve(c.password)?,
             }),
             SaslConfig::Plain(c) => Sasl::Plain(SaslPlainCreds {
                 authzid: c.authzid,
                 authcid: c.authcid,
-                passwd: c.passwd.get()?,
+                passwd: resolver.resolve(c.passwd)?,
             }),
             SaslConfig::Oauthbearer(c) => Sasl::Oauthbearer(SaslOauthbearerCreds {
                 username: c.username,
                 host: host.to_string(),
                 port,
-                token: c.token.get()?,
+                token: resolver.resolve(c.token)?,
             }),
             SaslConfig::Xoauth2(c) => Sasl::Xoauth2(SaslXoauth2Creds {
                 username: c.username,
-                token: c.token.get()?,
+                token: resolver.resolve(c.token)?,
             }),
             // NOTE: an empty nonce means "draw one for me": the client
             // fills it before the exchange, an I/O-free coroutine having
             // no way to generate randomness.
             SaslConfig::ScramSha256(c) => Sasl::ScramSha256(SaslScramCreds {
                 username: c.username,
-                password: c.password.get()?,
+                password: resolver.resolve(c.password)?,
                 nonce: Vec::new(),
                 channel_binding: SaslGs2ChannelBinding::Unsupported,
             }),

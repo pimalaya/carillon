@@ -11,6 +11,7 @@
 
 use anyhow::{Result, bail};
 use pimalaya_cli::{prompt, spinner::Spinner};
+use pimalaya_config::secret::SecretResolver;
 
 use crate::{
     config::{
@@ -54,7 +55,7 @@ pub fn configure_discovered(
 
     let spinner = Spinner::start("Testing JMAP connection");
 
-    let client = match jmap::open(&config) {
+    let client = match jmap::open(&config, &mut SecretResolver::new()) {
         Ok((client, _url)) => client,
         Err(err) => {
             spinner.failure("JMAP connection failed");

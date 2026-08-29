@@ -40,6 +40,7 @@ use io_webdav::{
     rfc6578::sync_collection::{WebdavSyncCollection, WebdavSyncCollectionError, WebdavSyncDelta},
 };
 use log::{debug, trace, warn};
+use pimalaya_config::secret::SecretResolver;
 use pimalaya_stream::{
     retry::Retry,
     stream::{Stream, TcpConnectOptions, TlsConnectOptions},
@@ -82,12 +83,14 @@ pub enum DavKind {
     Addressbook,
 }
 
-/// Opens a connection to the configured server.
+/// Opens a connection to the configured server, resolving its credential
+/// through `resolver`, so a caller opening several backends of one account
+/// spawns each distinct credential command once.
 ///
 /// The stream carries a read deadline and hands back the failures that
 /// only mean "not ready yet", so a poll against a server that stopped
 /// answering ends at the next deadline rather than holding the thread.
-pub fn open(config: DavServer<'_>) -> Result<WebdavClientStd> {
+pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<WebdavClientStd> {
     let url = Url::parse(config.server)
         .with_context(|| format!("Invalid DAV server URL `{}`", config.server))?;
     let host = url
@@ -124,7 +127,7 @@ pub fn open(config: DavServer<'_>) -> Result<WebdavClientStd> {
     debug!("opened dav connection");
     trace!("server: {url}");
 
-    let auth = auth(config.auth)?;
+    let auth = auth(config.auth, resolver)?;
 
     Ok(WebdavClientStd::new(stream, auth, url))
 }
@@ -143,7 +146,7 @@ pub fn watch(
     shutdown: &Arc<AtomicBool>,
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
-    let mut client = open(config)?;
+    let mut client = open(config, &mut SecretResolver::new())?;
     let collection = path(&client, collection);
     let interval = interval.unwrap_or(POLL_INTERVAL);
     let mut domains = Domains::resolve(&mut client, &collection, kind, shutdown)?;
@@ -564,16 +567,17 @@ where
     }
 }
 
-/// Builds the credential presented on every request.
-pub fn auth(config: &DavAuthConfig) -> Result<WebdavAuth> {
+/// Builds the credential presented on every request, resolving it through
+/// `resolver` rather than spawning its command again.
+pub fn auth(config: &DavAuthConfig, resolver: &mut SecretResolver) -> Result<WebdavAuth> {
     Ok(match config {
         DavAuthConfig::None => WebdavAuth::None,
         DavAuthConfig::Basic { username, password } => WebdavAuth::Basic(HttpAuthBasic {
             username: username.clone(),
-            password: password.clone().get()?,
+            password: resolver.resolve(password.clone())?,
         }),
         DavAuthConfig::Bearer { token } => {
-            let token = token.clone().get()?;
+            let token = resolver.resolve(token.clone())?;
             WebdavAuth::Bearer(HttpAuthBearer::new(token.expose_secret()))
         }
     })
@@ -617,8 +621,13 @@ fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
 ///
 /// It proves the transport, the credential, and that the collection is
 /// where the configuration says.
-pub fn probe(config: DavServer<'_>, collection: &str, shutdown: &Arc<AtomicBool>) -> Result<()> {
-    let mut client = open(config)?;
+pub fn probe(
+    config: DavServer<'_>,
+    collection: &str,
+    shutdown: &Arc<AtomicBool>,
+    resolver: &mut SecretResolver,
+) -> Result<()> {
+    let mut client = open(config, resolver)?;
     let collection = path(&client, collection);
     sync(&mut client, &collection, None, shutdown)?;
 

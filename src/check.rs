@@ -13,6 +13,8 @@ use std::{fmt, path::PathBuf};
 use anyhow::{Result, anyhow, bail};
 use clap::Parser;
 use pimalaya_cli::printer::Printer;
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+use pimalaya_config::secret::SecretResolver;
 use pimalaya_config::toml::TomlConfig;
 use serde::Serialize;
 
@@ -56,18 +58,23 @@ impl CheckCommand {
             backends: Vec::new(),
         };
 
+        // NOTE: one resolver for the whole account, so two backends
+        // naming one credential command unlock its store once.
+        #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+        let mut resolver = SecretResolver::new();
+
         #[cfg(feature = "imap")]
         if backend.allows_imap()
             && let Some(imap_config) = account_config.imap.clone()
         {
-            report.backends.push(check_imap(imap_config));
+            report.backends.push(check_imap(imap_config, &mut resolver));
         }
 
         #[cfg(feature = "jmap")]
         if backend.allows_jmap()
             && let Some(jmap_config) = account_config.jmap.clone()
         {
-            report.backends.push(check_jmap(jmap_config));
+            report.backends.push(check_jmap(jmap_config, &mut resolver));
         }
 
         #[cfg(feature = "maildir")]
@@ -85,6 +92,7 @@ impl CheckCommand {
                 "caldav",
                 caldav_config.server(),
                 &caldav_config.calendar,
+                &mut resolver,
             ));
         }
 
@@ -96,6 +104,7 @@ impl CheckCommand {
                 "carddav",
                 carddav_config.server(),
                 &carddav_config.addressbook,
+                &mut resolver,
             ));
         }
 
@@ -108,17 +117,17 @@ impl CheckCommand {
 }
 
 #[cfg(feature = "imap")]
-fn check_imap(imap_config: ImapConfig) -> BackendCheck {
+fn check_imap(imap_config: ImapConfig, resolver: &mut SecretResolver) -> BackendCheck {
     // NOTE: opening the session is the check: it runs the same
     // transport, greeting and authentication a watch would.
-    let result = imap::open(&imap_config).map(|_| ());
+    let result = imap::open(&imap_config, resolver).map(|_| ());
 
     BackendCheck::from("imap", result)
 }
 
 #[cfg(feature = "jmap")]
-fn check_jmap(jmap_config: JmapConfig) -> BackendCheck {
-    let result = jmap::open(&jmap_config).map(|_| ());
+fn check_jmap(jmap_config: JmapConfig, resolver: &mut SecretResolver) -> BackendCheck {
+    let result = jmap::open(&jmap_config, resolver).map(|_| ());
 
     BackendCheck::from("jmap", result)
 }
@@ -139,11 +148,16 @@ fn check_maildir(maildir_config: MaildirConfig) -> BackendCheck {
 }
 
 #[cfg(feature = "dav")]
-fn check_dav(backend: &'static str, server: DavServer<'_>, collection: &str) -> BackendCheck {
+fn check_dav(
+    backend: &'static str,
+    server: DavServer<'_>,
+    collection: &str,
+    resolver: &mut SecretResolver,
+) -> BackendCheck {
     // NOTE: opening proves the transport, and one report the credential
     // and that the collection is there, as a first poll would.
     let shutdown = Arc::new(AtomicBool::new(false));
-    let result = dav::probe(server, collection, &shutdown);
+    let result = dav::probe(server, collection, &shutdown, resolver);
 
     BackendCheck::from(backend, result)
 }

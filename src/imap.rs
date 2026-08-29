@@ -46,6 +46,7 @@ use io_imap::{
 };
 use io_sasl::mechanism::Sasl;
 use log::{debug, trace};
+use pimalaya_config::secret::SecretResolver;
 use pimalaya_stream::tls::Tls;
 use url::Url;
 
@@ -72,7 +73,14 @@ const READ_BUF: usize = 8 * 1024;
 /// Every protocol decision (transport from the scheme, STARTTLS ordering,
 /// the `ID` quirk, the SASL-IR policy) belongs to io-imap's session
 /// coroutine; this only resolves the config into its inputs.
-pub fn open(config: &ImapConfig) -> Result<(ImapClientStd, Vec<Capability<'static>>)> {
+///
+/// The credential is resolved through `resolver`, so a caller opening
+/// several backends of one account spawns each distinct credential
+/// command once.
+pub fn open(
+    config: &ImapConfig,
+    resolver: &mut SecretResolver,
+) -> Result<(ImapClientStd, Vec<Capability<'static>>)> {
     let mut tls: Tls = config.tls.clone().into();
     tls.rustls.alpn = vec![String::from("imap")];
 
@@ -87,7 +95,7 @@ pub fn open(config: &ImapConfig) -> Result<(ImapClientStd, Vec<Capability<'stati
             // NOTE: url knows no imap(s) default port, so the fallback is
             // the scheme default io-imap connects with.
             let port = server.port().unwrap_or(default_port(server.scheme()));
-            sasl.try_into_sasl(host, port)
+            sasl.try_into_sasl(host, port, resolver)
         })
         .transpose()?;
 
@@ -145,7 +153,7 @@ fn watch(
     shutdown: &Arc<AtomicBool>,
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
-    let (client, capability) = open(config)?;
+    let (client, capability) = open(config, &mut SecretResolver::new())?;
     let watched = Mailbox::try_from(collection.to_string())
         .map_err(|err| anyhow!("Invalid mailbox name `{collection}`: {err}"))?;
     let opts = ImapMailboxWatchStreamOptions {
@@ -272,7 +280,7 @@ impl<'a> Resolver<'a> {
             .ok_or_else(|| anyhow!("Invalid UID `{uid}`"))?;
 
         if self.client.is_none() {
-            let (mut client, _capability) = open(self.config)?;
+            let (mut client, _capability) = open(self.config, &mut SecretResolver::new())?;
             // NOTE: the arrangement the watch worker makes: a read
             // deadline to be woken up by, and no retry strategy to swallow
             // the wakeup, so the loop below sees the shutdown flag.

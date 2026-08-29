@@ -20,6 +20,7 @@ use io_pim_discovery::compose::config::DiscoverySecurity;
 use io_sasl::mechanism::SaslMechanism;
 use log::warn;
 use pimalaya_cli::{prompt, spinner::Spinner};
+use pimalaya_config::secret::SecretResolver;
 
 use crate::{
     config::{
@@ -81,7 +82,7 @@ pub fn configure_discovered(
 
     let spinner = Spinner::start("Testing IMAP connection");
 
-    let capabilities = match imap::open(&config) {
+    let capabilities = match imap::open(&config, &mut SecretResolver::new()) {
         Ok((_client, capabilities)) => capabilities,
         Err(err) => {
             spinner.failure("IMAP connection failed");
@@ -111,7 +112,7 @@ pub fn configure_discovered(
 fn probe_mechanisms(config: &ImapConfig) -> Option<Vec<SaslMechanism>> {
     let spinner = Spinner::start("Reading IMAP capabilities");
 
-    let probed = imap::open(config).map(|(_client, capabilities)| {
+    let probed = imap::open(config, &mut SecretResolver::new()).map(|(_client, capabilities)| {
         available_auth_mechanisms(&capabilities)
             .into_iter()
             .filter(is_expressible)

@@ -16,6 +16,7 @@
 use anyhow::{Context, Result, bail};
 use io_webdav::client::WebdavClientStd;
 use pimalaya_cli::{prompt, spinner::Spinner};
+use pimalaya_config::secret::SecretResolver;
 use pimalaya_stream::tls::Tls;
 use url::Url;
 
@@ -110,7 +111,8 @@ fn connect(label: &str, server: &Url, auth: &DavAuthConfig) -> Result<WebdavClie
     let mut tls = Tls::default();
     tls.rustls.alpn = vec![String::from("http/1.1")];
 
-    let opened = dav::auth(auth).and_then(|auth| Ok(WebdavClientStd::connect(server, &tls, auth)?));
+    let opened = dav::auth(auth, &mut SecretResolver::new())
+        .and_then(|auth| Ok(WebdavClientStd::connect(server, &tls, auth)?));
 
     match opened {
         Ok(client) => {

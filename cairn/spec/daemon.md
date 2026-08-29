@@ -123,12 +123,17 @@ A hook SHALL be a desktop notification, a shell command, or both. Its templates 
 - **THEN** the failure is logged and the watch keeps running
 
 ### Requirement: The account can be checked before it is watched
-`carillon check` SHALL open each backend the account declares and report per backend whether it worked, so a credential or connectivity error surfaces before a watch is started rather than in the middle of one.
+`carillon check` SHALL open each backend the account declares and report per backend whether it worked, so a credential or connectivity error surfaces before a watch is started rather than in the middle of one. It SHALL resolve the whole account through one secret resolver, so a credential command named by two of its backends is spawned once rather than once per backend, and a `pass` or `gpg` entry unlocks its store once. The resolver SHALL live no longer than the account it was built for.
 
 #### Scenario: A wrong password
 - **GIVEN** an account whose IMAP password is wrong
 - **WHEN** `carillon check` runs
 - **THEN** the imap backend is reported as failed with the server's reason, and the process exits non-zero
+
+#### Scenario: One credential named by two backends
+- **GIVEN** an account whose `caldav` and `carddav` tables read the same `pass` entry
+- **WHEN** `carillon check` runs
+- **THEN** the command is spawned once, both backends are opened with its value, and the key is unlocked once
 
 ### Requirement: The hooks belong to the backend
 The hooks SHALL be configured under their backend (`imap.hook`, `jmap.hook`, `maildir.hook`, `caldav.hook`, `carddav.hook`, `dav.hook`), singular, with `hooks` accepted as an alias. Each backend SHALL declare only the events it reports, so a hook it cannot fire is refused when the configuration is read rather than never firing. The variables a hook templates against SHALL be the ones its backend can fill, which is why the envelope names belong to the IMAP table alone. An account declaring more than one backend SHALL configure the hooks of each, since a hook written for one backend says nothing about what another would report.

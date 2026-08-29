@@ -316,12 +316,14 @@ mod tests {
     /// credential read from a command, a hook.
     #[cfg(feature = "imap")]
     fn imap_account() -> crate::config::AccountConfig {
-        use std::process::Command;
+        use pimalaya_config::{command::CommandConfig, secret::Secret};
 
         use crate::config::{ImapConfig, ItemHook, NotifyConfig, SaslConfig, SaslPlainConfig};
 
-        let mut passwd = Command::new("pass");
-        passwd.args(["show", "carillon/posteo"]);
+        let passwd = CommandConfig::Argv {
+            program: String::from("pass"),
+            args: vec![String::from("show"), String::from("carillon/posteo")],
+        };
 
         let mut account = crate::config::AccountConfig {
             default: true,
@@ -336,7 +338,7 @@ mod tests {
             sasl: Some(SaslConfig::Plain(SaslPlainConfig {
                 authzid: None,
                 authcid: String::from("me@posteo.net"),
-                passwd: pimalaya_config::secret::Secret::Command(passwd),
+                passwd: Secret::Command(passwd),
             })),
             sasl_ir: None,
             id: Default::default(),

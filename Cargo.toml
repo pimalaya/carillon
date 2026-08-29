@@ -50,10 +50,13 @@ io-webdav = { version = "0.2", default-features = false, optional = true }
 log = "0.4"
 notify-rust = { version = "4", default-features = false, features = ["d"] }
 pimalaya-cli = { version = "0.2", default-features = false, features = ["terminal", "prompt", "spinner", "wizard"] }
-pimalaya-config = { version = "0.1", default-features = false, features = ["toml", "secret"] }
+pimalaya-config = { version = "0.2", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.3", default-features = false, features = ["std"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 shellexpand = "3.1"
 subst = "0.3"
 url = { version = "2.2", features = ["serde"] }
+
+[patch.crates-io]
+io-webdav.git = "https://github.com/pimalaya/io-webdav"

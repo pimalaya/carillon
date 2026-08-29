@@ -1,4 +1,4 @@
-//! # Secret
+//! # Secret prompts
 //!
 //! The secret prompts the backend wizards share, delegating to
 //! pimalaya-cli's OS-aware pickers.
@@ -11,11 +11,9 @@
 //! carillon only reads a secret: the value has to be stored already, and
 //! a missing one surfaces when the connection is tested right after.
 
-use std::process::Command;
-
 use anyhow::{Result, bail};
 use pimalaya_cli::wizard::keyring::{self, SecretChoice};
-use pimalaya_config::{command::shell, secret::Secret};
+use pimalaya_config::{command::CommandConfig, secret::Secret};
 
 /// Prompts for a password [`Secret`] through the shared keyring picker.
 ///
@@ -35,7 +33,7 @@ pub fn configure_token(label: &str, key_default: &str, oauth: bool) -> Result<Se
     to_secret(keyring::prompt_token(label, key_default, oauth)?)
 }
 
-/// Folds a picker choice into the [`Secret`] the configuration records.
+/// Turns a picker choice into the [`Secret`] the configuration stores.
 fn to_secret(choice: SecretChoice) -> Result<Secret> {
     Ok(match choice {
         SecretChoice::Command(argv) => command_secret(argv)?,
@@ -51,10 +49,10 @@ fn command_secret(argv: Vec<String>) -> Result<Secret> {
         bail!("Empty command for secret");
     };
 
-    let mut cmd = Command::new(program);
-    cmd.args(args);
-
-    Ok(Secret::Command(cmd))
+    Ok(Secret::Command(CommandConfig::Argv {
+        program: program.clone(),
+        args: args.to_vec(),
+    }))
 }
 
 /// Builds a [`Secret::Command`] from a shell command line, the hand-typed
@@ -66,7 +64,7 @@ fn shell_secret(line: &str) -> Result<Secret> {
         bail!("Empty shell command for secret");
     }
 
-    Ok(Secret::Command(shell(line)))
+    Ok(Secret::Command(CommandConfig::Shell(line.to_owned())))
 }
 
 #[cfg(test)]
