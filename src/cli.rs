@@ -91,10 +91,12 @@ pub enum Command {
     Configure(ConfigureCommand),
     /// Generate man pages into the given directory.
     #[command(arg_required_else_help = true)]
-    Manuals(ManualCommand),
+    #[command(alias = "manuals")]
+    Manual(ManualCommand),
     /// Generate shell completion scripts into the given directory.
     #[command(arg_required_else_help = true)]
-    Completions(CompletionCommand),
+    #[command(alias = "completions")]
+    Completion(CompletionCommand),
 }
 
 impl Cli {
@@ -149,8 +151,8 @@ impl Command {
             Self::Watch(cmd) => cmd.execute(printer, config_paths, account_name, backend),
             Self::Check(cmd) => cmd.execute(printer, config_paths, account_name, backend),
             Self::Configure(cmd) => cmd.execute(printer, config_paths),
-            Self::Manuals(cmd) => cmd.execute(printer, Cli::command()),
-            Self::Completions(cmd) => cmd.execute(printer, Cli::command()),
+            Self::Manual(cmd) => cmd.execute(printer, Cli::command()),
+            Self::Completion(cmd) => cmd.execute(printer, Cli::command()),
         }
     }
 }
