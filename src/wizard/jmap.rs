@@ -126,6 +126,7 @@ fn config(server: String, auth: JmapAuthConfig) -> JmapConfig {
         mailbox: String::from("INBOX"),
         server,
         tls: Default::default(),
+        alpn: None,
         auth,
         watch: None,
         hook: hook(),

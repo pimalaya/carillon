@@ -52,8 +52,10 @@ notify-rust = { version = "4", default-features = false, features = ["d"] }
 pimalaya-cli = { version = "0.2", default-features = false, features = ["terminal", "prompt", "spinner", "wizard"] }
 pimalaya-config = { version = "0.2", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.3", default-features = false, features = ["std"] }
+schemars = "1"
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 shellexpand = "3.1"
 subst = "0.3"
 url = { version = "2.2", features = ["serde"] }

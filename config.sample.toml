@@ -79,7 +79,12 @@ imap.server = "imaps://imap.example.org"
 # TLS options, defaulting to the first provider available at runtime.
 #imap.tls.provider = "rustls"     # or "native-tls"
 #imap.tls.rustls.crypto = "ring"  # or "aws"
-#imap.tls.cert = "/path/to/custom/cert.pem"
+#imap.tls.cert = "~/certs/example.pem"  # tilde and $VAR are expanded
+
+# ALPN identifiers offered during the TLS handshake, unset taking io-imap's own
+# `["imap"]`. An empty list skips ALPN, a non-empty one replaces the default,
+# and only rustls reads it, native-tls having no ALPN.
+#imap.alpn = ["imap"]
 
 # Exactly one SASL mechanism among `plain`, `login`, `anonymous`, `oauthbearer`,
 # `xoauth2` and `scram-sha-256`. Omit the whole `imap.sasl` table to skip
@@ -146,6 +151,9 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 # TLS options, same shape as `imap.tls`.
 #jmap.tls.provider = "rustls"
 
+# ALPN, read as `imap.alpn`, unset taking io-jmap's own `["http/1.1"]`.
+#jmap.alpn = ["http/1.1"]
+
 # Exactly one of `header`, whose value is sent verbatim, `bearer` or `basic`.
 #jmap.auth.header.command = "pass show carillon/fastmail-token"
 #jmap.auth.bearer.token.command = ["ortie", "token", "read", "fastmail"]
@@ -208,6 +216,9 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 # TLS options, same shape as `imap.tls`.
 #caldav.tls.provider = "rustls"
 
+# ALPN, read as `imap.alpn`, unset taking io-http's own `["http/1.1"]`.
+#caldav.alpn = ["http/1.1"]
+
 # WebDAV has one way: ask sync-collection on an interval, a minute when unset.
 #caldav.watch.poll.interval = 60
 
@@ -229,6 +240,7 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #carddav.addressbook = "addressbooks/alice/default/"
 
 #carddav.server = "https://dav.example.org/"
+#carddav.alpn = ["http/1.1"]
 #carddav.auth.basic.username = "alice"
 #carddav.auth.basic.password.command = "pass show dav/example"
 #carddav.watch.poll.interval = 60

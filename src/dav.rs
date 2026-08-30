@@ -29,7 +29,9 @@ use std::{
 };
 
 use anyhow::{Context, Error, Result, anyhow, bail};
-use io_http::{rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic};
+use io_http::{
+    client::HttpClientStd, rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic,
+};
 use io_webdav::{
     client::WebdavClientStd,
     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
@@ -37,14 +39,16 @@ use io_webdav::{
     rfc4918::{
         DAV, GETETAG, WebdavAuth, WebdavMultistatus, WebdavProperty, propfind::WebdavPropfind,
     },
-    rfc6578::sync_collection::{WebdavSyncCollection, WebdavSyncCollectionError, WebdavSyncDelta},
+    rfc6578::sync_collection::{
+        WebdavSyncCollection, WebdavSyncCollectionError, WebdavSyncCollectionOptions,
+        WebdavSyncDelta,
+    },
 };
 use log::{debug, trace, warn};
 use pimalaya_config::secret::SecretResolver;
 use pimalaya_stream::{
     retry::Retry,
     stream::{Stream, TcpConnectOptions, TlsConnectOptions},
-    tls::Tls,
 };
 use secrecy::ExposeSecret;
 use url::Url;
@@ -98,8 +102,11 @@ pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<Webd
         .ok_or_else(|| anyhow!("DAV server URL `{url}` has no host"))?
         .to_string();
 
-    let mut tls: Tls = config.tls.clone().into();
-    tls.rustls.alpn = vec![String::from("http/1.1")];
+    let alpn = match config.alpn {
+        Some(alpn) => alpn.to_vec(),
+        None => HttpClientStd::default_alpn(),
+    };
+    let tls = config.tls.clone().into_tls(alpn);
 
     let stream = match url.scheme() {
         "http" => {
@@ -519,6 +526,7 @@ fn sync(
         collection,
         token,
         &[GETETAG],
+        WebdavSyncCollectionOptions::default(),
     );
 
     let delta = pump(client, &mut coroutine, shutdown)?;

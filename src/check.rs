@@ -16,6 +16,7 @@ use pimalaya_cli::printer::Printer;
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 use pimalaya_config::secret::SecretResolver;
 use pimalaya_config::toml::TomlConfig;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 #[cfg(feature = "maildir")]
@@ -53,7 +54,7 @@ impl CheckCommand {
             )
         })?;
 
-        let mut report = CheckReport {
+        let mut report = CheckOutput {
             account: name,
             backends: Vec::new(),
         };
@@ -162,9 +163,10 @@ fn check_dav(
     BackendCheck::from(backend, result)
 }
 
-/// What `check` reports: one account, and one line per backend tried.
-#[derive(Clone, Debug, Serialize)]
-pub struct CheckReport {
+/// The `check` output: one account, and one line per backend tried.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckOutput {
     /// The account that was checked.
     pub account: String,
     /// One entry per backend `--backend` allowed on it.
@@ -172,7 +174,8 @@ pub struct CheckReport {
 }
 
 /// The outcome of opening one backend.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BackendCheck {
     /// The backend name, as the configuration spells it.
     pub backend: &'static str,
@@ -200,7 +203,7 @@ impl BackendCheck {
     }
 }
 
-impl fmt::Display for CheckReport {
+impl fmt::Display for CheckOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Account: {}", self.account)?;
         for check in &self.backends {

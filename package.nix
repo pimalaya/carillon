@@ -80,24 +80,25 @@ rustPlatform.buildRustPackage (finalAttrs: {
     let
       exe =
         if stdenv.buildPlatform.canExecute stdenv.hostPlatform then
-          "$out/bin/${finalAttrs.meta.mainProgram}"
+          "$out/bin/${finalAttrs.pname}"
         else
           lib.getExe buildPackages.${finalAttrs.pname};
     in
     ''
-      mkdir -p $out/share/{completions,man,services}
+      mkdir -p $out/share/{completions,man,schemas,services}
       cp assets/${finalAttrs.pname}@.service "$out"/share/services/
-      ${exe} manuals "$out"/share/man
-      ${exe} completions -d "$out"/share/completions bash elvish fish powershell zsh
+      ${exe} completion -d "$out"/share/completions bash elvish fish powershell zsh
+      ${exe} manual -d "$out"/share/man
+      ${exe} json-schema -d "$out"/share/schemas
     ''
     + lib.optionalString installManPages ''
       installManPage "$out"/share/man/*
     ''
     + lib.optionalString installShellCompletions ''
-      installShellCompletion --cmd ${finalAttrs.meta.mainProgram} \
-        --bash "$out"/share/completions/${finalAttrs.meta.mainProgram}.bash \
-        --fish "$out"/share/completions/${finalAttrs.meta.mainProgram}.fish \
-        --zsh "$out"/share/completions/_${finalAttrs.meta.mainProgram}
+      installShellCompletion --cmd ${finalAttrs.pname} \
+        --bash "$out"/share/completions/${finalAttrs.pname}.bash \
+        --fish "$out"/share/completions/${finalAttrs.pname}.fish \
+        --zsh "$out"/share/completions/_${finalAttrs.pname}
     '';
 
   cargoTestFlags = [ "--bins" ];

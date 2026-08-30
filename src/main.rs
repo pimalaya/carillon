@@ -8,7 +8,8 @@
 //! The frontend: main dispatches, cli declares the parser and meets the
 //! invocations that find no configuration, config parses the TOML
 //! accounts and renders a generated one back, watch, check and configure
-//! are the three commands, hook fires the notification and the command.
+//! are the three commands, hook fires the notification and the command,
+//! json_schema names the schema of what each command prints.
 //!
 //! watch carries the runtime: it selects the accounts, spawns one thread
 //! each, and each thread opens the session its backend calls for,
@@ -58,6 +59,7 @@ mod hook;
 mod imap;
 #[cfg(feature = "jmap")]
 mod jmap;
+mod json_schema;
 #[cfg(feature = "maildir")]
 mod maildir;
 mod watch;

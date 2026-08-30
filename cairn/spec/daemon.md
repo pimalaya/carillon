@@ -253,3 +253,36 @@ The generated account SHALL be saved to the configuration file, appended to the 
 - **GIVEN** an input no mechanism resolves
 - **WHEN** the search comes back empty
 - **THEN** the wizard stops and points at the documented sample, rather than prompting for a hand-entered configuration
+
+
+### Requirement: The TLS handshake is configured under its backend
+Every backend speaking TLS SHALL carry a `tls` table and an `alpn` key of its own, and the runtime TLS handle SHALL be built through one conversion taking that list, so a connection cannot be opened without saying what it negotiates. `alpn` SHALL be a list of ALPN identifiers: unset SHALL take the default the backend's client crate owns (`["imap"]` over IMAP, `["http/1.1"]` over JMAP and WebDAV), an empty list SHALL skip ALPN negotiation, and a non-empty list SHALL replace the default. Only rustls SHALL read it, native-tls having no ALPN. Every path in a `tls` table SHALL be expanded when the file is read, so a leading tilde or a shell variable names the same thing there as everywhere else.
+
+#### Scenario: A server that refuses the handshake carrying an ALPN
+- **GIVEN** a CalDAV server whose TLS terminator rejects a `ClientHello` offering `http/1.1`
+- **WHEN** the account sets `caldav.alpn = []`
+- **THEN** the connection is opened with no ALPN extension at all
+
+#### Scenario: A configuration naming no ALPN
+- **GIVEN** an account carrying no `alpn` key
+- **WHEN** it is watched
+- **THEN** the backend offers the default its client crate owns, unchanged from before the key existed, and nothing is written back into a generated document
+
+#### Scenario: A certificate under the home directory
+- **GIVEN** `imap.tls.cert = "~/certs/example.pem"`
+- **WHEN** the configuration is read
+- **THEN** the path is expanded against the home directory rather than read as a relative `./~/certs/example.pem`
+
+
+### Requirement: Every printed output has a published schema
+Every command handing data to the printer SHALL return a named `*Output` type deriving `Display`, `Serialize` and `JsonSchema`, and `carillon json-schema` SHALL publish the schema of each, keyed by the command path joined with hyphens and prefixed `carillon-`. Every type reaching the printer SHALL spell its keys in camelCase, declared as `rename_all` on the type, which is the convention of the `--json` output alone and not of the TOML configuration, whose keys stay kebab-case. A command that writes files rather than data SHALL stay out of the registry, and `watch` SHALL print nothing, reporting through its hooks alone.
+
+#### Scenario: A consumer reading the check payload
+- **GIVEN** `carillon json-schema carillon-check`
+- **WHEN** it runs
+- **THEN** the JSON Schema of the `--json` payload of `carillon check` is printed on stdout
+
+#### Scenario: Every schema at once
+- **GIVEN** `carillon json-schema --dir <DIR>`
+- **WHEN** it runs
+- **THEN** one file per command is written there, the directory being created if it is not already

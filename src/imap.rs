@@ -32,7 +32,7 @@ use io_imap::{
         examine::ImapMailboxExamine,
         fetch::{ImapMessageFetch, ImapMessageFetchOptions},
     },
-    session::ImapSessionOpenOptions,
+    session::{ImapSessionOpenOptions, default_alpn},
     types::{
         core::NString,
         envelope::Address,
@@ -47,7 +47,6 @@ use io_imap::{
 use io_sasl::mechanism::Sasl;
 use log::{debug, trace};
 use pimalaya_config::secret::SecretResolver;
-use pimalaya_stream::tls::Tls;
 use url::Url;
 
 use crate::{
@@ -81,8 +80,8 @@ pub fn open(
     config: &ImapConfig,
     resolver: &mut SecretResolver,
 ) -> Result<(ImapClientStd, Vec<Capability<'static>>)> {
-    let mut tls: Tls = config.tls.clone().into();
-    tls.rustls.alpn = vec![String::from("imap")];
+    let alpn = config.alpn.clone().unwrap_or_else(default_alpn);
+    let tls = config.tls.clone().into_tls(alpn);
 
     let server = parse_server(&config.server)?;
     let sasl: Option<Sasl> = config

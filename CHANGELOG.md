@@ -6,7 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Added `imap.alpn`, `jmap.alpn`, `caldav.alpn` and `carddav.alpn`, the ALPN identifiers offered during the TLS handshake.
+
+  Unset takes the protocol default the backend already used, `["imap"]` over IMAP and `["http/1.1"]` over JMAP and WebDAV, so nothing moves for a configuration that does not name it. An empty list skips ALPN negotiation, for a server whose TLS terminator rejects the handshake carrying one, and a non-empty list replaces the default. Only rustls reads it, native-tls having no ALPN.
+
+- Added `carillon json-schema`, generating the JSON Schema of a command's `--json` output.
+
+  It writes one schema to stdout, or one file per command into `--dir`. `check` and `configure` are the two commands that print data.
+
 ### Changed
+
+- Expanded the leading tilde and the shell variables in `imap.tls.cert`, `jmap.tls.cert`, `caldav.tls.cert` and `carddav.tls.cert`.
+
+  `cert = "~/certs/example.pem"` used to be read as the literal relative path `./~/certs/example.pem`, so the certificate was never found. It is now expanded when the file is read, as every other path in the configuration already was.
+
 
 - **BREAKING**: renamed `completions` and `manuals` to `completion` and `manual`, the plural staying as a hidden alias.
 - Spawned a credential command once per checked account, rather than once per backend naming it.

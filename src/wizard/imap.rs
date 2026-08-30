@@ -290,6 +290,7 @@ fn config(endpoint: &TcpEndpoint, sasl: Option<SaslConfig>) -> ImapConfig {
         mailbox: String::from("INBOX"),
         server: format!("{scheme}://{}:{}", endpoint.host, endpoint.port),
         tls: Default::default(),
+        alpn: None,
         starttls: endpoint.security == DiscoverySecurity::Starttls,
         sasl,
         sasl_ir: None,

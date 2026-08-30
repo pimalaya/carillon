@@ -41,11 +41,16 @@ use io_sasl::{
 #[cfg(feature = "imap")]
 use log::warn;
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
-use pimalaya_config::secret::{Secret, SecretResolver};
+use pimalaya_config::secret::Secret;
 #[cfg(feature = "imap")]
+use pimalaya_config::secret::SecretResolver;
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+use pimalaya_config::toml::shell_expanded_path;
 use pimalaya_config::{command, toml::TomlConfig};
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 use pimalaya_stream::tls::{Rustls, RustlsCrypto, Tls, TlsProvider};
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+use serde::Deserializer;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "dav")]
@@ -85,6 +90,16 @@ const BACKEND_ORDER: [&str; 6] = [
 /// document down to what was actually configured.
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
+}
+
+/// Expands a leading tilde and any shell variable in an optional path, as
+/// [`shell_expanded_path`] does for a mandatory one.
+///
+/// TODO: drop this for `pimalaya_config::toml::opt_shell_expanded_path`
+/// once pimalaya-config ships an optional variant.
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+fn opt_shell_expanded_path<'de, D: Deserializer<'de>>(de: D) -> Result<Option<PathBuf>, D::Error> {
+    shell_expanded_path(de).map(Some)
 }
 
 /// Ranks one dotted line inside its backend group, `imap.server = …`
@@ -307,6 +322,14 @@ pub struct ImapConfig {
     pub tls: TlsConfig,
     #[serde(default, skip_serializing_if = "is_default")]
     pub starttls: bool,
+    /// The ALPN identifiers offered during the TLS handshake.
+    ///
+    /// Unset takes io-imap's own default, the `["imap"]` RFC 7595
+    /// registers; `[]` skips ALPN negotiation, and a non-empty list
+    /// replaces the default. Only rustls reads it, native-tls having no
+    /// ALPN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<Vec<String>>,
     /// The SASL credentials, omitted to skip authentication entirely.
     pub sasl: Option<SaslConfig>,
     /// Forces the RFC 4959 SASL-IR initial response on or off.
@@ -411,6 +434,14 @@ pub struct JmapConfig {
     pub server: String,
     #[serde(default)]
     pub tls: TlsConfig,
+    /// The ALPN identifiers offered during the TLS handshake.
+    ///
+    /// Unset takes io-jmap's own default, `["http/1.1"]`, JMAP riding on
+    /// HTTP/1.1; `[]` skips ALPN negotiation, and a non-empty list
+    /// replaces the default. Only rustls reads it, native-tls having no
+    /// ALPN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<Vec<String>>,
     /// Authentication: exactly one of `header`, `bearer`, `basic`.
     pub auth: JmapAuthConfig,
     /// How this account learns about a change. Unset holds the stream.
@@ -457,9 +488,14 @@ pub struct MaildirConfig {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TlsConfig {
+    /// The TLS implementation the connection is opened with, unset taking
+    /// the first one compiled in.
     pub provider: Option<TlsProviderConfig>,
+    /// The rustls options, read by the rustls provider alone.
     #[serde(default)]
     pub rustls: RustlsConfig,
+    /// An additional certificate to trust, in PEM format.
+    #[serde(default, deserialize_with = "opt_shell_expanded_path")]
     pub cert: Option<PathBuf>,
 }
 
@@ -487,21 +523,27 @@ pub enum RustlsCryptoConfig {
 }
 
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
-impl From<TlsConfig> for Tls {
-    fn from(config: TlsConfig) -> Self {
+impl TlsConfig {
+    /// Builds the runtime [`Tls`] handle the connect helpers take, folding
+    /// in the ALPN list its backend resolved.
+    ///
+    /// The schema never exposes `tls.rustls.alpn`, the per-backend `alpn`
+    /// key standing for it, so a new call site has to say what it
+    /// negotiates rather than silently negotiate nothing.
+    pub fn into_tls(self, alpn: Vec<String>) -> Tls {
         Tls {
-            provider: config.provider.map(|p| match p {
+            provider: self.provider.map(|p| match p {
                 TlsProviderConfig::Rustls => TlsProvider::Rustls,
                 TlsProviderConfig::NativeTls => TlsProvider::NativeTls,
             }),
             rustls: Rustls {
-                crypto: config.rustls.crypto.map(|c| match c {
+                crypto: self.rustls.crypto.map(|c| match c {
                     RustlsCryptoConfig::Aws => RustlsCrypto::Aws,
                     RustlsCryptoConfig::Ring => RustlsCrypto::Ring,
                 }),
-                alpn: Vec::new(),
+                alpn,
             },
-            cert: config.cert,
+            cert: self.cert,
         }
     }
 }
@@ -1139,6 +1181,14 @@ pub struct CaldavConfig {
     pub server: String,
     #[serde(default)]
     pub tls: TlsConfig,
+    /// The ALPN identifiers offered during the TLS handshake.
+    ///
+    /// Unset takes io-http's own default, `["http/1.1"]`, WebDAV riding on
+    /// HTTP/1.1; `[]` skips ALPN negotiation, and a non-empty list
+    /// replaces the default. Only rustls reads it, native-tls having no
+    /// ALPN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<Vec<String>>,
     /// Authentication, none by default, for a calendar readable without.
     #[serde(default, skip_serializing_if = "DavAuthConfig::is_none")]
     pub auth: DavAuthConfig,
@@ -1163,6 +1213,14 @@ pub struct CarddavConfig {
     pub server: String,
     #[serde(default)]
     pub tls: TlsConfig,
+    /// The ALPN identifiers offered during the TLS handshake.
+    ///
+    /// Unset takes io-http's own default, `["http/1.1"]`, WebDAV riding on
+    /// HTTP/1.1; `[]` skips ALPN negotiation, and a non-empty list
+    /// replaces the default. Only rustls reads it, native-tls having no
+    /// ALPN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<Vec<String>>,
     /// Authentication, none by default, for a book readable without.
     #[serde(default, skip_serializing_if = "DavAuthConfig::is_none")]
     pub auth: DavAuthConfig,
@@ -1180,6 +1238,7 @@ pub struct CarddavConfig {
 pub struct DavServer<'a> {
     pub server: &'a str,
     pub tls: &'a TlsConfig,
+    pub alpn: Option<&'a [String]>,
     pub auth: &'a DavAuthConfig,
 }
 
@@ -1190,6 +1249,7 @@ impl CaldavConfig {
         DavServer {
             server: &self.server,
             tls: &self.tls,
+            alpn: self.alpn.as_deref(),
             auth: &self.auth,
         }
     }
@@ -1202,6 +1262,7 @@ impl CarddavConfig {
         DavServer {
             server: &self.server,
             tls: &self.tls,
+            alpn: self.alpn.as_deref(),
             auth: &self.auth,
         }
     }
@@ -1346,4 +1407,71 @@ impl Default for PushWatchConfig {
 #[cfg(feature = "jmap")]
 fn default_push_ping() -> u64 {
     30
+}
+
+#[cfg(all(test, feature = "imap"))]
+mod tests {
+    use super::*;
+
+    /// The minimal IMAP account the ALPN and TLS cases hang off.
+    fn document(extra: &str) -> String {
+        format!(
+            "[accounts.perso]\n\
+             imap.mailbox = \"INBOX\"\n\
+             imap.server = \"imaps://imap.example.org\"\n\
+             {extra}"
+        )
+    }
+
+    #[test]
+    fn a_tilde_certificate_path_is_expanded_at_deserialize() {
+        let document = document("imap.tls.cert = \"~/certs/example.pem\"\n");
+        let config: Config = toml::from_str(&document).expect("parse the config");
+        let cert = config.accounts["perso"]
+            .imap
+            .as_ref()
+            .and_then(|imap| imap.tls.cert.as_ref())
+            .expect("a certificate path");
+
+        assert!(cert.is_absolute(), "{} is not absolute", cert.display());
+        assert!(cert.ends_with("certs/example.pem"));
+    }
+
+    #[test]
+    fn an_unset_alpn_is_told_apart_from_an_empty_one() {
+        let unset: Config = toml::from_str(&document("")).expect("parse the config");
+        let empty: Config =
+            toml::from_str(&document("imap.alpn = []\n")).expect("parse the config");
+        let listed: Config =
+            toml::from_str(&document("imap.alpn = [\"imap\"]\n")).expect("parse the config");
+
+        let alpn = |config: &Config| config.accounts["perso"].imap.as_ref().unwrap().alpn.clone();
+
+        assert_eq!(alpn(&unset), None);
+        assert_eq!(alpn(&empty), Some(Vec::new()));
+        assert_eq!(alpn(&listed), Some(vec![String::from("imap")]));
+    }
+
+    #[test]
+    fn an_unset_alpn_is_not_rendered_back() {
+        let config: Config =
+            toml::from_str(&document("imap.alpn = []\n")).expect("parse the config");
+        let rendered = config.accounts["perso"]
+            .render("perso")
+            .expect("render the account");
+        let parsed: Config = toml::from_str(&rendered).expect("parse the rendered account");
+
+        assert!(rendered.contains("imap.alpn = []"));
+        assert_eq!(
+            parsed.accounts["perso"].imap.as_ref().unwrap().alpn,
+            Some(Vec::new())
+        );
+
+        let bare: Config = toml::from_str(&document("")).expect("parse the config");
+        let rendered = bare.accounts["perso"]
+            .render("perso")
+            .expect("render the account");
+
+        assert!(!rendered.contains("alpn"));
+    }
 }

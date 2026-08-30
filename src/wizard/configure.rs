@@ -35,6 +35,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use pimalaya_cli::{printer::Printer, prompt};
 use pimalaya_config::toml::TomlConfig;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::{
@@ -81,7 +82,7 @@ impl ConfigureCommand {
         let default = !existing.as_ref().is_some_and(|config| config.has_default);
         account.default = default;
 
-        let config = GeneratedConfig {
+        let config = ConfigureOutput {
             document: account.render(&name)?,
             name,
             default,
@@ -126,9 +127,11 @@ impl ExistingConfig {
     }
 }
 
-/// The generated account, as the printer takes it.
-#[derive(Serialize)]
-pub struct GeneratedConfig {
+/// The `configure` output: the generated account, as the printer takes
+/// it.
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigureOutput {
     /// The account name, which is the `[accounts.<name>]` table key.
     name: String,
     /// Whether the account claims the default.
@@ -137,7 +140,7 @@ pub struct GeneratedConfig {
     document: String,
 }
 
-impl fmt::Display for GeneratedConfig {
+impl fmt::Display for ConfigureOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // NOTE: the trailing newline terminates the document, and flushes
         // the line-buffered stdout.
@@ -145,7 +148,7 @@ impl fmt::Display for GeneratedConfig {
     }
 }
 
-/// Frames carillon, names the missing configuration file, and points at
+/// Frames Carillon, names the missing configuration file, and points at
 /// the sample for everything the wizard does not cover.
 ///
 /// Printed before the offer a bare `carillon` or a command needing an
@@ -153,9 +156,9 @@ impl fmt::Display for GeneratedConfig {
 /// ask for it. On stderr, so a redirected stdout holds the document alone.
 pub fn print_welcome(path: &Path) {
     eprintln!();
-    eprintln!("Welcome to carillon, the CLI to watch PIM collection changes.");
+    eprintln!("Welcome to Carillon, the CLI to watch PIM collection changes.");
     eprintln!();
-    eprintln!("carillon watches one collection per account, over IMAP, JMAP, CalDAV,");
+    eprintln!("Carillon watches one collection per account, over IMAP, JMAP, CalDAV,");
     eprintln!("CardDAV or a local Maildir, and fires a desktop notification or a command");
     eprintln!("on every change. It needs one account to know what to watch, and no");
     eprintln!("configuration file was found at:");
@@ -205,7 +208,7 @@ fn account_name(base: &str, existing: Option<&ExistingConfig>) -> String {
 
 /// Offers to write the account to a configuration file not there yet,
 /// printing it instead when the offer is declined.
-fn save_or_print(printer: &mut impl Printer, path: &Path, config: GeneratedConfig) -> Result<()> {
+fn save_or_print(printer: &mut impl Printer, path: &Path, config: ConfigureOutput) -> Result<()> {
     let prompt = format!("Save this account to {}?", path.display());
 
     if !prompt::bool(prompt, true)? {
@@ -230,7 +233,7 @@ fn save_or_print(printer: &mut impl Printer, path: &Path, config: GeneratedConfi
 
 /// Offers to append the account to the configuration file already there,
 /// printing it instead when the offer is declined.
-fn append_or_print(printer: &mut impl Printer, path: &Path, config: GeneratedConfig) -> Result<()> {
+fn append_or_print(printer: &mut impl Printer, path: &Path, config: ConfigureOutput) -> Result<()> {
     let prompt = format!("Append account `{}` to {}?", config.name, path.display());
 
     if !prompt::bool(prompt, true)? {
@@ -258,7 +261,7 @@ fn append_or_print(printer: &mut impl Printer, path: &Path, config: GeneratedCon
 ///
 /// The name matters because it was never asked for: an account that did
 /// not claim the default is only reachable through `-a`.
-fn print_saved(path: &Path, config: &GeneratedConfig) {
+fn print_saved(path: &Path, config: &ConfigureOutput) {
     let name = &config.name;
 
     eprintln!();
@@ -334,6 +337,7 @@ mod tests {
             mailbox: String::from("INBOX"),
             server: String::from("imaps://posteo.de:993"),
             tls: Default::default(),
+            alpn: None,
             starttls: false,
             sasl: Some(SaslConfig::Plain(SaslPlainConfig {
                 authzid: None,

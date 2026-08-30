@@ -16,7 +16,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use pimalaya_cli::{
     clap::{
         args::{AccountFlag, JsonFlag, LogFlags},
-        commands::{CompletionCommand, ManualCommand},
+        commands::{CompletionCommand, JsonSchemaCommand, ManualCommand},
         parsers::path_parser,
     },
     footer, long_version,
@@ -29,6 +29,7 @@ use crate::{
     backend::Backend,
     check::CheckCommand,
     config::{CONFIG_SAMPLE_URL, Config},
+    json_schema,
     watch::WatchCommand,
     wizard::{self, configure::ConfigureCommand},
 };
@@ -93,6 +94,9 @@ pub enum Command {
     #[command(arg_required_else_help = true)]
     #[command(alias = "completions")]
     Completion(CompletionCommand),
+    /// Generate the JSON Schema of a command's `--json` output.
+    #[command(alias = "json-schemas")]
+    JsonSchema(JsonSchemaCommand),
 }
 
 impl Cli {
@@ -146,6 +150,7 @@ impl Command {
             Self::Configure(cmd) => cmd.execute(printer, config_paths),
             Self::Manual(cmd) => cmd.execute(printer, Cli::command()),
             Self::Completion(cmd) => cmd.execute(printer, Cli::command()),
+            Self::JsonSchema(cmd) => cmd.execute(printer, json_schema::schemas()),
         }
     }
 }

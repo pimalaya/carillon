@@ -39,7 +39,7 @@ use io_jmap::{
 };
 use log::{debug, trace};
 use pimalaya_config::secret::SecretResolver;
-use pimalaya_stream::{retry::Retry, stream::Stream, tls::Tls};
+use pimalaya_stream::{retry::Retry, stream::Stream};
 use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 
@@ -61,8 +61,11 @@ const POLL_STEP: Duration = Duration::from_millis(200);
 /// credential through `resolver`, so a caller opening several backends of
 /// one account spawns each distinct credential command once.
 pub fn open(config: &JmapConfig, resolver: &mut SecretResolver) -> Result<(JmapClientStd, Url)> {
-    let mut tls: Tls = config.tls.clone().into();
-    tls.rustls.alpn = vec![String::from("http/1.1")];
+    let alpn = config
+        .alpn
+        .clone()
+        .unwrap_or_else(JmapClientStd::default_alpn);
+    let tls = config.tls.clone().into_tls(alpn);
 
     let url = parse_server(&config.server)?;
     let auth = http_auth(config.auth.clone(), resolver)?;

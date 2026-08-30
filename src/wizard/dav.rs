@@ -14,16 +14,16 @@
 //! listing has no such deadline to respect.
 
 use anyhow::{Context, Result, bail};
+use io_http::client::HttpClientStd;
 use io_webdav::client::WebdavClientStd;
 use pimalaya_cli::{prompt, spinner::Spinner};
 use pimalaya_config::secret::SecretResolver;
-use pimalaya_stream::tls::Tls;
 use url::Url;
 
 use crate::{
     config::{
         CaldavConfig, CaldavHookConfig, CarddavConfig, CarddavHookConfig, DavAuthConfig, ItemHook,
-        NotifyConfig,
+        NotifyConfig, TlsConfig,
     },
     dav,
     wizard::{
@@ -83,6 +83,7 @@ pub fn configure_discovered(
             calendar: collection.path,
             server: origin(home),
             tls: Default::default(),
+            alpn: None,
             auth,
             watch: None,
             hook: caldav_hook(&collection.components),
@@ -94,6 +95,7 @@ pub fn configure_discovered(
             addressbook: collection.path,
             server: origin(home),
             tls: Default::default(),
+            alpn: None,
             auth,
             watch: None,
             hook: carddav_hook(),
@@ -108,8 +110,9 @@ pub fn configure_discovered(
 fn connect(label: &str, server: &Url, auth: &DavAuthConfig) -> Result<WebdavClientStd> {
     let spinner = Spinner::start(format!("Testing {label} connection"));
 
-    let mut tls = Tls::default();
-    tls.rustls.alpn = vec![String::from("http/1.1")];
+    // NOTE: the same profile a watch opens with, an account carrying no
+    // `alpn` key yet when the wizard tests it.
+    let tls = TlsConfig::default().into_tls(HttpClientStd::default_alpn());
 
     let opened = dav::auth(auth, &mut SecretResolver::new())
         .and_then(|auth| Ok(WebdavClientStd::connect(server, &tls, auth)?));
