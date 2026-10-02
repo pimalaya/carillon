@@ -83,13 +83,33 @@ pub struct Watcher {
 }
 
 impl Watcher {
-    /// Starts a watch on an account holding one `backend` block, made of
-    /// `block` and one hook per name in `hooks`, and waits until the
-    /// collection is read: what changes from there is news.
-    ///
-    /// Each hook appends a line naming itself, the item id, and the
-    /// subject and flag where its event carries them.
+    /// Starts a watch on one collection of a bearer-only backend polled
+    /// every few seconds, its token read from the environment.
     pub fn start(backend: &str, block: &str, hooks: &[&str], token: &str) -> Self {
+        let block = format!(
+            "{backend}.auth.token.command = \"printenv {TOKEN_VAR}\"\n\
+             {backend}.watch.poll.interval = {INTERVAL}\n\
+             {block}",
+        );
+
+        Self::start_with(backend, &block, hooks, token, 1)
+    }
+
+    /// Starts a watch on an account holding one `backend` block, made of
+    /// `block` and one hook per name in `hooks`, and waits until its
+    /// `collections` are read: what changes from there is news.
+    ///
+    /// `secret` is what `printenv CARILLON_LIVE_TOKEN` prints, for the
+    /// block's credential command to read. Each hook appends a line naming
+    /// itself, the item id, and the subject and flag where its event
+    /// carries them.
+    pub fn start_with(
+        backend: &str,
+        block: &str,
+        hooks: &[&str],
+        secret: &str,
+        collections: usize,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let events = dir.path().join("events");
 
@@ -102,13 +122,7 @@ impl Watcher {
                 )
             })
             .collect();
-        let config = format!(
-            "[accounts.{ACCOUNT}]\n\
-             {backend}.auth.token.command = \"printenv {TOKEN_VAR}\"\n\
-             {backend}.watch.poll.interval = {INTERVAL}\n\
-             {block}\n\
-             {hooks}",
-        );
+        let config = format!("[accounts.{ACCOUNT}]\n{block}\n{hooks}");
         fs::write(dir.path().join("config.toml"), config).unwrap();
         fs::write(&events, "").unwrap();
 
@@ -119,7 +133,7 @@ impl Watcher {
             .arg(dir.path().join("log"))
             .args(["-a", ACCOUNT, "-b", backend, "watch"])
             .env("RUST_LOG", "carillon=debug")
-            .env(TOKEN_VAR, token)
+            .env(TOKEN_VAR, secret)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -132,11 +146,12 @@ impl Watcher {
             seen: Cell::new(0),
         };
 
-        // NOTE: each backend logs `watching <backend> …` once it holds
-        // its picture, the info line before it naming no backend first.
+        // NOTE: each backend logs `watching <backend> …` once it holds the
+        // picture of a collection, the info line before it naming no
+        // backend first.
         let armed = format!("watching {backend} ");
-        watcher.until("the watch reads the collection", || {
-            watcher.log().contains(&armed)
+        watcher.until("the watch reads its collections", || {
+            watcher.log().matches(&armed).count() >= collections
         });
 
         watcher

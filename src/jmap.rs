@@ -35,7 +35,7 @@ use io_jmap::{
     rfc8620::{
         changes::JmapChangesOutput,
         event_source::{
-            JmapCloseAfter,
+            JmapCloseAfter, JmapStateChange,
             subscribe::{JmapEventSource, JmapEventSourceYield},
         },
     },
@@ -164,9 +164,10 @@ pub fn watch_poll(
 /// Watches every configured collection over one EventSource stream, until
 /// `shutdown` is set.
 ///
-/// Asked to close after the first state change (RFC 8620 §7.3
-/// `closeafter=state`), the stream leaves the loop looking like an IMAP
-/// IDLE. It holds its own connection, being the one the server hangs up.
+/// The stream is held until it pushes a state the watch does not already
+/// hold, then dropped for a round, which leaves the loop looking like an
+/// IMAP IDLE. It holds its own connection, the client's being the
+/// round's.
 pub fn watch_push(
     config: &JmapConfig,
     ping: u64,
@@ -175,10 +176,9 @@ pub fn watch_push(
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let (mut client, mut watched) = arm(config)?;
-    let types: Vec<&str> = watched.iter().map(Watched::type_name).collect();
 
     while !shutdown.load(Ordering::SeqCst) {
-        if !subscribe(&mut client, config, &types, ping, shutdown)? {
+        if !subscribe(&mut client, config, &watched, ping, shutdown)? {
             continue;
         }
 
@@ -327,6 +327,16 @@ impl Watched {
             WatchDomain::Card => "ContactCard",
             WatchDomain::Event | WatchDomain::Task => "CalendarEvent",
         }
+    }
+
+    /// Whether a pushed state change names a state of this collection's
+    /// type other than the one the picture was last read at.
+    fn moved(&self, change: &JmapStateChange) -> bool {
+        change.changed.values().any(|states| {
+            states
+                .get(self.type_name())
+                .is_some_and(|state| *state != self.state)
+        })
     }
 
     /// Reads what moved since `state`, reports it, and advances `state`.
@@ -563,44 +573,49 @@ fn summarize(email: &JmapEmail) -> ItemSummary {
     summary
 }
 
-/// Holds an EventSource subscription until the server reports a state
-/// change, and says whether one arrived.
+/// Holds an EventSource subscription until the server pushes a state the
+/// watch does not hold, and says whether one arrived.
 ///
-/// A frame with an empty `changed` map is the server's keep-alive, and a
-/// read that times out is the wakeup this loop arms to look at the
-/// shutdown flag: neither is news.
+/// News is the state itself rather than the event: a server may push
+/// the states as they stand the moment the stream opens (Fastmail does),
+/// and a frame with an empty `changed` map is its keep-alive. The stream
+/// is asked to stay open (`closeafter=no`) and dropped on news, since
+/// not every server ends it after a state event when asked to. A read
+/// that times out is the wakeup this loop arms to look at the shutdown
+/// flag.
 fn subscribe(
     client: &mut JmapClientStd,
     config: &JmapConfig,
-    types: &[&str],
+    watched: &[Watched],
     ping: u64,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<bool> {
     let session = client
         .session()
         .ok_or_else(|| anyhow!("The JMAP session was not read"))?;
+    let types: Vec<&str> = watched.iter().map(Watched::type_name).collect();
     let mut coroutine = JmapEventSource::new(
         session,
         &client.http_auth,
-        types,
+        &types,
         ping,
-        JmapCloseAfter::State,
+        JmapCloseAfter::No,
         shutdown.clone(),
     )?;
 
-    // NOTE: the subscription is what the server hangs up on, so it holds
-    // a connection of its own and leaves the client's to the next round.
+    // NOTE: the subscription holds a connection of its own and leaves
+    // the client's to the next round.
     let (mut stream, _url) = open(config, &mut SecretResolver::new())?;
     let mut buf = [0u8; READ_BUF];
     let mut arg: Option<Vec<u8>> = None;
-    let mut changed = false;
 
     loop {
         match coroutine.resume(arg.take().as_deref()) {
             JmapCoroutineState::Yielded(JmapEventSourceYield::Frame(frame)) => {
-                if !frame.changed.is_empty() {
-                    trace!("jmap state change: {frame:?}");
-                    changed = true;
+                trace!("jmap state change: {frame:?}");
+
+                if watched.iter().any(|watched| watched.moved(&frame)) {
+                    return Ok(true);
                 }
             }
             JmapCoroutineState::Yielded(JmapEventSourceYield::WantsRead) => {
@@ -609,7 +624,7 @@ fn subscribe(
                 }
 
                 match stream.stream.read(&mut buf) {
-                    Ok(0) => return Ok(changed),
+                    Ok(0) => return Ok(false),
                     Ok(read) => arg = Some(buf[..read].to_vec()),
                     Err(err) if is_timeout(&err) => continue,
                     Err(err) => return Err(err).context("read failed"),
@@ -618,7 +633,7 @@ fn subscribe(
             JmapCoroutineState::Yielded(JmapEventSourceYield::WantsWrite(bytes)) => {
                 stream.stream.write_all(&bytes).context("write failed")?;
             }
-            JmapCoroutineState::Complete(Ok(())) => return Ok(changed),
+            JmapCoroutineState::Complete(Ok(())) => return Ok(false),
             JmapCoroutineState::Complete(Err(err)) => return Err(err.into()),
         }
     }
@@ -936,6 +951,27 @@ mod tests {
             }],
             events.reconcile(member("E", false)),
         );
+    }
+
+    /// Fastmail pushes the states as they stand when a stream opens, so a
+    /// state the watch already holds is not news, nor is another type's.
+    #[test]
+    fn only_a_state_the_watch_does_not_hold_is_news() {
+        let mut cards = watched(WatchDomain::Card);
+        cards.state = String::from("S1");
+
+        let change = |kind: &str, state: &str| JmapStateChange {
+            r#type: String::from("StateChange"),
+            changed: [(
+                String::from("u1"),
+                [(String::from(kind), String::from(state))].into(),
+            )]
+            .into(),
+        };
+
+        assert!(!cards.moved(&change("ContactCard", "S1")));
+        assert!(!cards.moved(&change("Email", "S2")));
+        assert!(cards.moved(&change("ContactCard", "S2")));
     }
 
     #[test]

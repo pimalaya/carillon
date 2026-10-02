@@ -1148,9 +1148,9 @@ dependencies = [
 
 [[package]]
 name = "io-jmap"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cac88102ac3621a7da2dc6a306c5251c293f2c5b0c16fbc08ccea1fad849188b"
+checksum = "f15cf26ef3c2976bf52a1f89e29d82840bc4cede80d18785a025445cf4cb0e2a"
 dependencies = [
  "anyhow",
  "io-http",

@@ -25,10 +25,13 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           extraPullNames: nix-community
       - uses: Swatinem/rust-cache@v2
+      - name: Start the local Stalwart
+        run: ./tests/stalwart.sh
       - name: Run the live tests
         env:
           GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
           MSGRAPH_TENANT_ID: ${{ secrets.MICROSOFT_TENANT_ID }}
           MSGRAPH_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
           MSGRAPH_CLIENT_SECRET: ${{ secrets.MICROSOFT_CLIENT_SECRET }}
-        run: nix develop -c cargo test --test google --test msgraph -- --ignored --test-threads 1
+          FASTMAIL_API_TOKEN: ${{ secrets.FASTMAIL_API_TOKEN }}
+        run: nix develop -c cargo test --test google --test msgraph --test jmap -- --ignored --test-threads 1

@@ -50,7 +50,7 @@ io-gcal = { version = "0.1", default-features = false, optional = true }
 io-gmail = { version = "0.4", default-features = false, optional = true }
 io-gpeople = { version = "0.4", default-features = false, optional = true }
 io-imap = { version = "0.7", default-features = false, optional = true }
-io-jmap = { version = "0.4", default-features = false, optional = true }
+io-jmap = { version = "0.4.2", default-features = false, optional = true }
 io-maildir = { version = "0.3", default-features = false, optional = true }
 io-msgraph = { version = "0.4", default-features = false, optional = true }
 io-pim-discovery = { version = "0.8", default-features = false, features = ["autoconfig", "pacc", "rfc6186", "rfc6764", "rfc8620"], optional = true }

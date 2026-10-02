@@ -10,5 +10,5 @@ change: jmap-domains
 - [x] Ask each configured domain what moved, and reconcile each against its own picture
 - [x] Template the collection from the event's domain rather than the backend
 - [x] Build, clippy and fmt green on every feature combination
-- [ ] Verify against a live JMAP server that a contact and an event fire their hooks
+- [x] Verify against a live JMAP server that a contact and an event fire their hooks
 - [x] Fold the delta into the spec and log the change

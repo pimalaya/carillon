@@ -8,39 +8,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
-- Added `imap.alpn`, `jmap.alpn`, `caldav.alpn` and `carddav.alpn`, the ALPN identifiers offered during the TLS handshake.
+- Added `imap.alpn`, `jmap.alpn`, `caldav.alpn` and `carddav.alpn`.
 
-  Unset takes the protocol default the backend already used, `["imap"]` over IMAP and `["http/1.1"]` over JMAP and WebDAV, so nothing moves for a configuration that does not name it. An empty list skips ALPN negotiation, for a server whose TLS terminator rejects the handshake carrying one, and a non-empty list replaces the default. Only rustls reads it, native-tls having no ALPN.
+  The ALPN identifiers offered during the TLS handshake, `[]` skipping negotiation; unset keeps the protocol default.
 
-- Added `carillon json-schema`, generating the JSON Schema of a command's `--json` output.
+- Added `proxy` and `<backend>.proxy`.
 
-  It writes one schema to stdout, or one file per command into `--dir`. `check` and `configure` are the two commands that print data.
+  A SOCKS5 or HTTP proxy for every network backend, `all_proxy` and `https_proxy` being read when unset.
 
-- Watched a JMAP addressbook and a JMAP calendar, beside or instead of the mailbox, through `jmap.addressbook` and `jmap.calendar`.
+- Added `jmap.addressbook` and `jmap.calendar`.
 
-  Each is read through its own `ContactCard/changes` (RFC 9610) or `CalendarEvent/changes` (JMAP for Calendars), and all of them share one session, one connection and one event stream. `jmap.mailbox` becomes optional, at least one of the three being required. The JMAP hook table gains `on-card-added`, `on-card-removed`, `on-card-changed`, `on-event-added`, `on-event-removed` and `on-event-changed`, templating against `$addressbook` and `$calendar`; a hook whose collection is not configured is refused when the file is read.
+  One JMAP account watches contacts and calendar events beside its mail, over one connection, firing `on-card-*` and `on-event-*`.
 
-- Watched Microsoft Graph and Google accounts over their own APIs, through the `msgraph`, `gmail`, `gcal` and `gpeople` backends, each behind its cargo feature, on by default.
+- Added the `msgraph` backend.
 
-  `msgraph` takes a mail folder, a contact folder and a calendar the way `jmap` does, one token and one connection for all three; mail and contacts read delta queries, and the calendar is listed with its `changeKey` on every poll, so no window hides an event. `gmail` watches a label through its history, `gcal` a calendar and `gpeople` a contact group through their sync tokens, `myContacts` holding every contact the account owns. All four take `auth.token`, usually a broker command, and poll, these APIs pushing only to a public endpoint. `isRead` and a cleared `UNREAD` arrive as `Seen`, a follow-up flag and `STARRED` as `Flagged`, and an expired delta link or sync token lists the collection again, reporting only what differs.
+  Watches a Microsoft Graph mail folder, contact folder and calendar over one connection.
 
-  The wizard offers these APIs first for a Google or Microsoft address, beside IMAP and DAV.
+- Added the `gmail` backend.
 
-- Added `proxy`, a per-account SOCKS5 or HTTP proxy for every network backend, and `<backend>.proxy` to override it for one backend.
+  Watches a Gmail label through its history.
 
-  The password is a secret like any credential, so it stays out of the URL. Without either, the `all_proxy` and `https_proxy` environment variables are read, `no_proxy` bypassing them.
+- Added the `gcal` backend.
+
+  Watches a Google calendar through its sync token.
+
+- Added the `gpeople` backend.
+
+  Watches a Google contact group through its sync token.
+
+- Added `carillon json-schema`.
+
+  Generates the JSON Schema of a command's `--json` output.
 
 ### Changed
 
 - Renamed `completions` and `manuals` to `completion` and `manual`, the plural staying as a hidden alias.
 
-- Expanded the leading tilde and the shell variables in `imap.tls.cert`, `jmap.tls.cert`, `caldav.tls.cert` and `carddav.tls.cert`.
+- Made `jmap.mailbox` optional, at least one JMAP collection being required.
 
-  `cert = "~/certs/example.pem"` used to be read as the literal relative path `./~/certs/example.pem`, so the certificate was never found. It is now expanded when the file is read, as every other path in the configuration already was.
+- Offered the Microsoft Graph and Google APIs first in the wizard for a Microsoft or Google address.
 
-- Spawned a credential command once per checked account, rather than once per backend naming it.
+- Spawned a credential command once per checked account rather than once per backend.
 
-  An account whose CalDAV and CardDAV tables read the same `pass` or `gpg` entry unlocked its store twice; `carillon check` now resolves the whole account through one resolver, so the key unlocks once.
+### Fixed
+
+- Fixed the leading tilde and shell variables of `<backend>.tls.cert` not being expanded.
+
+- Fixed the JMAP event stream never waking the watch up.
+
+  The stream is now dropped as soon as it pushes a state the watch does not hold, Fastmail never closing it.
 
 ## [0.1.0] - 2026-08-22
 
