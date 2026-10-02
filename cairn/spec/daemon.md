@@ -39,7 +39,7 @@ Bare `carillon watch` SHALL watch every configured account at once, one thread e
 - **THEN** the failure is logged and retried for that account alone, and the other account keeps watching
 
 ### Requirement: An account watches one collection, one way
-An account SHALL watch the one collection its backend names, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection is a second account, which is also how it gets its own hooks. Every backend SHALL read its collection the same way, the DAV ones included, whose `server` names the DAV root and whose collection is the path under it.
+An account SHALL watch the collection its backend names, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection of the same domain is a second account, which is also how it gets its own hooks. A backend serving several domains MAY name one collection per domain, since the domains do not share an event name and each therefore already has hooks of its own; what they share is the connection and the credential, which is what a second account would waste. Every backend SHALL read its collection the same way, the DAV ones included, whose `server` names the DAV root and whose collection is the path under it.
 
 #### Scenario: A second collection
 - **GIVEN** an account watching one mailbox
@@ -196,7 +196,7 @@ Each hook SHALL declare the variables it can fill, and a notification naming any
 - **THEN** the notification fires with that part empty, rather than being dropped
 
 ### Requirement: The collection belongs to the backend, under its own name
-Each backend SHALL take the one collection it watches, required, under the name its domain uses: `imap.mailbox`, `jmap.mailbox`, `maildir.mailbox`, `caldav.calendar` and `carddav.addressbook`. No account-level key SHALL name it, so an account block carries nothing that needs a backend to be understood. A hook SHALL template against the same name its backend configures, `$id` being the one variable every backend means the same way.
+Each backend SHALL take the collection it watches, required, under the name its domain uses: `imap.mailbox`, `maildir.mailbox`, `caldav.calendar` and `carddav.addressbook`, and `jmap.mailbox`, `jmap.addressbook` and `jmap.calendar` of which at least one. No account-level key SHALL name it, so an account block carries nothing that needs a backend to be understood. A hook SHALL template against the name the collection its event is about was configured under, `$id` being the one variable every backend means the same way.
 
 #### Scenario: A mail hook naming its mailbox
 - **GIVEN** an account whose `imap.hook.on-message-added` summary reads `New mail in $mailbox`
@@ -207,6 +207,11 @@ Each backend SHALL take the one collection it watches, required, under the name 
 - **GIVEN** an account whose `caldav.hook.on-event-added` summary reads `$mailbox`
 - **WHEN** the configuration is read
 - **THEN** it is refused, since a calendar is configured and templated as `$calendar`
+
+#### Scenario: A hook naming another domain's word
+- **GIVEN** an account whose `jmap.hook.on-card-added` summary reads `$mailbox`
+- **WHEN** the configuration is read
+- **THEN** it is refused, since a card is configured and templated as `$addressbook`
 
 ### Requirement: A watch survives the change it reports
 A watch SHALL keep working across the changes it reports. A connection a backend's own protocol closes as part of reporting SHALL be reopened before the next request rather than written into, and a round that fails SHALL be retried once on a fresh connection before the session is given up. A round SHALL advance no state it did not complete, so running it twice reports nothing twice.
@@ -299,3 +304,17 @@ Every command handing data to the printer SHALL return a named `*Output` type de
 - **GIVEN** `carillon json-schema --dir <DIR>`
 - **WHEN** it runs
 - **THEN** one file per command is written there, the directory being created if it is not already
+
+### Requirement: A JMAP account watches every domain it configures
+The JMAP backend SHALL watch mail, contacts and calendar events, each under the collection key its domain uses (`jmap.mailbox`, `jmap.addressbook`, `jmap.calendar`), of which at least one SHALL be given. It SHALL fire `on-message-*` and `on-flag-*` for mail, `on-card-*` for contacts and `on-event-*` for calendar events, and SHALL NOT offer `on-task-*`, the JMAP calendars draft having no task type. A hook naming a domain the account configured no collection for SHALL be refused when the configuration is read, naming the hook and the key it would need. All the domains SHALL share one session, one connection and one event stream, that being what JMAP offers over a protocol needing an account per domain.
+
+#### Scenario: One account, three domains
+- **GIVEN** a JMAP account configuring `jmap.mailbox`, `jmap.addressbook` and `jmap.calendar`
+- **WHEN** a contact is edited
+- **THEN** `jmap.hook.on-card-changed` fires, over the same connection the mail watch holds
+
+#### Scenario: A hook for a domain the account does not watch
+- **GIVEN** a JMAP account configuring `jmap.mailbox` and `jmap.hook.on-card-added`
+- **WHEN** the configuration is read
+- **THEN** it is refused, naming the hook and the `jmap.addressbook` it would need
+

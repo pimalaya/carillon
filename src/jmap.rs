@@ -1,12 +1,17 @@
 //! # JMAP
 //!
-//! The JMAP backend: session opening, authentication and the mailbox
-//! watch.
+//! The JMAP backend: session opening, authentication and the watch of
+//! every domain the account configures.
 //!
-//! The watch polls `Email/changes` and resolves the ids it names through
-//! `Email/get`, keeping the ones inside the watched mailbox. The push
-//! subscription (RFC 8620 §7.2) only replaces the interval with a
-//! wake-up, leaving that reconciliation untouched.
+//! Each domain is a [`Watched`] collection: a mailbox read through
+//! `Email/changes` (RFC 8621), an addressbook through
+//! `ContactCard/changes` (RFC 9610), a calendar through
+//! `CalendarEvent/changes` (JMAP for Calendars). A round asks each what
+//! moved and resolves the ids it names through the matching `/get`,
+//! keeping the ones inside the watched collection. All of them share one
+//! session and one connection, and the push subscription (RFC 8620 §7.2)
+//! is one stream covering every type, which only replaces the interval
+//! with a wake-up.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -22,11 +27,18 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use base64::{Engine, prelude::BASE64_STANDARD};
 use io_jmap::{
+    calendars::calendar_event::{
+        get::JmapCalendarEventGetOptions,
+        query::{JmapCalendarEventFilter, JmapCalendarEventQueryOptions},
+    },
     client::{JmapClientStd, JmapClientStdConnectOptions},
     coroutine::{JmapCoroutine, JmapCoroutineState},
-    rfc8620::event_source::{
-        JmapCloseAfter,
-        subscribe::{JmapEventSource, JmapEventSourceYield},
+    rfc8620::{
+        changes::JmapChangesOutput,
+        event_source::{
+            JmapCloseAfter,
+            subscribe::{JmapEventSource, JmapEventSourceYield},
+        },
     },
     rfc8621::{
         email::{
@@ -35,6 +47,10 @@ use io_jmap::{
             query::{JmapEmailFilter, JmapEmailQueryOptions},
         },
         mailbox::JmapMailboxRole,
+    },
+    rfc9610::contact_card::{
+        get::JmapContactCardGetOptions,
+        query::{JmapContactCardFilter, JmapContactCardQueryOptions},
     },
 };
 use log::{debug, trace};
@@ -52,8 +68,6 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
 /// Per-read scratch buffer for the event stream.
 const READ_BUF: usize = 8 * 1024;
-/// The JMAP type a mail watch subscribes to.
-const EMAIL_TYPE: &str = "Email";
 /// How long it sleeps at a time, so a shutdown is noticed promptly.
 const POLL_STEP: Duration = Duration::from_millis(200);
 
@@ -123,84 +137,90 @@ pub fn parse_server(server: &str) -> Result<Url> {
     }
 }
 
-/// Watches `collection` by polling, until `shutdown` is set.
+/// Watches every configured collection by polling, until `shutdown` is
+/// set.
 ///
-/// Every round asks `Email/changes` what moved since the state it last
-/// saw; a round that finds the state unmoved costs one request.
+/// Every round asks each domain's `/changes` what moved since the state
+/// it last saw; a round that finds the states unmoved costs one request
+/// per domain.
 pub fn watch_poll(
     config: &JmapConfig,
-    collection: &str,
     interval: Option<Duration>,
     resolve: bool,
     shutdown: &Arc<AtomicBool>,
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let interval = interval.unwrap_or(POLL_INTERVAL);
-    let (mut client, mailbox_id, mut known, mut state) = arm(config, collection)?;
+    let (mut client, mut watched) = arm(config)?;
 
     while !shutdown.load(Ordering::SeqCst) {
         if !sleep(interval, shutdown) {
             break;
         }
 
-        // NOTE: the connection slept as long as the interval, which a
-        // server is free to have found long enough to close, so a failed
-        // round is given a fresh one before the session is given up.
-        let outcome = round(
-            &mut client,
-            &mailbox_id,
-            &mut known,
-            &mut state,
-            resolve,
-            &mut on_event,
-        );
-
-        if let Err(err) = outcome {
-            debug!("jmap round failed, reconnecting: {err:#}");
-            reconnect(&mut client, config)?;
-            round(
-                &mut client,
-                &mailbox_id,
-                &mut known,
-                &mut state,
-                resolve,
-                &mut on_event,
-            )?;
-        }
+        rounds(&mut client, config, &mut watched, resolve, &mut on_event)?;
     }
 
     Ok(())
 }
 
-/// Watches `collection` over an EventSource stream, until `shutdown` is
-/// set.
+/// Watches every configured collection over one EventSource stream, until
+/// `shutdown` is set.
 ///
 /// Asked to close after the first state change (RFC 8620 §7.3
 /// `closeafter=state`), the stream leaves the loop looking like an IMAP
 /// IDLE. It holds its own connection, being the one the server hangs up.
 pub fn watch_push(
     config: &JmapConfig,
-    collection: &str,
     ping: u64,
     resolve: bool,
     shutdown: &Arc<AtomicBool>,
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
-    let (mut client, mailbox_id, mut known, mut state) = arm(config, collection)?;
+    let (mut client, mut watched) = arm(config)?;
+    let types: Vec<&str> = watched.iter().map(Watched::type_name).collect();
 
     while !shutdown.load(Ordering::SeqCst) {
-        if !subscribe(&mut client, config, ping, shutdown)? {
+        if !subscribe(&mut client, config, &types, ping, shutdown)? {
             continue;
         }
 
-        round(
-            &mut client,
-            &mailbox_id,
-            &mut known,
-            &mut state,
-            resolve,
-            &mut on_event,
-        )?;
+        rounds(&mut client, config, &mut watched, resolve, &mut on_event)?;
+    }
+
+    Ok(())
+}
+
+/// Opens the session and reads every configured collection as it stands.
+fn arm(config: &JmapConfig) -> Result<(JmapClientStd, Vec<Watched>)> {
+    let (mut client, _url) = open(config, &mut SecretResolver::new())?;
+    let mut watched = Vec::new();
+
+    for (domain, collection) in config.collections() {
+        watched.push(Watched::arm(&mut client, domain, collection.value)?);
+    }
+
+    Ok((client, watched))
+}
+
+/// Runs one round per watched collection.
+///
+/// The connection may have sat idle as long as the interval or the
+/// stream, which a server is free to have found long enough to close, so
+/// a failed round is given a fresh one before the session is given up.
+fn rounds(
+    client: &mut JmapClientStd,
+    config: &JmapConfig,
+    watched: &mut [Watched],
+    resolve: bool,
+    on_event: &mut impl FnMut(WatchEvent, Option<ItemSummary>),
+) -> Result<()> {
+    for watched in watched {
+        if let Err(err) = watched.round(client, resolve, on_event) {
+            debug!("jmap round failed, reconnecting: {err:#}");
+            reconnect(client, config)?;
+            watched.round(client, resolve, on_event)?;
+        }
     }
 
     Ok(())
@@ -218,99 +238,311 @@ fn reconnect(client: &mut JmapClientStd, config: &JmapConfig) -> Result<()> {
     Ok(())
 }
 
-/// Opens the session and reads the collection as it stands, which is what
-/// a later change is a change against.
-fn arm(config: &JmapConfig, collection: &str) -> Result<(JmapClientStd, String, Known, String)> {
-    let (mut client, _url) = open(config, &mut SecretResolver::new())?;
-    let mailbox_id = resolve_mailbox(&mut client, collection)?;
-
-    let known = baseline(&mut client, &mailbox_id)?;
-    let state = client
-        .email_get(Vec::new(), get_options(false))
-        .context("cannot read the initial email state")?
-        .new_state;
-
-    debug!("watching jmap collection with {} messages", known.len());
-
-    Ok((client, mailbox_id, known, state))
+/// One collection the watch holds a picture of, in one domain.
+struct Watched {
+    /// What the collection holds, which picks the methods it is read
+    /// through and names the events it reports.
+    domain: WatchDomain,
+    /// The id of the collection, which every call speaks.
+    id: String,
+    /// What the collection holds, as of `state`.
+    known: Known,
+    /// The state the next `/changes` reads from.
+    state: String,
 }
 
-/// Reads what moved since `state`, reports it, and advances `state`.
-fn round(
-    client: &mut JmapClientStd,
-    mailbox_id: &str,
-    known: &mut Known,
-    state: &mut String,
-    resolve: bool,
-    on_event: &mut impl FnMut(WatchEvent, Option<ItemSummary>),
-) -> Result<()> {
-    let changes = client
-        .email_changes(state.clone(), Default::default())
-        .context("cannot read email changes")?;
+/// What a round reads of one item, whatever its domain.
+#[derive(Debug, Default)]
+struct Member {
+    /// The item's id.
+    id: String,
+    /// Whether the item belongs to the watched collection.
+    inside: bool,
+    /// The item's keywords, under the names a hook filter matches. Only
+    /// mail has any.
+    keywords: BTreeSet<String>,
+    /// The envelope an arrival hook templates on, when one was asked for.
+    summary: Option<ItemSummary>,
+}
 
-    if changes.new_state == *state {
-        return Ok(());
+impl Watched {
+    /// Resolves `name` into its collection and reads what it holds, which
+    /// is what a later change is a change against.
+    fn arm(client: &mut JmapClientStd, domain: WatchDomain, name: &str) -> Result<Self> {
+        let (id, known, state) = match domain {
+            WatchDomain::Message => {
+                let id = resolve_mailbox(client, name)?;
+                let known = baseline_mailbox(client, &id)?;
+                let state = client
+                    .email_get(Vec::new(), get_options(false))
+                    .context("cannot read the initial email state")?
+                    .new_state;
+                (id, known, state)
+            }
+            WatchDomain::Card => {
+                let id = resolve_addressbook(client, name)?;
+                let known = baseline_addressbook(client, &id)?;
+                let opts = JmapContactCardGetOptions {
+                    ids: Some(Vec::new()),
+                    properties: Some(vec![String::from("id")]),
+                };
+                let state = client
+                    .contact_card_get(opts)
+                    .context("cannot read the initial contact state")?
+                    .new_state;
+                (id, known, state)
+            }
+            WatchDomain::Event => {
+                let id = resolve_calendar(client, name)?;
+                let known = baseline_calendar(client, &id)?;
+                let opts = JmapCalendarEventGetOptions {
+                    ids: Some(Vec::new()),
+                    properties: Some(vec![String::from("id")]),
+                    ..Default::default()
+                };
+                let state = client
+                    .calendar_event_get(opts)
+                    .context("cannot read the initial event state")?
+                    .new_state;
+                (id, known, state)
+            }
+            WatchDomain::Task => unreachable!("JMAP has no task type"),
+        };
+
+        debug!(
+            "watching jmap {} `{name}` with {} items",
+            JmapConfig::collection_name(domain),
+            known.len()
+        );
+
+        Ok(Self {
+            domain,
+            id,
+            known,
+            state,
+        })
     }
 
-    trace!("jmap changes: {changes:?}");
+    /// The JMAP type the event stream subscribes to for this collection.
+    fn type_name(&self) -> &'static str {
+        match self.domain {
+            WatchDomain::Message => "Email",
+            WatchDomain::Card => "ContactCard",
+            WatchDomain::Event | WatchDomain::Task => "CalendarEvent",
+        }
+    }
 
-    let touched: Vec<String> = changes
-        .created
-        .iter()
-        .chain(changes.updated.iter())
-        .cloned()
-        .collect();
+    /// Reads what moved since `state`, reports it, and advances `state`.
+    fn round(
+        &mut self,
+        client: &mut JmapClientStd,
+        resolve: bool,
+        on_event: &mut impl FnMut(WatchEvent, Option<ItemSummary>),
+    ) -> Result<()> {
+        let changes = self.changes(client)?;
 
-    // NOTE: nothing is reported until every request the round makes has
-    // answered, so a round failing part way leaves the state and the
-    // picture where they were, and can simply be run again.
-    let mut reported = Vec::new();
+        if changes.new_state == self.state {
+            return Ok(());
+        }
 
-    for id in &changes.destroyed {
-        if known.contains_key(id) {
-            reported.push((
-                WatchEvent::ItemRemoved {
-                    domain: WatchDomain::Message,
+        trace!("jmap changes: {changes:?}");
+
+        let touched: Vec<String> = changes
+            .created
+            .iter()
+            .chain(changes.updated.iter())
+            .cloned()
+            .collect();
+
+        // NOTE: nothing is reported until every request the round makes
+        // has answered, so a round failing part way leaves the state and
+        // the picture where they were, and can simply be run again.
+        let mut reported = Vec::new();
+
+        for id in &changes.destroyed {
+            if self.known.contains_key(id) {
+                let event = WatchEvent::ItemRemoved {
+                    domain: self.domain,
                     id: id.clone(),
-                },
-                None,
-            ));
+                };
+                reported.push((event, None));
+            }
         }
-    }
 
-    let fetched = if touched.is_empty() {
-        Vec::new()
-    } else {
-        client
-            .email_get(touched, get_options(resolve))
-            .context("cannot resolve changed emails")?
-            .emails
-    };
+        let fetched = if touched.is_empty() {
+            Vec::new()
+        } else {
+            self.fetch(client, touched, resolve)?
+        };
 
-    for id in &changes.destroyed {
-        known.remove(id);
-    }
-
-    for email in fetched {
-        // NOTE: the envelope rides the same response the reconciliation
-        // reads, so an arrival costs no second request.
-        let summary = resolve.then(|| summarize(&email));
-
-        for event in reconcile(known, mailbox_id, email) {
-            let summary = matches!(event, WatchEvent::ItemAdded { .. })
-                .then(|| summary.clone())
-                .flatten();
-            reported.push((event, summary));
+        for id in &changes.destroyed {
+            self.known.remove(id);
         }
+
+        for mut member in fetched {
+            // NOTE: the envelope rides the same response the
+            // reconciliation reads, so an arrival costs no second request.
+            let summary = member.summary.take();
+
+            for event in self.reconcile(member) {
+                let summary = matches!(event, WatchEvent::ItemAdded { .. })
+                    .then(|| summary.clone())
+                    .flatten();
+                reported.push((event, summary));
+            }
+        }
+
+        for (event, summary) in reported {
+            on_event(event, summary);
+        }
+
+        self.state = changes.new_state;
+
+        Ok(())
     }
 
-    for (event, summary) in reported {
-        on_event(event, summary);
+    /// Asks this domain's `/changes` what moved since `state`.
+    fn changes(&self, client: &mut JmapClientStd) -> Result<JmapChangesOutput> {
+        let state = self.state.clone();
+
+        Ok(match self.domain {
+            WatchDomain::Message => client
+                .email_changes(state, Default::default())
+                .context("cannot read email changes")?,
+            WatchDomain::Card => client
+                .contact_card_changes(state, Default::default())
+                .context("cannot read contact changes")?,
+            WatchDomain::Event | WatchDomain::Task => client
+                .calendar_event_changes(state, Default::default())
+                .context("cannot read event changes")?,
+        })
     }
 
-    *state = changes.new_state;
+    /// Reads `ids` through this domain's `/get`, keeping what membership
+    /// and, for mail, keywords and the envelope need.
+    fn fetch(
+        &self,
+        client: &mut JmapClientStd,
+        ids: Vec<String>,
+        resolve: bool,
+    ) -> Result<Vec<Member>> {
+        let inside = |collections: &BTreeMap<String, bool>| {
+            collections.get(&self.id).copied().unwrap_or(false)
+        };
 
-    Ok(())
+        Ok(match self.domain {
+            WatchDomain::Message => client
+                .email_get(ids, get_options(resolve))
+                .context("cannot resolve changed emails")?
+                .emails
+                .into_iter()
+                .filter_map(|email| {
+                    Some(Member {
+                        inside: email.mailbox_ids.as_ref().is_some_and(inside),
+                        keywords: render_keywords(email.keywords.as_ref()),
+                        summary: resolve.then(|| summarize(&email)),
+                        id: email.id?,
+                    })
+                })
+                .collect(),
+            WatchDomain::Card => {
+                let opts = JmapContactCardGetOptions {
+                    ids: Some(ids),
+                    properties: Some(vec![String::from("id"), String::from("addressBookIds")]),
+                };
+
+                client
+                    .contact_card_get(opts)
+                    .context("cannot resolve changed contacts")?
+                    .cards
+                    .into_iter()
+                    .filter_map(|card| {
+                        Some(Member {
+                            inside: inside(&card.address_book_ids),
+                            id: card.id?,
+                            ..Default::default()
+                        })
+                    })
+                    .collect()
+            }
+            WatchDomain::Event | WatchDomain::Task => {
+                let opts = JmapCalendarEventGetOptions {
+                    ids: Some(ids),
+                    properties: Some(vec![String::from("id"), String::from("calendarIds")]),
+                    ..Default::default()
+                };
+
+                client
+                    .calendar_event_get(opts)
+                    .context("cannot resolve changed events")?
+                    .events
+                    .into_iter()
+                    .filter_map(|event| {
+                        Some(Member {
+                            inside: inside(&event.calendar_ids),
+                            id: event.id?,
+                            ..Default::default()
+                        })
+                    })
+                    .collect()
+            }
+        })
+    }
+
+    /// Reconciles one resolved item against the picture, and reports what
+    /// moved.
+    ///
+    /// An item leaving the watched collection is a removal, as an IMAP
+    /// move out of a mailbox is: the watch reports what the collection
+    /// holds, not the account. A known item still inside is an edit for a
+    /// card or an event, which `/changes` named because its content moved,
+    /// and a keyword delta for a message, which is immutable.
+    fn reconcile(&mut self, member: Member) -> Vec<WatchEvent> {
+        let Member {
+            id,
+            inside,
+            keywords,
+            ..
+        } = member;
+        let domain = self.domain;
+
+        if !inside {
+            return match self.known.remove(&id) {
+                Some(_) => vec![WatchEvent::ItemRemoved { domain, id }],
+                None => Vec::new(),
+            };
+        }
+
+        let Some(before) = self.known.insert(id.clone(), keywords.clone()) else {
+            return vec![WatchEvent::ItemAdded { domain, id }];
+        };
+
+        if domain != WatchDomain::Message {
+            return vec![WatchEvent::ItemChanged { domain, id }];
+        }
+
+        let mut events = Vec::new();
+
+        // NOTE: one event per keyword, so a hook knows which flag it fired
+        // for.
+        for flag in keywords.difference(&before) {
+            events.push(WatchEvent::FlagAdded {
+                domain,
+                id: id.clone(),
+                flag: flag.clone(),
+            });
+        }
+
+        for flag in before.difference(&keywords) {
+            events.push(WatchEvent::FlagRemoved {
+                domain,
+                id: id.clone(),
+                flag: flag.clone(),
+            });
+        }
+
+        events
+    }
 }
 
 /// Folds an `Email/get` result into what an arrival hook templates on.
@@ -343,6 +575,7 @@ fn summarize(email: &JmapEmail) -> ItemSummary {
 fn subscribe(
     client: &mut JmapClientStd,
     config: &JmapConfig,
+    types: &[&str],
     ping: u64,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<bool> {
@@ -352,7 +585,7 @@ fn subscribe(
     let mut coroutine = JmapEventSource::new(
         session,
         &client.http_auth,
-        &[EMAIL_TYPE],
+        types,
         ping,
         JmapCloseAfter::State,
         shutdown.clone(),
@@ -402,66 +635,9 @@ fn is_timeout(err: &io::Error) -> bool {
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
     )
 }
-/// Reconciles one resolved email against what the watch knows, and reports
-/// what moved.
-///
-/// A message leaving the watched mailbox is a removal, as an IMAP move out
-/// of it is: the watch reports what the mailbox holds, not the account.
-fn reconcile(known: &mut Known, mailbox_id: &str, email: JmapEmail) -> Vec<WatchEvent> {
-    let Some(id) = email.id else {
-        return Vec::new();
-    };
 
-    let inside = email
-        .mailbox_ids
-        .as_ref()
-        .is_some_and(|ids| ids.get(mailbox_id).copied().unwrap_or(false));
-
-    if !inside {
-        return match known.remove(&id) {
-            Some(_) => vec![WatchEvent::ItemRemoved {
-                domain: WatchDomain::Message,
-                id,
-            }],
-            None => Vec::new(),
-        };
-    }
-
-    let keywords = render_keywords(email.keywords.as_ref());
-
-    let Some(before) = known.insert(id.clone(), keywords.clone()) else {
-        return vec![WatchEvent::ItemAdded {
-            domain: WatchDomain::Message,
-            id,
-        }];
-    };
-
-    let mut events = Vec::new();
-
-    // NOTE: one event per keyword, so a hook knows which flag it fired
-    // for.
-    for flag in keywords.difference(&before) {
-        events.push(WatchEvent::FlagAdded {
-            domain: WatchDomain::Message,
-            id: id.clone(),
-            flag: flag.clone(),
-        });
-    }
-
-    for flag in before.difference(&keywords) {
-        events.push(WatchEvent::FlagRemoved {
-            domain: WatchDomain::Message,
-            id: id.clone(),
-            flag: flag.clone(),
-        });
-    }
-
-    events
-}
-
-/// Lists what the watched mailbox holds, so a later change has
-/// something to be a change against.
-fn baseline(client: &mut JmapClientStd, mailbox_id: &str) -> Result<Known> {
+/// Lists what the watched mailbox holds, with each message's keywords.
+fn baseline_mailbox(client: &mut JmapClientStd, mailbox_id: &str) -> Result<Known> {
     let filter = JmapEmailFilter {
         in_mailbox: Some(mailbox_id.to_string()),
         ..Default::default()
@@ -480,6 +656,52 @@ fn baseline(client: &mut JmapClientStd, mailbox_id: &str) -> Result<Known> {
         .emails
         .into_iter()
         .filter_map(|email| Some((email.id?, render_keywords(email.keywords.as_ref()))))
+        .collect())
+}
+
+/// Lists what the watched addressbook holds.
+fn baseline_addressbook(client: &mut JmapClientStd, addressbook_id: &str) -> Result<Known> {
+    let filter = JmapContactCardFilter {
+        in_address_book: Some(addressbook_id.to_string()),
+        ..Default::default()
+    };
+    let opts = JmapContactCardQueryOptions {
+        filter: Some(filter),
+        properties: Some(vec![String::from("id")]),
+        ..Default::default()
+    };
+
+    let listed = client
+        .contact_card_query(opts)
+        .context("cannot list the watched addressbook")?;
+
+    Ok(listed
+        .cards
+        .into_iter()
+        .filter_map(|card| Some((card.id?, BTreeSet::new())))
+        .collect())
+}
+
+/// Lists what the watched calendar holds, one id per series.
+fn baseline_calendar(client: &mut JmapClientStd, calendar_id: &str) -> Result<Known> {
+    let filter = JmapCalendarEventFilter {
+        in_calendar: Some(calendar_id.to_string()),
+        ..Default::default()
+    };
+    let opts = JmapCalendarEventQueryOptions {
+        filter: Some(filter),
+        properties: Some(vec![String::from("id")]),
+        ..Default::default()
+    };
+
+    let listed = client
+        .calendar_event_query(opts)
+        .context("cannot list the watched calendar")?;
+
+    Ok(listed
+        .events
+        .into_iter()
+        .filter_map(|event| Some((event.id?, BTreeSet::new())))
         .collect())
 }
 
@@ -512,6 +734,43 @@ fn resolve_mailbox(client: &mut JmapClientStd, mailbox: &str) -> Result<String> 
     found
         .and_then(|mailbox| mailbox.id.clone())
         .ok_or_else(|| anyhow!("Mailbox `{mailbox}` not found on the JMAP server"))
+}
+
+/// Resolves an addressbook, by name case-insensitively or by id.
+fn resolve_addressbook(client: &mut JmapClientStd, addressbook: &str) -> Result<String> {
+    let listed = client
+        .address_book_get(Default::default())
+        .context("cannot list addressbooks")?;
+
+    listed
+        .address_books
+        .into_iter()
+        .map(|candidate| (candidate.id, candidate.name))
+        .find_map(|(id, name)| matches_collection(id, name, addressbook))
+        .ok_or_else(|| anyhow!("Addressbook `{addressbook}` not found on the JMAP server"))
+}
+
+/// Resolves a calendar, by name case-insensitively or by id.
+fn resolve_calendar(client: &mut JmapClientStd, calendar: &str) -> Result<String> {
+    let listed = client
+        .calendar_get(Default::default())
+        .context("cannot list calendars")?;
+
+    listed
+        .calendars
+        .into_iter()
+        .map(|candidate| (candidate.id, candidate.name))
+        .find_map(|(id, name)| matches_collection(id, name, calendar))
+        .ok_or_else(|| anyhow!("Calendar `{calendar}` not found on the JMAP server"))
+}
+
+/// The id of a listed collection, when `wanted` names it by id or by
+/// name.
+fn matches_collection(id: Option<String>, name: Option<String>, wanted: &str) -> Option<String> {
+    let id = id?;
+    let named = name.is_some_and(|name| name.eq_ignore_ascii_case(wanted));
+
+    (id == wanted || named).then_some(id)
 }
 
 /// The `Email/get` properties each call needs: ids only for a state
@@ -579,7 +838,8 @@ fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
     !shutdown.load(Ordering::SeqCst)
 }
 
-/// What the watch knows of the collection: a message id to its keywords.
+/// What the watch knows of a collection: an item id to its keywords,
+/// empty for anything but mail.
 type Known = BTreeMap<String, BTreeSet<String>>;
 
 #[cfg(test)]
@@ -587,6 +847,23 @@ mod tests {
     use io_jmap::rfc8621::email::JmapEmailAddress;
 
     use crate::jmap::*;
+
+    fn watched(domain: WatchDomain) -> Watched {
+        Watched {
+            domain,
+            id: String::from("C1"),
+            known: Known::new(),
+            state: String::new(),
+        }
+    }
+
+    fn member(id: &str, inside: bool) -> Member {
+        Member {
+            id: String::from(id),
+            inside,
+            ..Default::default()
+        }
+    }
 
     /// The envelope a hook templates against comes out of the response the
     /// reconciliation reads, so an arrival costs no second request.
@@ -633,5 +910,69 @@ mod tests {
         assert!(resolved.contains("From"), "got {resolved}");
         assert!(resolved.contains("To"), "got {resolved}");
         assert!(resolved.contains("ReceivedAt"), "got {resolved}");
+    }
+
+    /// A card is mutable, so a known one named again is an edit, where a
+    /// message named again only moved its keywords.
+    #[test]
+    fn a_known_card_named_again_is_an_edit() {
+        let mut cards = watched(WatchDomain::Card);
+        let changed = WatchEvent::ItemChanged {
+            domain: WatchDomain::Card,
+            id: String::from("A"),
+        };
+
+        assert_eq!(
+            vec![WatchEvent::ItemAdded {
+                domain: WatchDomain::Card,
+                id: String::from("A"),
+            }],
+            cards.reconcile(member("A", true)),
+        );
+        assert_eq!(vec![changed], cards.reconcile(member("A", true)));
+
+        let mut mail = watched(WatchDomain::Message);
+        mail.reconcile(member("M", true));
+        assert!(mail.reconcile(member("M", true)).is_empty());
+    }
+
+    /// An event moved to another calendar leaves the watched one, and one
+    /// moved in arrives, whatever the account still holds.
+    #[test]
+    fn an_event_crossing_the_calendar_is_an_arrival_or_a_removal() {
+        let mut events = watched(WatchDomain::Event);
+
+        assert!(events.reconcile(member("E", false)).is_empty());
+        assert_eq!(
+            vec![WatchEvent::ItemAdded {
+                domain: WatchDomain::Event,
+                id: String::from("E"),
+            }],
+            events.reconcile(member("E", true)),
+        );
+        assert_eq!(
+            vec![WatchEvent::ItemRemoved {
+                domain: WatchDomain::Event,
+                id: String::from("E"),
+            }],
+            events.reconcile(member("E", false)),
+        );
+    }
+
+    #[test]
+    fn a_collection_matches_by_name_or_by_id() {
+        let listed = || (Some(String::from("b1")), Some(String::from("Personal")));
+
+        let (id, name) = listed();
+        assert_eq!(
+            Some(String::from("b1")),
+            matches_collection(id, name, "personal")
+        );
+
+        let (id, name) = listed();
+        assert_eq!(Some(String::from("b1")), matches_collection(id, name, "b1"));
+
+        let (id, name) = listed();
+        assert_eq!(None, matches_collection(id, name, "Work"));
     }
 }

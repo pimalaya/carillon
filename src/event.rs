@@ -15,7 +15,8 @@
 /// What a change is about, which is the noun its hook is named after.
 ///
 /// A backend fills it from what it holds: mail is always a message, a
-/// CardDAV member a card, and a CalDAV member an event or a task.
+/// CardDAV member or a JMAP `ContactCard` a card, a CalDAV member an event
+/// or a task, and a JMAP `CalendarEvent` an event.
 // NOTE: which domains can be constructed depends on the backends
 // compiled in, so a reduced feature set leaves some unused.
 #[allow(dead_code)]
@@ -23,9 +24,9 @@
 pub enum WatchDomain {
     /// A mail message, whichever of IMAP, JMAP and Maildir carries it.
     Message,
-    /// A vCard in a CardDAV addressbook.
+    /// A contact in an addressbook, over CardDAV or JMAP.
     Card,
-    /// A VEVENT in a CalDAV calendar.
+    /// A calendar event, a CalDAV VEVENT or a JMAP `CalendarEvent`.
     Event,
     /// A VTODO in a CalDAV calendar.
     Task,
@@ -40,7 +41,7 @@ pub enum WatchEvent {
     ItemAdded {
         /// What the item is, which names the hook that fires.
         domain: WatchDomain,
-        /// The backend's id: an IMAP UID, a JMAP `Email` id, a Maildir
+        /// The backend's id: an IMAP UID, a JMAP object id, a Maildir
         /// file name, a WebDAV href.
         id: String,
     },
@@ -54,8 +55,8 @@ pub enum WatchEvent {
     /// An item's content changed where it stands.
     ///
     /// Only a backend holding mutable items reports this: a message is
-    /// immutable, so IMAP, JMAP and Maildir never do, while a WebDAV
-    /// card or event is edited in place and its etag moves.
+    /// immutable, so no mail backend does, while a card or an event is
+    /// edited in place, its WebDAV etag or JMAP state moving.
     ItemChanged {
         /// What the item is.
         domain: WatchDomain,
@@ -95,6 +96,20 @@ impl WatchEvent {
             | Self::ItemChanged { id, .. }
             | Self::FlagAdded { id, .. }
             | Self::FlagRemoved { id, .. } => id,
+        }
+    }
+
+    /// What the item this change is about is.
+    // NOTE: only a backend watching several domains asks, which a reduced
+    // feature set may not compile in.
+    #[allow(dead_code)]
+    pub fn domain(&self) -> WatchDomain {
+        match self {
+            Self::ItemAdded { domain, .. }
+            | Self::ItemRemoved { domain, .. }
+            | Self::ItemChanged { domain, .. }
+            | Self::FlagAdded { domain, .. }
+            | Self::FlagRemoved { domain, .. } => *domain,
         }
     }
 }

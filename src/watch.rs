@@ -257,23 +257,29 @@ fn watch_session(
     #[cfg(feature = "jmap")]
     if backend.allows_jmap() {
         if let Some(jmap_config) = &config.jmap {
-            let collection = jmap_config.collection();
+            let collections = jmap_config
+                .collections()
+                .into_iter()
+                .map(|(_, collection)| format!("{} `{}`", collection.name, collection.value))
+                .collect::<Vec<_>>()
+                .join(", ");
             let resolve = jmap_config.hook.on_message_added.is_some();
+
+            // NOTE: one JMAP account watches up to three domains, so the
+            // collection a hook templates against follows the event.
             let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
-                if let Some(hook) = jmap_config.hook.get(&event) {
-                    hook::run(hook, &event, jmap_config.collection(), summary.as_ref());
+                if let Some(hook) = jmap_config.hook.get(&event)
+                    && let Some(collection) = jmap_config.collection(event.domain())
+                {
+                    hook::run(hook, &event, collection, summary.as_ref());
                 }
             };
 
             return match &jmap_config.watch {
                 Some(JmapWatchConfig::Poll(poll)) => {
-                    info!(
-                        "[{account}] watching `{}` over jmap, polling",
-                        collection.value
-                    );
+                    info!("[{account}] watching {collections} over jmap, polling");
                     jmap::watch_poll(
                         jmap_config,
-                        collection.value,
                         poll.interval(),
                         resolve,
                         shutdown,
@@ -285,18 +291,8 @@ fn watch_session(
                         Some(JmapWatchConfig::Push(push)) => push.ping,
                         _ => PushWatchConfig::default().ping,
                     };
-                    info!(
-                        "[{account}] watching `{}` over jmap, pushed",
-                        collection.value
-                    );
-                    jmap::watch_push(
-                        jmap_config,
-                        collection.value,
-                        ping,
-                        resolve,
-                        shutdown,
-                        &mut on_event,
-                    )
+                    info!("[{account}] watching {collections} over jmap, pushed");
+                    jmap::watch_push(jmap_config, ping, resolve, shutdown, &mut on_event)
                 }
             };
         }

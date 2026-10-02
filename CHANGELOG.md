@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   It writes one schema to stdout, or one file per command into `--dir`. `check` and `configure` are the two commands that print data.
 
+- Watched a JMAP addressbook and a JMAP calendar, beside or instead of the mailbox, through `jmap.addressbook` and `jmap.calendar`.
+
+  Each is read through its own `ContactCard/changes` (RFC 9610) or `CalendarEvent/changes` (JMAP for Calendars), and all of them share one session, one connection and one event stream. `jmap.mailbox` becomes optional, at least one of the three being required. The JMAP hook table gains `on-card-added`, `on-card-removed`, `on-card-changed`, `on-event-added`, `on-event-removed` and `on-event-changed`, templating against `$addressbook` and `$calendar`; a hook whose collection is not configured is refused when the file is read.
+
 - Added `proxy`, a per-account SOCKS5 or HTTP proxy for every network backend, and `<backend>.proxy` to override it for one backend.
 
   The password is a secret like any credential, so it stays out of the URL. Without either, the `all_proxy` and `https_proxy` environment variables are read, `no_proxy` bypassing them.

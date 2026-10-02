@@ -39,9 +39,11 @@ default = true
 # `-b auto`, the default, takes the first configured in that order.
 #
 # Each block carries the one collection it watches, required and named after its
-# own domain: `imap.mailbox`, `jmap.mailbox`, `maildir.mailbox`,
-# `caldav.calendar`, `carddav.addressbook`. Watching a second is a second
-# account, which is also how it gets its own hooks.
+# own domain: `imap.mailbox`, `maildir.mailbox`, `caldav.calendar`,
+# `carddav.addressbook`. JMAP takes one per domain, at least one of
+# `jmap.mailbox`, `jmap.addressbook` and `jmap.calendar`, sharing one connection.
+# Watching a second collection of a domain is a second account, which is also how
+# it gets its own hooks.
 #
 # Each block also carries the hooks that backend fires, under `<backend>.hook`
 # (`hooks` also reads), named after what it holds: `on-message-*` for mail,
@@ -54,7 +56,7 @@ default = true
 # reaching it as environment variables either way.
 #
 # A hook templates against $id, which is the backend's own id (an IMAP UID, a
-# JMAP Email id, a Maildir file name, a WebDAV href), and against the collection
+# JMAP object id, a Maildir file name, a WebDAV href), and against the collection
 # under the name its backend configures it: $mailbox, $calendar, $addressbook. A
 # flag hook adds $flag, naming the one flag that moved.
 #
@@ -148,11 +150,15 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #imap.hook.on-flag-removed.notify.summary = "$flag cleared on $id"
 
 
-# ---- JMAP: a changes poll (RFC 8621) -------------------------------------------
+# ---- JMAP: a changes poll (RFC 8621, RFC 9610, JMAP for Calendars) -------------
 
-# The mailbox this account watches, matched by name and case-insensitively,
-# falling back to the special-use role for "INBOX". Required.
+# The collections this account watches, at least one. The mailbox is matched by
+# name case-insensitively, falling back to the special-use role for "INBOX"; the
+# addressbook and the calendar by name case-insensitively or by id. All of them
+# share the session, the connection and the event stream.
 #jmap.mailbox = "INBOX"
+#jmap.addressbook = "Personal"
+#jmap.calendar = "Calendar"
 
 # Server address: a bare authority, discovered through `/.well-known/jmap`, or
 # a full URL naming the session endpoint.
@@ -189,6 +195,14 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #jmap.hook.on-message-removed.cmd = "true"
 #jmap.hook.on-flag-added.flags = ["Seen"]
 #jmap.hook.on-flag-removed.cmd = "true"
+
+# Contacts and calendar events are edited where they stand, which is what
+# `on-card-changed` and `on-event-changed` report. A hook for a domain whose
+# collection is not configured is refused. There is no `on-task-*`, JMAP
+# calendars having no task type.
+#jmap.hook.on-card-added.notify.summary = "New contact in $addressbook"
+#jmap.hook.on-card-changed.cmd = "true"
+#jmap.hook.on-event-changed.notify.summary = "Event $id changed in $calendar"
 
 
 # ---- Maildir: a listing poll ---------------------------------------------------

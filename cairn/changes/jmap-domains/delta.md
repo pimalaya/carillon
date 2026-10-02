@@ -21,7 +21,7 @@ The JMAP backend SHALL watch mail, contacts and calendar events, each under the 
 ## MODIFIED Requirements
 
 ### Requirement: An account watches one collection, one way
-An account SHALL watch the collection its backend names, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection of the same domain is a second account, which is also how it gets its own hooks. A backend serving several domains MAY name one collection per domain, since the domains do not share an event name and each therefore already has hooks of its own; what they share is the connection and the credential, which is what a second account would waste.
+An account SHALL watch the collection its backend names, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection of the same domain is a second account, which is also how it gets its own hooks. A backend serving several domains MAY name one collection per domain, since the domains do not share an event name and each therefore already has hooks of its own; what they share is the connection and the credential, which is what a second account would waste. Every backend SHALL read its collection the same way, the DAV ones included, whose `server` names the DAV root and whose collection is the path under it.
 
 #### Scenario: A second collection
 - **GIVEN** an account watching one mailbox
@@ -35,6 +35,11 @@ Each backend SHALL take the collection it watches, required, under the name its 
 - **GIVEN** an account whose `imap.hook.on-message-added` summary reads `New mail in $mailbox`
 - **WHEN** a message arrives
 - **THEN** the notification names the mailbox from `imap.mailbox`
+
+#### Scenario: A hook naming another backend's word
+- **GIVEN** an account whose `caldav.hook.on-event-added` summary reads `$mailbox`
+- **WHEN** the configuration is read
+- **THEN** it is refused, since a calendar is configured and templated as `$calendar`
 
 #### Scenario: A hook naming another domain's word
 - **GIVEN** an account whose `jmap.hook.on-card-added` summary reads `$mailbox`

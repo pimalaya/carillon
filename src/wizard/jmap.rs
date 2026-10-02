@@ -123,7 +123,9 @@ fn prompt_auth(
 /// the mailbox a first account watches and the one every server has.
 fn config(server: String, auth: JmapAuthConfig) -> JmapConfig {
     JmapConfig {
-        mailbox: String::from("INBOX"),
+        mailbox: Some(String::from("INBOX")),
+        addressbook: None,
+        calendar: None,
         server,
         tls: Default::default(),
         alpn: None,
@@ -165,7 +167,7 @@ mod tests {
             },
         );
 
-        assert_eq!(config.mailbox, "INBOX");
+        assert_eq!(config.mailbox.as_deref(), Some("INBOX"));
         assert!(config.watch.is_none());
         assert!(config.hook.on_message_added.is_some());
     }

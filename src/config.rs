@@ -56,7 +56,7 @@ use pimalaya_stream::{
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "dav")]
+#[cfg(any(feature = "jmap", feature = "dav"))]
 use crate::event::WatchDomain;
 use crate::{
     event::WatchEvent,
@@ -319,7 +319,7 @@ impl AccountConfig {
 
         #[cfg(feature = "jmap")]
         if let Some(jmap) = &self.jmap {
-            jmap.hook.validate()?;
+            jmap.validate()?;
         }
 
         #[cfg(feature = "maildir")]
@@ -467,7 +467,19 @@ fn canned_imap_id_value(key: &str) -> Option<&'static str> {
 pub struct JmapConfig {
     /// The mailbox this account watches, matched by name and
     /// case-insensitively, `INBOX` falling back to the special-use role.
-    pub mailbox: String,
+    ///
+    /// The three collections are each optional, at least one required:
+    /// they share the session, the connection and the event stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mailbox: Option<String>,
+    /// The addressbook this account watches (RFC 9610), matched by name
+    /// case-insensitively or by id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addressbook: Option<String>,
+    /// The calendar this account watches (JMAP for Calendars), matched by
+    /// name case-insensitively or by id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar: Option<String>,
     /// JMAP server address.
     ///
     /// A bare authority (`fastmail.com`, `mail.example.org:8080`) is
@@ -785,15 +797,65 @@ impl ImapConfig {
 
 #[cfg(feature = "jmap")]
 impl JmapConfig {
-    /// What JMAP calls the collection it watches.
-    pub const COLLECTION: &'static str = "mailbox";
+    /// The domains JMAP watches, in the order their rounds run.
+    pub const DOMAINS: [WatchDomain; 3] =
+        [WatchDomain::Message, WatchDomain::Card, WatchDomain::Event];
 
-    /// The collection this backend watches, under its own name.
-    pub fn collection(&self) -> HookCollection<'_> {
-        HookCollection {
-            name: Self::COLLECTION,
-            value: &self.mailbox,
+    /// What JMAP calls the collection of `domain`, which is also its key.
+    pub const fn collection_name(domain: WatchDomain) -> &'static str {
+        match domain {
+            WatchDomain::Message => "mailbox",
+            WatchDomain::Card => "addressbook",
+            WatchDomain::Event | WatchDomain::Task => "calendar",
         }
+    }
+
+    /// The collection an event of `domain` is about, under its own name,
+    /// when the account configures one.
+    pub fn collection(&self, domain: WatchDomain) -> Option<HookCollection<'_>> {
+        let value = match domain {
+            WatchDomain::Message => &self.mailbox,
+            WatchDomain::Card => &self.addressbook,
+            WatchDomain::Event => &self.calendar,
+            WatchDomain::Task => return None,
+        };
+
+        Some(HookCollection {
+            name: Self::collection_name(domain),
+            value: value.as_deref()?,
+        })
+    }
+
+    /// Every collection this backend watches, with its domain.
+    pub fn collections(&self) -> Vec<(WatchDomain, HookCollection<'_>)> {
+        Self::DOMAINS
+            .into_iter()
+            .filter_map(|domain| Some((domain, self.collection(domain)?)))
+            .collect()
+    }
+
+    /// Refuses a block watching nothing, a hook whose domain has no
+    /// collection, and a notification naming what its event cannot fill.
+    ///
+    /// The second is not serde's to refuse: what a hook may be depends on
+    /// a sibling key rather than on the table's own shape.
+    pub fn validate(&self) -> Result<()> {
+        if self.collections().is_empty() {
+            bail!(
+                "JMAP needs at least one of `jmap.mailbox`, `jmap.addressbook` and `jmap.calendar`"
+            );
+        }
+
+        for (name, domain) in self.hook.configured() {
+            if self.collection(domain).is_none() {
+                let key = Self::collection_name(domain);
+                bail!(
+                    "Hook `jmap.hook.{name}` needs `jmap.{key}`, which this account does not configure"
+                );
+            }
+        }
+
+        self.hook.validate()
     }
 }
 
@@ -872,6 +934,18 @@ pub struct JmapHookConfig {
     pub on_flag_added: Option<FlagHook>,
     /// Fires once for each keyword cleared on a message.
     pub on_flag_removed: Option<FlagHook>,
+    /// Fires when a contact appears in the watched addressbook.
+    pub on_card_added: Option<ItemHook>,
+    /// Fires when a contact leaves it.
+    pub on_card_removed: Option<ItemHook>,
+    /// Fires when a contact is edited where it stands.
+    pub on_card_changed: Option<ItemHook>,
+    /// Fires when an event appears in the watched calendar.
+    pub on_event_added: Option<ItemHook>,
+    /// Fires when an event leaves it.
+    pub on_event_removed: Option<ItemHook>,
+    /// Fires when an event is edited where it stands.
+    pub on_event_changed: Option<ItemHook>,
 }
 
 /// Hooks a Maildir watch fires.
@@ -952,18 +1026,87 @@ impl ImapHookConfig {
 
 #[cfg(feature = "jmap")]
 impl JmapHookConfig {
-    /// What the backend this table hangs on calls its collection.
-    const COLLECTION: &'static str = JmapConfig::COLLECTION;
-
-    /// The hook `event` calls for, when one is configured.
+    /// The hook `event` calls for, which depends on the domain the
+    /// method that answered was about.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
-        match event {
-            WatchEvent::ItemAdded { .. } => self.on_message_added.as_ref().map(Hook::Item),
-            WatchEvent::ItemRemoved { .. } => self.on_message_removed.as_ref().map(Hook::Item),
-            WatchEvent::ItemChanged { .. } => None,
-            WatchEvent::FlagAdded { .. } => self.on_flag_added.as_ref().map(Hook::Flag),
-            WatchEvent::FlagRemoved { .. } => self.on_flag_removed.as_ref().map(Hook::Flag),
-        }
+        let hook = match (event.domain(), event) {
+            (WatchDomain::Message, WatchEvent::FlagAdded { .. }) => {
+                return self.on_flag_added.as_ref().map(Hook::Flag);
+            }
+            (WatchDomain::Message, WatchEvent::FlagRemoved { .. }) => {
+                return self.on_flag_removed.as_ref().map(Hook::Flag);
+            }
+            (WatchDomain::Message, WatchEvent::ItemAdded { .. }) => &self.on_message_added,
+            (WatchDomain::Message, WatchEvent::ItemRemoved { .. }) => &self.on_message_removed,
+            (WatchDomain::Card, WatchEvent::ItemAdded { .. }) => &self.on_card_added,
+            (WatchDomain::Card, WatchEvent::ItemRemoved { .. }) => &self.on_card_removed,
+            (WatchDomain::Card, WatchEvent::ItemChanged { .. }) => &self.on_card_changed,
+            (WatchDomain::Event, WatchEvent::ItemAdded { .. }) => &self.on_event_added,
+            (WatchDomain::Event, WatchEvent::ItemRemoved { .. }) => &self.on_event_removed,
+            (WatchDomain::Event, WatchEvent::ItemChanged { .. }) => &self.on_event_changed,
+            _ => return None,
+        };
+
+        hook.as_ref().map(Hook::Item)
+    }
+
+    /// The hooks this table configures, by name, with the domain each
+    /// fires for.
+    fn configured(&self) -> impl Iterator<Item = (&'static str, WatchDomain)> {
+        [
+            (
+                "on-message-added",
+                WatchDomain::Message,
+                self.on_message_added.is_some(),
+            ),
+            (
+                "on-message-removed",
+                WatchDomain::Message,
+                self.on_message_removed.is_some(),
+            ),
+            (
+                "on-flag-added",
+                WatchDomain::Message,
+                self.on_flag_added.is_some(),
+            ),
+            (
+                "on-flag-removed",
+                WatchDomain::Message,
+                self.on_flag_removed.is_some(),
+            ),
+            (
+                "on-card-added",
+                WatchDomain::Card,
+                self.on_card_added.is_some(),
+            ),
+            (
+                "on-card-removed",
+                WatchDomain::Card,
+                self.on_card_removed.is_some(),
+            ),
+            (
+                "on-card-changed",
+                WatchDomain::Card,
+                self.on_card_changed.is_some(),
+            ),
+            (
+                "on-event-added",
+                WatchDomain::Event,
+                self.on_event_added.is_some(),
+            ),
+            (
+                "on-event-removed",
+                WatchDomain::Event,
+                self.on_event_removed.is_some(),
+            ),
+            (
+                "on-event-changed",
+                WatchDomain::Event,
+                self.on_event_changed.is_some(),
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(name, domain, set)| set.then_some((name, domain)))
     }
 }
 
@@ -1101,32 +1244,60 @@ impl JmapHookConfig {
     /// JMAP reads an envelope, from the request its round already
     /// makes, so its arrival hook may name one.
     pub fn validate(&self) -> Result<()> {
+        let mailbox = JmapConfig::collection_name(WatchDomain::Message);
+
         hook::validate(
             self.on_message_added
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            Vocabulary::resolved(Self::COLLECTION),
+            Vocabulary::resolved(mailbox),
             "jmap.hook.on-message-added",
         )?;
         hook::validate(
             self.on_message_removed
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            Vocabulary::item(Self::COLLECTION),
+            Vocabulary::item(mailbox),
             "jmap.hook.on-message-removed",
         )?;
         hook::validate(
             self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
-            Vocabulary::flag(Self::COLLECTION),
+            Vocabulary::flag(mailbox),
             "jmap.hook.on-flag-added",
         )?;
         hook::validate(
             self.on_flag_removed
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
-            Vocabulary::flag(Self::COLLECTION),
+            Vocabulary::flag(mailbox),
             "jmap.hook.on-flag-removed",
-        )
+        )?;
+
+        for (hook, domain, name) in [
+            (&self.on_card_added, WatchDomain::Card, "on-card-added"),
+            (&self.on_card_removed, WatchDomain::Card, "on-card-removed"),
+            (&self.on_card_changed, WatchDomain::Card, "on-card-changed"),
+            (&self.on_event_added, WatchDomain::Event, "on-event-added"),
+            (
+                &self.on_event_removed,
+                WatchDomain::Event,
+                "on-event-removed",
+            ),
+            (
+                &self.on_event_changed,
+                WatchDomain::Event,
+                "on-event-changed",
+            ),
+        ] {
+            let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
+            hook::validate(
+                notify,
+                Vocabulary::item(JmapConfig::collection_name(domain)),
+                &format!("jmap.hook.{name}"),
+            )?;
+        }
+
+        Ok(())
     }
 }
 
@@ -1617,5 +1788,73 @@ mod tests {
         };
 
         assert!(config.try_into_proxy(&mut SecretResolver::new()).is_err());
+    }
+
+    /// A JMAP account in the shape the tests below vary.
+    #[cfg(feature = "jmap")]
+    fn jmap(extra: &str) -> Result<Config> {
+        let document = format!(
+            "[accounts.perso]\n\
+             jmap.server = \"fastmail.com\"\n\
+             jmap.auth.bearer.token.raw = \"token\"\n\
+             {extra}"
+        );
+        let config: Config = toml::from_str(&document)?;
+        config.accounts["perso"].validate()?;
+
+        Ok(config)
+    }
+
+    #[cfg(feature = "jmap")]
+    #[test]
+    fn a_jmap_account_watches_at_least_one_collection() {
+        let err = format!("{:#}", jmap("").expect_err("nothing to watch"));
+        assert!(err.contains("at least one"), "got {err}");
+
+        let config = jmap("jmap.addressbook = \"Personal\"\njmap.calendar = \"Work\"\n")
+            .expect("contacts and a calendar without mail");
+        let jmap = config.accounts["perso"].jmap.as_ref().unwrap();
+        let names: Vec<_> = jmap.collections().iter().map(|(_, c)| c.name).collect();
+
+        assert_eq!(vec!["addressbook", "calendar"], names);
+    }
+
+    #[cfg(feature = "jmap")]
+    #[test]
+    fn a_jmap_hook_needs_its_domain_s_collection() {
+        let hook = "jmap.hook.on-card-added.cmd = \"true\"\n";
+
+        let err = format!(
+            "{:#}",
+            jmap(&format!("jmap.mailbox = \"INBOX\"\n{hook}")).expect_err("no addressbook")
+        );
+        assert!(err.contains("jmap.hook.on-card-added"), "got {err}");
+        assert!(err.contains("jmap.addressbook"), "got {err}");
+
+        jmap(&format!("jmap.addressbook = \"Personal\"\n{hook}")).expect("an addressbook");
+    }
+
+    #[cfg(feature = "jmap")]
+    #[test]
+    fn a_jmap_card_hook_templates_against_its_addressbook() {
+        let notify = "jmap.hook.on-card-added.notify.summary = \"$mailbox\"\n";
+        let err = format!(
+            "{:#}",
+            jmap(&format!("jmap.addressbook = \"Personal\"\n{notify}")).expect_err("$mailbox")
+        );
+        assert!(err.contains("$addressbook"), "got {err}");
+
+        let config = jmap("jmap.mailbox = \"INBOX\"\njmap.addressbook = \"Personal\"\n").unwrap();
+        let jmap = config.accounts["perso"].jmap.as_ref().unwrap();
+        let card = WatchEvent::ItemChanged {
+            domain: WatchDomain::Card,
+            id: String::from("A"),
+        };
+
+        assert_eq!(
+            Some("Personal"),
+            jmap.collection(card.domain()).map(|c| c.value)
+        );
+        assert!(jmap.hook.get(&card).is_none());
     }
 }

@@ -1,7 +1,7 @@
 ---
 cairn: change
 id: jmap-domains
-status: active
+status: landed
 created: 2026-08-22
 ---
 
