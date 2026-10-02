@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-02
+
 ### Added
 
 - Added `imap.alpn`, `jmap.alpn`, `caldav.alpn` and `carddav.alpn`.
@@ -132,5 +134,6 @@ First release, renamed from mirador. The binary, the config directory, the `CARI
 
 - Generated the man pages and the shell completions, and shipped a systemd user unit.
 
-[unreleased]: https://github.com/pimalaya/carillon/compare/v0.1.0..HEAD
+[unreleased]: https://github.com/pimalaya/carillon/compare/v0.2.0..HEAD
+[0.2.0]: https://github.com/pimalaya/carillon/compare/v0.1.0..v0.2.0
 [0.1.0]: https://github.com/pimalaya/carillon/compare/root..v0.1.0

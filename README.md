@@ -46,7 +46,21 @@ CLI to watch PIM collection changes, written in Rust
 
 ### Pre-built binary
 
-Not released yet. Until it is, the [releases](https://github.com/pimalaya/carillon/actions/workflows/releases.yml) workflow builds one from master on demand, under *Artifacts*, with the default cargo features.
+As root:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/pimalaya/carillon/master/install.sh | sudo sh
+```
+
+As a regular user:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/pimalaya/carillon/master/install.sh | PREFIX=~/.local sh
+```
+
+These commands install the latest binary from the GitHub [releases](https://github.com/pimalaya/carillon/releases) section.
+
+For a more up-to-date version, check the [releases](https://github.com/pimalaya/carillon/actions/workflows/releases.yml) workflow and look for the *Artifacts* section: those are built from `master`, with the default cargo features.
 
 ### Cargo
 
