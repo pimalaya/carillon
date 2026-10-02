@@ -22,7 +22,7 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use base64::{Engine, prelude::BASE64_STANDARD};
 use io_jmap::{
-    client::JmapClientStd,
+    client::{JmapClientStd, JmapClientStdConnectOptions},
     coroutine::{JmapCoroutine, JmapCoroutineState},
     rfc8620::event_source::{
         JmapCloseAfter,
@@ -69,7 +69,12 @@ pub fn open(config: &JmapConfig, resolver: &mut SecretResolver) -> Result<(JmapC
 
     let url = parse_server(&config.server)?;
     let auth = http_auth(config.auth.clone(), resolver)?;
-    let mut client = JmapClientStd::connect(&url, &tls, auth)?;
+    let opts = JmapClientStdConnectOptions {
+        tls,
+        ..Default::default()
+    };
+
+    let mut client = JmapClientStd::connect(&url, auth, opts)?;
 
     // NOTE: io-jmap arms a five-second read deadline to wake a caller up,
     // which pimalaya-stream retries away for a minute by default. Handing

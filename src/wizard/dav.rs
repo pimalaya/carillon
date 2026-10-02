@@ -15,7 +15,7 @@
 
 use anyhow::{Context, Result, bail};
 use io_http::client::HttpClientStd;
-use io_webdav::client::WebdavClientStd;
+use io_webdav::client::{WebdavClientStd, WebdavClientStdConnectOptions};
 use pimalaya_cli::{prompt, spinner::Spinner};
 use pimalaya_config::secret::SecretResolver;
 use url::Url;
@@ -112,10 +112,13 @@ fn connect(label: &str, server: &Url, auth: &DavAuthConfig) -> Result<WebdavClie
 
     // NOTE: the same profile a watch opens with, an account carrying no
     // `alpn` key yet when the wizard tests it.
-    let tls = TlsConfig::default().into_tls(HttpClientStd::default_alpn());
+    let opts = WebdavClientStdConnectOptions {
+        tls: TlsConfig::default().into_tls(HttpClientStd::default_alpn()),
+        ..Default::default()
+    };
 
     let opened = dav::auth(auth, &mut SecretResolver::new())
-        .and_then(|auth| Ok(WebdavClientStd::connect(server, &tls, auth)?));
+        .and_then(|auth| Ok(WebdavClientStd::connect(server, auth, opts)?));
 
     match opened {
         Ok(client) => {

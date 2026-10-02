@@ -26,7 +26,10 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use io_imap::{
-    client::{ImapClientStd, ImapMailboxWatchStream, ImapMailboxWatchStreamOptions, default_port},
+    client::{
+        ImapClientStd, ImapClientStdConnectOptions, ImapMailboxWatchStream,
+        ImapMailboxWatchStreamOptions, default_port,
+    },
     coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
     rfc3501::{
         examine::ImapMailboxExamine,
@@ -98,16 +101,21 @@ pub fn open(
         })
         .transpose()?;
 
-    let opts = ImapSessionOpenOptions {
-        starttls: config.starttls,
-        auto_id: resolve_auto_id_params(&config.id)?,
-        sasl_ir: config.sasl_ir,
+    let opts = ImapClientStdConnectOptions {
+        tls,
+        sasl,
+        session: ImapSessionOpenOptions {
+            starttls: config.starttls,
+            auto_id: resolve_auto_id_params(&config.id)?,
+            sasl_ir: config.sasl_ir,
+        },
+        ..Default::default()
     };
 
     debug!("opening imap session");
     trace!("server: {server}");
 
-    Ok(ImapClientStd::connect(&server, &tls, sasl, opts)?)
+    Ok(ImapClientStd::connect(&server, opts)?)
 }
 
 /// Watches `collection` over a held IDLE, until the connection ends or
