@@ -68,7 +68,8 @@ pub struct Cli {
     /// One connection is opened per `watch`, so this picks the block an
     /// account declaring several is watched over. `auto`, the default,
     /// takes the first configured, in the order IMAP, JMAP, Maildir,
-    /// CalDAV, CardDAV.
+    /// CalDAV, CardDAV, Microsoft Graph, Gmail, Google Calendar, Google
+    /// People.
     #[arg(short, long, global = true, default_value_t)]
     pub backend: Backend,
     #[command(flatten)]

@@ -20,6 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   Each is read through its own `ContactCard/changes` (RFC 9610) or `CalendarEvent/changes` (JMAP for Calendars), and all of them share one session, one connection and one event stream. `jmap.mailbox` becomes optional, at least one of the three being required. The JMAP hook table gains `on-card-added`, `on-card-removed`, `on-card-changed`, `on-event-added`, `on-event-removed` and `on-event-changed`, templating against `$addressbook` and `$calendar`; a hook whose collection is not configured is refused when the file is read.
 
+- Watched Microsoft Graph and Google accounts over their own APIs, through the `msgraph`, `gmail`, `gcal` and `gpeople` backends, each behind its cargo feature, on by default.
+
+  `msgraph` takes a mail folder, a contact folder and a calendar the way `jmap` does, one token and one connection for all three; mail and contacts read delta queries, and the calendar is listed with its `changeKey` on every poll, so no window hides an event. `gmail` watches a label through its history, `gcal` a calendar and `gpeople` a contact group through their sync tokens, `myContacts` holding every contact the account owns. All four take `auth.token`, usually a broker command, and poll, these APIs pushing only to a public endpoint. `isRead` and a cleared `UNREAD` arrive as `Seen`, a follow-up flag and `STARRED` as `Flagged`, and an expired delta link or sync token lists the collection again, reporting only what differs.
+
+  The wizard offers these APIs first for a Google or Microsoft address, beside IMAP and DAV.
+
 - Added `proxy`, a per-account SOCKS5 or HTTP proxy for every network backend, and `<backend>.proxy` to override it for one backend.
 
   The password is a secret like any credential, so it stays out of the URL. Without either, the `all_proxy` and `https_proxy` environment variables are read, `no_proxy` bypassing them.

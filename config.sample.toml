@@ -34,14 +34,17 @@ default = true
 # Backend config
 # --------------------------------------------------------------------------------
 
-# Declare one or more of the `imap`, `jmap`, `maildir`, `caldav` and `carddav`
-# blocks below. With more than one, `-b/--backend` selects the active one;
-# `-b auto`, the default, takes the first configured in that order.
+# Declare one or more of the `imap`, `jmap`, `maildir`, `caldav`, `carddav`,
+# `msgraph`, `gmail`, `gcal` and `gpeople` blocks below. With more than one,
+# `-b/--backend` selects the active one; `-b auto`, the default, takes the first
+# configured in that order.
 #
 # Each block carries the one collection it watches, required and named after its
-# own domain: `imap.mailbox`, `maildir.mailbox`, `caldav.calendar`,
-# `carddav.addressbook`. JMAP takes one per domain, at least one of
-# `jmap.mailbox`, `jmap.addressbook` and `jmap.calendar`, sharing one connection.
+# own domain: `imap.mailbox`, `maildir.mailbox`, `gmail.mailbox`,
+# `caldav.calendar`, `gcal.calendar`, `carddav.addressbook`,
+# `gpeople.addressbook`. JMAP and Microsoft Graph take one per domain, at least
+# one of `<backend>.mailbox`, `<backend>.addressbook` and `<backend>.calendar`,
+# sharing one connection.
 # Watching a second collection of a domain is a second account, which is also how
 # it gets its own hooks.
 #
@@ -283,3 +286,80 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #carddav.hook.on-card-changed.cmd = "true"
 #carddav.hook.on-card-removed.cmd = "true"
 
+
+
+# ---- Microsoft Graph: delta queries and a calendar listing poll ----------------
+
+# The collections this account watches, at least one, sharing one token and one
+# connection: a mail folder by display name, id or well-known name (`inbox`), a
+# contact folder (`Contacts` being the default one) and a calendar, both by name
+# or id.
+#msgraph.mailbox = "inbox"
+#msgraph.addressbook = "Contacts"
+#msgraph.calendar = "Calendar"
+
+# The mailbox owner, unset meaning the token's own user.
+#msgraph.user-id = "alice@example.org"
+
+# Microsoft Graph, Gmail, Google Calendar and Google People take an OAuth 2.0
+# bearer token alone, which expires: read it from a broker such as Ortie.
+#msgraph.auth.token.command = ["ortie", "token", "read", "microsoft"]
+
+# TLS, ALPN and proxy, read as under `imap`.
+#msgraph.alpn = ["http/1.1"]
+#msgraph.proxy.url = "http://proxy.example.org:3128"
+
+# These APIs push only to a public endpoint, so they poll, a minute when unset.
+#msgraph.watch.poll.interval = 60
+
+# Same events as JMAP: `isRead` arrives as `Seen`, a follow-up flag as `Flagged`.
+# The calendar is listed on every poll and its `changeKey` compared, an event
+# being edited where it stands whatever its date.
+#msgraph.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
+#msgraph.hook.on-message-added.notify.body = "$subject"
+#msgraph.hook.on-flag-added.flags = ["Flagged"]
+#msgraph.hook.on-card-changed.cmd = "true"
+#msgraph.hook.on-event-changed.notify.summary = "Event $id changed in $calendar"
+
+
+# ---- Gmail: a history poll -----------------------------------------------------
+
+# The label this account watches, by name or id. Required.
+#gmail.mailbox = "INBOX"
+
+#gmail.auth.token.command = ["ortie", "token", "read", "google"]
+#gmail.watch.poll.interval = 60
+
+# Same events as IMAP: a cleared `UNREAD` arrives as `Seen`, `STARRED` as
+# `Flagged`. The envelope is read from the arrival's headers.
+#gmail.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
+#gmail.hook.on-message-added.notify.body = "$subject"
+#gmail.hook.on-flag-added.flags = ["Seen"]
+
+
+# ---- Google Calendar: a sync token poll ----------------------------------------
+
+# The calendar this account watches, by name or id, `primary` being the
+# account's own. Required.
+#gcal.calendar = "primary"
+
+#gcal.auth.token.command = ["ortie", "token", "read", "google"]
+#gcal.watch.poll.interval = 60
+
+# Events alone, the API having no task type. A recurring series is one event.
+#gcal.hook.on-event-added.notify.summary = "New event in $calendar"
+#gcal.hook.on-event-changed.cmd = "true"
+
+
+# ---- Google People: a sync token poll over a contact group ---------------------
+
+# The contact group this account watches, by name or resource name, `myContacts`
+# holding every contact the account owns. Required.
+#gpeople.addressbook = "myContacts"
+
+#gpeople.auth.token.command = ["ortie", "token", "read", "google"]
+#gpeople.watch.poll.interval = 60
+
+# A contact leaving the group arrives as a removal, as a deleted one does.
+#gpeople.hook.on-card-added.notify.summary = "New contact in $addressbook"
+#gpeople.hook.on-card-removed.cmd = "true"

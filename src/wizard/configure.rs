@@ -298,10 +298,7 @@ mod tests {
     /// A minimal account watching a Maildir root, the one backend needing
     /// no network to describe.
     #[cfg(feature = "maildir")]
-    #[cfg_attr(
-        not(any(feature = "imap", feature = "jmap", feature = "dav")),
-        allow(clippy::needless_update)
-    )]
+    #[cfg_attr(not(network), allow(clippy::needless_update))]
     fn account(default: bool) -> AccountConfig {
         AccountConfig {
             default,

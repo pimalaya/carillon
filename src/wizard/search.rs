@@ -17,9 +17,10 @@ use io_pim_discovery::{
     compose::{
         client::DiscoveryComposeClientStd,
         config::{
-            DiscoveryAuthMethod, DiscoveryEndpoint, DiscoverySecurity, DiscoveryService,
-            DiscoveryServiceConfig,
+            DiscoveryAuthMethod, DiscoveryConfigSource, DiscoveryEndpoint, DiscoverySecurity,
+            DiscoveryService, DiscoveryServiceConfig,
         },
+        providers::DiscoveryKnownProvider,
     },
     shared::dns::system_resolver,
 };
@@ -60,6 +61,14 @@ pub enum DiscoveredKind {
     Caldav(String),
     /// A CardDAV context root, whose addressbooks are listed the same way.
     Carddav(String),
+    /// The Microsoft Graph API, for a Microsoft account.
+    Msgraph,
+    /// The Gmail API, for a Google account.
+    Gmail,
+    /// The Google Calendar API, for a Google account.
+    Gcal,
+    /// The Google People API, for a Google account.
+    Gpeople,
 }
 
 /// A discovered TCP service endpoint.
@@ -93,11 +102,13 @@ impl AuthCaps {
     ///
     /// When none was, the prompt offers every method, so a mechanism
     /// naming no auth never leaves the user without a choice.
+    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
     pub fn any(self) -> bool {
         self.basic || self.bearer || self.oauth
     }
 
     /// Whether a token (static or broker-issued) is on offer.
+    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
     pub fn token(self) -> bool {
         self.bearer || self.oauth
     }
@@ -110,6 +121,10 @@ impl fmt::Display for Discovered {
             DiscoveredKind::Jmap(url) => write!(f, "JMAP {url}"),
             DiscoveredKind::Caldav(url) => write!(f, "CalDAV {url}"),
             DiscoveredKind::Carddav(url) => write!(f, "CardDAV {url}"),
+            DiscoveredKind::Msgraph => write!(f, "Microsoft Graph API"),
+            DiscoveredKind::Gmail => write!(f, "Gmail API"),
+            DiscoveredKind::Gcal => write!(f, "Google Calendar API"),
+            DiscoveredKind::Gpeople => write!(f, "Google People API"),
         }
     }
 }
@@ -120,6 +135,7 @@ impl Discovered {
     /// The advertised username when it looks like an address, else the
     /// searched email when a full one was typed, else nothing: the
     /// synthesized `@domain` form of a bare domain is rejected here.
+    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
     pub fn login_default(&self, email: &str) -> Option<String> {
         self.username
             .clone()
@@ -127,14 +143,18 @@ impl Discovered {
             .or_else(|| looks_like_address(email).then(|| email.to_string()))
     }
 
-    /// Ranks an entry in the order the backend selector already picks a
-    /// configured block: IMAP, JMAP, CalDAV, CardDAV.
+    /// Ranks an entry: a provider's own API first, being what such an
+    /// account is best watched over, then the order the backend selector
+    /// picks a configured block in: IMAP, JMAP, CalDAV, CardDAV.
     fn rank(&self) -> u8 {
         match self.kind {
-            DiscoveredKind::Imap(_) => 0,
-            DiscoveredKind::Jmap(_) => 1,
-            DiscoveredKind::Caldav(_) => 2,
-            DiscoveredKind::Carddav(_) => 3,
+            DiscoveredKind::Msgraph | DiscoveredKind::Gmail => 0,
+            DiscoveredKind::Gcal => 1,
+            DiscoveredKind::Gpeople => 2,
+            DiscoveredKind::Imap(_) => 3,
+            DiscoveredKind::Jmap(_) => 4,
+            DiscoveredKind::Caldav(_) => 5,
+            DiscoveredKind::Carddav(_) => 6,
         }
     }
 }
@@ -198,9 +218,48 @@ pub fn search(email: &str) -> Result<Vec<Discovered>> {
         }));
     }
 
+    // NOTE: a Google or Microsoft account is best watched over its
+    // provider's own API, which IMAP and DAV discovery cannot advertise,
+    // so the provider is read from the address and its APIs offered
+    // first. They take an OAuth token alone, issued by a broker.
+    let apis: &[DiscoveredKind] = match provider_of(email, &configs) {
+        Some(DiscoveryKnownProvider::Microsoft) => &[DiscoveredKind::Msgraph],
+        Some(DiscoveryKnownProvider::Google) => &[
+            DiscoveredKind::Gmail,
+            DiscoveredKind::Gcal,
+            DiscoveredKind::Gpeople,
+        ],
+        None => &[],
+    };
+
+    found.extend(apis.iter().map(|kind| Discovered {
+        kind: kind.clone(),
+        username: Some(email.to_string()),
+        auth: AuthCaps {
+            oauth: true,
+            ..Default::default()
+        },
+    }));
+
     found.sort_by_key(Discovered::rank);
 
     Ok(found)
+}
+
+/// Resolves the provider from the email domain, the fast path for a
+/// consumer address, falling back to any provider-tagged configuration,
+/// which catches a custom domain detected through its MX records.
+fn provider_of(email: &str, configs: &[DiscoveryServiceConfig]) -> Option<DiscoveryKnownProvider> {
+    let by_domain = email
+        .rsplit_once('@')
+        .and_then(|(_, domain)| DiscoveryKnownProvider::from_domain(domain));
+
+    by_domain.or_else(|| {
+        configs.iter().find_map(|config| match config.source {
+            DiscoveryConfigSource::Provider(provider) => Some(provider),
+            _ => None,
+        })
+    })
 }
 
 /// Folds a service's advertised methods into its [`AuthCaps`]: password
@@ -261,6 +320,7 @@ fn best_tcp(
 
 /// Whether a string is a full `local@domain` address, which rejects the
 /// bare-domain `@domain` form.
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 fn looks_like_address(value: &str) -> bool {
     value
         .split_once('@')
@@ -304,6 +364,7 @@ fn discovery_tls() -> Tls {
 mod tests {
     use super::*;
 
+    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
     #[test]
     fn caps_fold_each_method_onto_its_axis() {
         let oauth = DiscoveryAuthMethod::OauthIssuer("https://issuer".into());
@@ -331,12 +392,14 @@ mod tests {
         assert!(fastmail.any());
     }
 
+    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
     #[test]
     fn caps_report_emptiness_and_token_offer() {
         assert!(!AuthCaps::default().any());
         assert!(!AuthCaps::default().token());
     }
 
+    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
     #[test]
     fn the_login_default_rejects_the_synthesized_bare_domain() {
         let entry = Discovered {
@@ -352,6 +415,7 @@ mod tests {
         assert_eq!(entry.login_default("@example.org"), None);
     }
 
+    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
     #[test]
     fn an_advertised_username_wins_over_the_searched_address() {
         let entry = Discovered {

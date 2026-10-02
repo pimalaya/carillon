@@ -16,7 +16,6 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
     time::Duration,
 };
 
@@ -32,14 +31,12 @@ use log::{debug, trace};
 use crate::{
     config::MaildirConfig,
     event::{ItemSummary, WatchDomain, WatchEvent},
+    poll,
 };
 
 /// How long the watch sleeps between two listings, unless the config says
 /// otherwise; short, a directory read being cheap.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
-/// How long it sleeps at a time, so a shutdown is noticed promptly.
-const POLL_STEP: Duration = Duration::from_millis(200);
-
 /// Watches `collection` under the configured root until `shutdown` is
 /// set, calling `on_event` for every change.
 ///
@@ -60,7 +57,7 @@ pub fn watch(
     debug!("watching maildir with {} entries", seen.len());
 
     while !shutdown.load(Ordering::SeqCst) {
-        if !sleep(interval, shutdown) {
+        if !poll::sleep(interval, shutdown) {
             break;
         }
 
@@ -185,24 +182,6 @@ fn render_flags(flags: &MaildirFlags) -> BTreeSet<String> {
             MaildirFlag::Keyword(keyword) => keyword.clone(),
         })
         .collect()
-}
-
-/// Sleeps `total` in small steps, returning false as soon as a
-/// shutdown is requested.
-fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
-    let mut left = total;
-
-    while left > Duration::ZERO {
-        if shutdown.load(Ordering::SeqCst) {
-            return false;
-        }
-
-        let step = left.min(POLL_STEP);
-        thread::sleep(step);
-        left -= step;
-    }
-
-    !shutdown.load(Ordering::SeqCst)
 }
 
 #[cfg(test)]

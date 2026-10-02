@@ -32,6 +32,21 @@ pub enum WatchDomain {
     Task,
 }
 
+impl WatchDomain {
+    /// What a collection of this domain is called, which is also the key
+    /// a backend configures it under and the variable a hook names it by.
+    // NOTE: only the backends serving several domains ask, which a
+    // reduced feature set may not compile in.
+    #[allow(dead_code)]
+    pub const fn collection_name(self) -> &'static str {
+        match self {
+            Self::Message => "mailbox",
+            Self::Card => "addressbook",
+            Self::Event | Self::Task => "calendar",
+        }
+    }
+}
+
 /// A change in a watched collection, keyed by the backend's own id.
 // NOTE: same reason as above, for the variants.
 #[allow(dead_code)]

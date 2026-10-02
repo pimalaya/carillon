@@ -24,26 +24,34 @@
 
 use std::path::PathBuf;
 
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 use anyhow::Context;
 use anyhow::{Result, bail};
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 use io_pim_discovery::compose::config::DiscoverySecurity;
 use pimalaya_cli::prompt;
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 use pimalaya_cli::spinner::Spinner;
 use url::Url;
 
 use crate::config::AccountConfig;
 #[cfg(feature = "dav")]
 use crate::wizard::dav;
+#[cfg(feature = "gcal")]
+use crate::wizard::gcal;
+#[cfg(feature = "gmail")]
+use crate::wizard::gmail;
+#[cfg(feature = "gpeople")]
+use crate::wizard::gpeople;
 #[cfg(feature = "imap")]
 use crate::wizard::imap;
 #[cfg(feature = "jmap")]
 use crate::wizard::jmap;
 #[cfg(feature = "maildir")]
 use crate::wizard::local;
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(feature = "msgraph")]
+use crate::wizard::msgraph;
+#[cfg(network)]
 use crate::{
     config::CONFIG_SAMPLE_URL,
     wizard::search::{self, Discovered, DiscoveredKind},
@@ -89,7 +97,7 @@ fn build_account(account_name: &str, input: &str) -> Result<AccountConfig> {
 
 /// Searches the services reachable from the input, lets one be picked,
 /// and configures it.
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 fn configure_discovered(
     account_name: &str,
     input: &str,
@@ -130,7 +138,7 @@ fn configure_discovered(
     Ok(account)
 }
 
-#[cfg(not(any(feature = "imap", feature = "jmap", feature = "dav")))]
+#[cfg(not(network))]
 fn configure_discovered(
     _account_name: &str,
     input: &str,
@@ -141,9 +149,17 @@ fn configure_discovered(
 
 /// Configures the backend behind a discovered entry, on the account
 /// that will carry it.
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 #[cfg_attr(
-    all(feature = "imap", feature = "jmap", feature = "dav"),
+    all(
+        feature = "imap",
+        feature = "jmap",
+        feature = "dav",
+        feature = "msgraph",
+        feature = "gmail",
+        feature = "gcal",
+        feature = "gpeople"
+    ),
     allow(unreachable_patterns)
 )]
 fn dispatch(
@@ -172,6 +188,26 @@ fn dispatch(
 
             Ok(())
         }
+        #[cfg(feature = "msgraph")]
+        DiscoveredKind::Msgraph => {
+            account.msgraph = Some(msgraph::configure(account_name, email)?);
+            Ok(())
+        }
+        #[cfg(feature = "gmail")]
+        DiscoveredKind::Gmail => {
+            account.gmail = Some(gmail::configure(account_name, email)?);
+            Ok(())
+        }
+        #[cfg(feature = "gcal")]
+        DiscoveredKind::Gcal => {
+            account.gcal = Some(gcal::configure(account_name, email)?);
+            Ok(())
+        }
+        #[cfg(feature = "gpeople")]
+        DiscoveredKind::Gpeople => {
+            account.gpeople = Some(gpeople::configure(account_name, email)?);
+            Ok(())
+        }
         kind => bail!("Configuration `{kind:?}` is not supported by this build"),
     }
 }
@@ -194,7 +230,7 @@ fn configure_local(_account: AccountConfig, input: &str) -> Result<AccountConfig
 /// `imap` and `imaps` keep IMAP, `imaps` requiring an implicit-TLS
 /// endpoint; an HTTP-family scheme keeps every service speaking HTTP, a
 /// DAV root and a JMAP session being told apart by their path.
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 fn retain_scheme(found: &mut Vec<Discovered>, scheme: &str) -> Result<()> {
     match scheme {
         "imap" | "imaps" => {
@@ -217,7 +253,7 @@ fn retain_scheme(found: &mut Vec<Discovered>, scheme: &str) -> Result<()> {
 ///
 /// It names the documented sample to seed a hand-written config from,
 /// then errors out: the wizard only ever configures what it discovered.
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 fn stop_undiscovered(input: &str) -> Result<AccountConfig> {
     bail!(
         "Could not automatically discover a configuration for `{input}`.\n\n\
@@ -227,12 +263,16 @@ fn stop_undiscovered(input: &str) -> Result<AccountConfig> {
 }
 
 /// Drops the discovered entries whose backend is not compiled in.
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 fn retain_supported(found: &mut Vec<Discovered>) {
     found.retain(|entry| match entry.kind {
         DiscoveredKind::Imap(_) => cfg!(feature = "imap"),
         DiscoveredKind::Jmap(_) => cfg!(feature = "jmap"),
         DiscoveredKind::Caldav(_) | DiscoveredKind::Carddav(_) => cfg!(feature = "dav"),
+        DiscoveredKind::Msgraph => cfg!(feature = "msgraph"),
+        DiscoveredKind::Gmail => cfg!(feature = "gmail"),
+        DiscoveredKind::Gcal => cfg!(feature = "gcal"),
+        DiscoveredKind::Gpeople => cfg!(feature = "gpeople"),
     });
 }
 
@@ -316,7 +356,7 @@ mod tests {
         assert!(!is_path("imaps://imap.example.org"));
     }
 
-    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+    #[cfg(network)]
     #[test]
     fn a_scheme_keeps_only_what_it_named() {
         let entry = |kind| Discovered {

@@ -15,7 +15,7 @@ use pimalaya_config::secret::SecretResolver;
 
 use crate::{
     config::{
-        ItemHook, JmapAuthConfig, JmapConfig, JmapHookConfig, JmapWatchConfig, NotifyConfig,
+        DomainsHookConfig, ItemHook, JmapAuthConfig, JmapConfig, JmapWatchConfig, NotifyConfig,
         PollWatchConfig,
     },
     jmap,
@@ -141,8 +141,8 @@ fn config(server: String, auth: JmapAuthConfig) -> JmapConfig {
 ///
 /// JMAP reads an arrival's envelope from the request its round already
 /// makes, so the notification may name it.
-fn hook() -> JmapHookConfig {
-    JmapHookConfig {
+fn hook() -> DomainsHookConfig {
+    DomainsHookConfig {
         on_message_added: Some(ItemHook {
             notify: Some(NotifyConfig {
                 summary: String::from("New mail in $mailbox from $sender"),

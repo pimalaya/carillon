@@ -28,6 +28,16 @@ use clap::Parser;
 use log::{debug, error, info, warn};
 use pimalaya_cli::printer::Printer;
 
+#[cfg(api)]
+use crate::config::ApiWatchConfig;
+#[cfg(feature = "gcal")]
+use crate::gcal;
+#[cfg(feature = "gmail")]
+use crate::gmail;
+#[cfg(feature = "gpeople")]
+use crate::gpeople;
+#[cfg(feature = "msgraph")]
+use crate::msgraph;
 use crate::{
     backend::Backend,
     cli::load_config,
@@ -390,9 +400,129 @@ fn watch_session(
         }
     }
 
+    #[cfg(feature = "msgraph")]
+    if backend.allows_msgraph() {
+        if let Some(msgraph_config) = &config.msgraph {
+            let collections = msgraph_config
+                .collections()
+                .into_iter()
+                .map(|(_, collection)| format!("{} `{}`", collection.name, collection.value))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let resolve = msgraph_config.hook.on_message_added.is_some();
+
+            // NOTE: one Graph account watches up to three domains, so the
+            // collection a hook templates against follows the event.
+            let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
+                if let Some(hook) = msgraph_config.hook.get(&event)
+                    && let Some(collection) = msgraph_config.collection(event.domain())
+                {
+                    hook::run(hook, &event, collection, summary.as_ref());
+                }
+            };
+
+            info!("[{account}] watching {collections} over msgraph, polling");
+            return msgraph::watch(
+                msgraph_config,
+                ApiWatchConfig::interval(&msgraph_config.watch),
+                resolve,
+                shutdown,
+                &mut on_event,
+            );
+        }
+
+        if backend == Backend::Msgraph {
+            bail!("Account has no `msgraph` config block");
+        }
+    }
+
+    #[cfg(feature = "gmail")]
+    if backend.allows_gmail() {
+        if let Some(gmail_config) = &config.gmail {
+            let collection = gmail_config.collection();
+            let resolve = gmail_config.hook.on_message_added.is_some();
+            let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
+                if let Some(hook) = gmail_config.hook.get(&event) {
+                    hook::run(hook, &event, gmail_config.collection(), summary.as_ref());
+                }
+            };
+
+            info!(
+                "[{account}] watching `{}` over gmail, polling",
+                collection.value
+            );
+            return gmail::watch(
+                gmail_config,
+                ApiWatchConfig::interval(&gmail_config.watch),
+                resolve,
+                shutdown,
+                &mut on_event,
+            );
+        }
+
+        if backend == Backend::Gmail {
+            bail!("Account has no `gmail` config block");
+        }
+    }
+
+    #[cfg(feature = "gcal")]
+    if backend.allows_gcal() {
+        if let Some(gcal_config) = &config.gcal {
+            let collection = gcal_config.collection();
+            let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
+                if let Some(hook) = gcal_config.hook.get(&event) {
+                    hook::run(hook, &event, gcal_config.collection(), None);
+                }
+            };
+
+            info!(
+                "[{account}] watching `{}` over gcal, polling",
+                collection.value
+            );
+            return gcal::watch(
+                gcal_config,
+                ApiWatchConfig::interval(&gcal_config.watch),
+                shutdown,
+                &mut on_event,
+            );
+        }
+
+        if backend == Backend::Gcal {
+            bail!("Account has no `gcal` config block");
+        }
+    }
+
+    #[cfg(feature = "gpeople")]
+    if backend.allows_gpeople() {
+        if let Some(gpeople_config) = &config.gpeople {
+            let collection = gpeople_config.collection();
+            let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
+                if let Some(hook) = gpeople_config.hook.get(&event) {
+                    hook::run(hook, &event, gpeople_config.collection(), None);
+                }
+            };
+
+            info!(
+                "[{account}] watching `{}` over gpeople, polling",
+                collection.value
+            );
+            return gpeople::watch(
+                gpeople_config,
+                ApiWatchConfig::interval(&gpeople_config.watch),
+                shutdown,
+                &mut on_event,
+            );
+        }
+
+        if backend == Backend::Gpeople {
+            bail!("Account has no `gpeople` config block");
+        }
+    }
+
     bail!(
         "Account has no usable backend block (expected one of `imap`, `jmap`, `maildir`, \
-         `caldav`, `carddav`); use `-b/--backend` to pin a specific one"
+         `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople`); use `-b/--backend` to pin \
+         a specific one"
     )
 }
 

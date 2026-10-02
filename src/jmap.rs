@@ -20,7 +20,6 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
     time::Duration,
 };
 
@@ -62,15 +61,13 @@ use url::Url;
 use crate::{
     config::{JmapAuthConfig, JmapConfig, ProxyConfig},
     event::{ItemSummary, WatchDomain, WatchEvent},
+    poll,
 };
 
 /// How long the watch waits between two polls.
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
 /// Per-read scratch buffer for the event stream.
 const READ_BUF: usize = 8 * 1024;
-/// How long it sleeps at a time, so a shutdown is noticed promptly.
-const POLL_STEP: Duration = Duration::from_millis(200);
-
 /// Opens a JMAP session against the configured server, resolving its
 /// credential through `resolver`, so a caller opening several backends of
 /// one account spawns each distinct credential command once.
@@ -154,7 +151,7 @@ pub fn watch_poll(
     let (mut client, mut watched) = arm(config)?;
 
     while !shutdown.load(Ordering::SeqCst) {
-        if !sleep(interval, shutdown) {
+        if !poll::sleep(interval, shutdown) {
             break;
         }
 
@@ -311,7 +308,7 @@ impl Watched {
 
         debug!(
             "watching jmap {} `{name}` with {} items",
-            JmapConfig::collection_name(domain),
+            domain.collection_name(),
             known.len()
         );
 
@@ -818,24 +815,6 @@ fn render_keywords(keywords: Option<&BTreeMap<String, bool>>) -> BTreeSet<String
             keyword => keyword.to_string(),
         })
         .collect()
-}
-
-/// Sleeps `total` in small steps, returning false as soon as a
-/// shutdown is requested.
-fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
-    let mut left = total;
-
-    while left > Duration::ZERO {
-        if shutdown.load(Ordering::SeqCst) {
-            return false;
-        }
-
-        let step = left.min(POLL_STEP);
-        thread::sleep(step);
-        left -= step;
-    }
-
-    !shutdown.load(Ordering::SeqCst)
 }
 
 /// What the watch knows of a collection: an item id to its keywords,

@@ -7,13 +7,21 @@ pub mod configure;
 #[cfg(feature = "dav")]
 pub mod dav;
 pub mod discover;
+#[cfg(feature = "gcal")]
+pub mod gcal;
+#[cfg(feature = "gmail")]
+pub mod gmail;
+#[cfg(feature = "gpeople")]
+pub mod gpeople;
 #[cfg(feature = "imap")]
 pub mod imap;
 #[cfg(feature = "jmap")]
 pub mod jmap;
 #[cfg(feature = "maildir")]
 pub mod local;
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(feature = "msgraph")]
+pub mod msgraph;
+#[cfg(network)]
 pub mod search;
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 pub mod secret;

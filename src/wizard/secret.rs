@@ -20,6 +20,7 @@ use pimalaya_config::{command::CommandConfig, secret::Secret};
 /// `key_default` seeds the keyring entry, typically
 /// `<account>-<protocol>`, and is used verbatim, so a pre-existing secret
 /// is read exactly as named.
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
 pub fn configure_password(label: &str, key_default: &str) -> Result<Secret> {
     to_secret(keyring::prompt_secret(label, key_default)?)
 }

@@ -20,7 +20,8 @@ use clap::Parser;
 #[derive(Clone, Copy, Debug, Default, Parser, PartialEq, Eq)]
 pub enum Backend {
     /// First configured block wins (priority: IMAP, JMAP, Maildir,
-    /// CalDAV, CardDAV).
+    /// CalDAV, CardDAV, Microsoft Graph, Gmail, Google Calendar, Google
+    /// People).
     #[default]
     Auto,
     /// Force IMAP; bail when the account has no `imap` block.
@@ -33,6 +34,14 @@ pub enum Backend {
     Caldav,
     /// Force CardDAV; bail when the account has no `carddav` block.
     Carddav,
+    /// Force Microsoft Graph; bail when the account has no `msgraph` block.
+    Msgraph,
+    /// Force Gmail; bail when the account has no `gmail` block.
+    Gmail,
+    /// Force Google Calendar; bail when the account has no `gcal` block.
+    Gcal,
+    /// Force Google People; bail when the account has no `gpeople` block.
+    Gpeople,
 }
 
 #[allow(unused)]
@@ -61,6 +70,26 @@ impl Backend {
     pub fn allows_carddav(self) -> bool {
         matches!(self, Self::Auto | Self::Carddav)
     }
+
+    /// Whether an `msgraph` block may be used.
+    pub fn allows_msgraph(self) -> bool {
+        matches!(self, Self::Auto | Self::Msgraph)
+    }
+
+    /// Whether a `gmail` block may be used.
+    pub fn allows_gmail(self) -> bool {
+        matches!(self, Self::Auto | Self::Gmail)
+    }
+
+    /// Whether a `gcal` block may be used.
+    pub fn allows_gcal(self) -> bool {
+        matches!(self, Self::Auto | Self::Gcal)
+    }
+
+    /// Whether a `gpeople` block may be used.
+    pub fn allows_gpeople(self) -> bool {
+        matches!(self, Self::Auto | Self::Gpeople)
+    }
 }
 
 impl FromStr for Backend {
@@ -74,6 +103,10 @@ impl FromStr for Backend {
             "maildir" => Ok(Self::Maildir),
             "caldav" => Ok(Self::Caldav),
             "carddav" => Ok(Self::Carddav),
+            "msgraph" => Ok(Self::Msgraph),
+            "gmail" => Ok(Self::Gmail),
+            "gcal" => Ok(Self::Gcal),
+            "gpeople" => Ok(Self::Gpeople),
             backend => bail!("Invalid backend {backend}"),
         }
     }
@@ -88,6 +121,10 @@ impl fmt::Display for Backend {
             Self::Maildir => write!(f, "maildir"),
             Self::Caldav => write!(f, "caldav"),
             Self::Carddav => write!(f, "carddav"),
+            Self::Msgraph => write!(f, "msgraph"),
+            Self::Gmail => write!(f, "gmail"),
+            Self::Gcal => write!(f, "gcal"),
+            Self::Gpeople => write!(f, "gpeople"),
         }
     }
 }

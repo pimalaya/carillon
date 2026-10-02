@@ -26,7 +26,7 @@ use std::{
 
 #[cfg(feature = "imap")]
 use anyhow::anyhow;
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 use anyhow::bail;
 use anyhow::{Context, Result};
 #[cfg(feature = "imap")]
@@ -42,21 +42,21 @@ use io_sasl::{
 };
 #[cfg(feature = "imap")]
 use log::warn;
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 use pimalaya_config::secret::{Secret, SecretResolver};
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 use pimalaya_config::toml::opt_shell_expanded_path;
 use pimalaya_config::{command, toml::TomlConfig};
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 use pimalaya_stream::{
     proxy::{Proxy, ProxyAuth},
     tls::{Rustls, RustlsCrypto, Tls, TlsProvider},
 };
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
-#[cfg(any(feature = "jmap", feature = "dav"))]
+#[cfg(any(feature = "jmap", feature = "dav", api))]
 use crate::event::WatchDomain;
 use crate::{
     event::WatchEvent,
@@ -73,8 +73,9 @@ pub const CONFIG_SAMPLE_URL: &str =
 /// A key outside this list still renders, after the listed ones, so a
 /// field added to [`AccountConfig`] can never go missing from a generated
 /// document because nobody updated this table.
-const RENDER_ORDER: [&str; 7] = [
-    "default", "proxy", "imap", "jmap", "maildir", "caldav", "carddav",
+const RENDER_ORDER: [&str; 11] = [
+    "default", "proxy", "imap", "jmap", "msgraph", "gmail", "maildir", "caldav", "gcal", "carddav",
+    "gpeople",
 ];
 
 /// The keys a backend group leads with, in reading order: the collection
@@ -158,7 +159,7 @@ impl Config {
             return Ok(None);
         };
 
-        #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+        #[cfg(network)]
         let config = config.with_inherited_proxies();
 
         // NOTE: what a notification may name is as fixed as which hooks a
@@ -176,7 +177,7 @@ impl Config {
 
     /// Hands each account proxy down to its backends, so every connection
     /// reads its own backend's key.
-    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+    #[cfg(network)]
     fn with_inherited_proxies(mut self) -> Self {
         for account in self.accounts.values_mut() {
             account.inherit_proxy();
@@ -199,7 +200,7 @@ pub struct AccountConfig {
     pub default: bool,
     /// Proxy every network backend of this account goes through, unless
     /// its own block names one.
-    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+    #[cfg(network)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<ProxyConfig>,
     #[cfg(feature = "imap")]
@@ -217,6 +218,18 @@ pub struct AccountConfig {
     #[cfg(feature = "dav")]
     #[serde(default)]
     pub carddav: Option<CarddavConfig>,
+    #[cfg(feature = "msgraph")]
+    #[serde(default)]
+    pub msgraph: Option<MsgraphConfig>,
+    #[cfg(feature = "gmail")]
+    #[serde(default)]
+    pub gmail: Option<GmailConfig>,
+    #[cfg(feature = "gcal")]
+    #[serde(default)]
+    pub gcal: Option<GcalConfig>,
+    #[cfg(feature = "gpeople")]
+    #[serde(default)]
+    pub gpeople: Option<GpeopleConfig>,
 }
 
 impl AccountConfig {
@@ -287,7 +300,7 @@ impl AccountConfig {
 
     /// Hands the account proxy to every network backend naming none of
     /// its own.
-    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+    #[cfg(network)]
     fn inherit_proxy(&mut self) {
         let Some(proxy) = &self.proxy else {
             return;
@@ -302,6 +315,14 @@ impl AccountConfig {
             self.caldav.as_mut().map(|c| &mut c.proxy),
             #[cfg(feature = "dav")]
             self.carddav.as_mut().map(|c| &mut c.proxy),
+            #[cfg(feature = "msgraph")]
+            self.msgraph.as_mut().map(|c| &mut c.proxy),
+            #[cfg(feature = "gmail")]
+            self.gmail.as_mut().map(|c| &mut c.proxy),
+            #[cfg(feature = "gcal")]
+            self.gcal.as_mut().map(|c| &mut c.proxy),
+            #[cfg(feature = "gpeople")]
+            self.gpeople.as_mut().map(|c| &mut c.proxy),
         ];
 
         for slot in slots.into_iter().flatten() {
@@ -335,6 +356,26 @@ impl AccountConfig {
         #[cfg(feature = "dav")]
         if let Some(carddav) = &self.carddav {
             carddav.hook.validate()?;
+        }
+
+        #[cfg(feature = "msgraph")]
+        if let Some(msgraph) = &self.msgraph {
+            msgraph.validate()?;
+        }
+
+        #[cfg(feature = "gmail")]
+        if let Some(gmail) = &self.gmail {
+            gmail.hook.validate()?;
+        }
+
+        #[cfg(feature = "gcal")]
+        if let Some(gcal) = &self.gcal {
+            gcal.hook.validate()?;
+        }
+
+        #[cfg(feature = "gpeople")]
+        if let Some(gpeople) = &self.gpeople {
+            gpeople.hook.validate()?;
         }
 
         Ok(())
@@ -507,7 +548,7 @@ pub struct JmapConfig {
     pub watch: Option<JmapWatchConfig>,
     /// The hooks this backend fires.
     #[serde(default, alias = "hooks")]
-    pub hook: JmapHookConfig,
+    pub hook: DomainsHookConfig,
 }
 
 #[cfg(feature = "jmap")]
@@ -547,7 +588,7 @@ pub struct MaildirConfig {
 /// `url` is a `socks5://`, `socks5h://` or `http://` proxy URL. Its user
 /// info authenticates too, but `username` and `password` keep the secret
 /// out of the URL.
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ProxyConfig {
@@ -559,7 +600,7 @@ pub struct ProxyConfig {
     pub password: Option<Secret>,
 }
 
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 impl ProxyConfig {
     /// Resolves an optional configuration, an absent one reading the
     /// environment at connect time.
@@ -598,7 +639,7 @@ impl ProxyConfig {
     }
 }
 
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TlsConfig {
@@ -613,7 +654,7 @@ pub struct TlsConfig {
     pub cert: Option<PathBuf>,
 }
 
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum TlsProviderConfig {
@@ -621,14 +662,14 @@ pub enum TlsProviderConfig {
     NativeTls,
 }
 
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RustlsConfig {
     pub crypto: Option<RustlsCryptoConfig>,
 }
 
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum RustlsCryptoConfig {
@@ -636,7 +677,7 @@ pub enum RustlsCryptoConfig {
     Ring,
 }
 
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 impl TlsConfig {
     /// Builds the runtime [`Tls`] handle the connect helpers take, folding
     /// in the ALPN list its backend resolved.
@@ -795,40 +836,78 @@ impl ImapConfig {
     }
 }
 
-#[cfg(feature = "jmap")]
-impl JmapConfig {
-    /// The domains JMAP watches, in the order their rounds run.
-    pub const DOMAINS: [WatchDomain; 3] =
-        [WatchDomain::Message, WatchDomain::Card, WatchDomain::Event];
+// NOTE: JMAP and Graph each serve mail, contacts and calendars, so one
+// block takes a collection per domain, and both read and check them the
+// same way.
 
-    /// What JMAP calls the collection of `domain`, which is also its key.
-    pub const fn collection_name(domain: WatchDomain) -> &'static str {
-        match domain {
-            WatchDomain::Message => "mailbox",
-            WatchDomain::Card => "addressbook",
-            WatchDomain::Event | WatchDomain::Task => "calendar",
+/// The domains a backend serving several watches, in the order its rounds
+/// run.
+#[cfg(any(feature = "jmap", feature = "msgraph"))]
+const DOMAINS: [WatchDomain; 3] = [WatchDomain::Message, WatchDomain::Card, WatchDomain::Event];
+
+/// The collection an event of `domain` is about, under its own name, out
+/// of the three keys a multi-domain block carries.
+#[cfg(any(feature = "jmap", feature = "msgraph"))]
+fn domain_collection<'a>(
+    domain: WatchDomain,
+    mailbox: &'a Option<String>,
+    addressbook: &'a Option<String>,
+    calendar: &'a Option<String>,
+) -> Option<HookCollection<'a>> {
+    let value = match domain {
+        WatchDomain::Message => mailbox,
+        WatchDomain::Card => addressbook,
+        WatchDomain::Event => calendar,
+        WatchDomain::Task => return None,
+    };
+
+    Some(HookCollection {
+        name: domain.collection_name(),
+        value: value.as_deref()?,
+    })
+}
+
+/// Refuses a multi-domain block watching nothing, and a hook whose domain
+/// has no collection.
+///
+/// The second is not serde's to refuse: what a hook may be depends on a
+/// sibling key rather than on the table's own shape.
+#[cfg(any(feature = "jmap", feature = "msgraph"))]
+fn refuse_unwatched(
+    backend: &str,
+    collection: impl Fn(WatchDomain) -> bool,
+    hooks: impl Iterator<Item = (&'static str, WatchDomain)>,
+) -> Result<()> {
+    if !DOMAINS.into_iter().any(&collection) {
+        bail!(
+            "Backend `{backend}` needs at least one of `{backend}.mailbox`, \
+             `{backend}.addressbook` and `{backend}.calendar`"
+        );
+    }
+
+    for (name, domain) in hooks {
+        if !collection(domain) {
+            let key = domain.collection_name();
+            bail!(
+                "Hook `{backend}.hook.{name}` needs `{backend}.{key}`, which this account does not configure"
+            );
         }
     }
 
+    Ok(())
+}
+
+#[cfg(feature = "jmap")]
+impl JmapConfig {
     /// The collection an event of `domain` is about, under its own name,
     /// when the account configures one.
     pub fn collection(&self, domain: WatchDomain) -> Option<HookCollection<'_>> {
-        let value = match domain {
-            WatchDomain::Message => &self.mailbox,
-            WatchDomain::Card => &self.addressbook,
-            WatchDomain::Event => &self.calendar,
-            WatchDomain::Task => return None,
-        };
-
-        Some(HookCollection {
-            name: Self::collection_name(domain),
-            value: value.as_deref()?,
-        })
+        domain_collection(domain, &self.mailbox, &self.addressbook, &self.calendar)
     }
 
     /// Every collection this backend watches, with its domain.
     pub fn collections(&self) -> Vec<(WatchDomain, HookCollection<'_>)> {
-        Self::DOMAINS
+        DOMAINS
             .into_iter()
             .filter_map(|domain| Some((domain, self.collection(domain)?)))
             .collect()
@@ -836,26 +915,10 @@ impl JmapConfig {
 
     /// Refuses a block watching nothing, a hook whose domain has no
     /// collection, and a notification naming what its event cannot fill.
-    ///
-    /// The second is not serde's to refuse: what a hook may be depends on
-    /// a sibling key rather than on the table's own shape.
     pub fn validate(&self) -> Result<()> {
-        if self.collections().is_empty() {
-            bail!(
-                "JMAP needs at least one of `jmap.mailbox`, `jmap.addressbook` and `jmap.calendar`"
-            );
-        }
-
-        for (name, domain) in self.hook.configured() {
-            if self.collection(domain).is_none() {
-                let key = Self::collection_name(domain);
-                bail!(
-                    "Hook `jmap.hook.{name}` needs `jmap.{key}`, which this account does not configure"
-                );
-            }
-        }
-
-        self.hook.validate()
+        let collection = |domain| self.collection(domain).is_some();
+        refuse_unwatched("jmap", collection, self.hook.configured())?;
+        self.hook.validate("jmap")
     }
 }
 
@@ -921,11 +984,11 @@ pub struct ImapHookConfig {
     pub on_flag_removed: Option<FlagHook>,
 }
 
-/// Hooks a JMAP watch fires.
-#[cfg(feature = "jmap")]
+/// Hooks a JMAP or a Microsoft Graph watch fires, one set per domain.
+#[cfg(any(feature = "jmap", feature = "msgraph"))]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct JmapHookConfig {
+pub struct DomainsHookConfig {
     /// Fires when a message arrives in the watched mailbox.
     pub on_message_added: Option<ItemHook>,
     /// Fires when a message leaves it.
@@ -1024,8 +1087,8 @@ impl ImapHookConfig {
     }
 }
 
-#[cfg(feature = "jmap")]
-impl JmapHookConfig {
+#[cfg(any(feature = "jmap", feature = "msgraph"))]
+impl DomainsHookConfig {
     /// The hook `event` calls for, which depends on the domain the
     /// method that answered was about.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
@@ -1237,40 +1300,41 @@ impl ImapHookConfig {
     }
 }
 
-#[cfg(feature = "jmap")]
-impl JmapHookConfig {
+#[cfg(any(feature = "jmap", feature = "msgraph"))]
+impl DomainsHookConfig {
     /// Refuses a notification naming what its event cannot fill.
     ///
-    /// JMAP reads an envelope, from the request its round already
-    /// makes, so its arrival hook may name one.
-    pub fn validate(&self) -> Result<()> {
-        let mailbox = JmapConfig::collection_name(WatchDomain::Message);
+    /// Both backends read an envelope from the request their round already
+    /// makes, so a message arrival hook may name one. `backend` prefixes
+    /// the names an error reports.
+    pub fn validate(&self, backend: &str) -> Result<()> {
+        let mailbox = WatchDomain::Message.collection_name();
 
         hook::validate(
             self.on_message_added
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
             Vocabulary::resolved(mailbox),
-            "jmap.hook.on-message-added",
+            &format!("{backend}.hook.on-message-added"),
         )?;
         hook::validate(
             self.on_message_removed
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
             Vocabulary::item(mailbox),
-            "jmap.hook.on-message-removed",
+            &format!("{backend}.hook.on-message-removed"),
         )?;
         hook::validate(
             self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::flag(mailbox),
-            "jmap.hook.on-flag-added",
+            &format!("{backend}.hook.on-flag-added"),
         )?;
         hook::validate(
             self.on_flag_removed
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
             Vocabulary::flag(mailbox),
-            "jmap.hook.on-flag-removed",
+            &format!("{backend}.hook.on-flag-removed"),
         )?;
 
         for (hook, domain, name) in [
@@ -1292,8 +1356,8 @@ impl JmapHookConfig {
             let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
             hook::validate(
                 notify,
-                Vocabulary::item(JmapConfig::collection_name(domain)),
-                &format!("jmap.hook.{name}"),
+                Vocabulary::item(domain.collection_name()),
+                &format!("{backend}.hook.{name}"),
             )?;
         }
 
@@ -1693,6 +1757,387 @@ fn default_push_ping() -> u64 {
     30
 }
 
+// NOTE: the vendor REST APIs authenticate with a bearer token alone and
+// push only to a public endpoint or a Pub/Sub topic, so each block takes
+// one token and the poll is its one method.
+
+/// Microsoft Graph configuration: a collection per domain, at least one,
+/// read through one token and one connection.
+#[cfg(feature = "msgraph")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct MsgraphConfig {
+    /// The mail folder this account watches, matched by display name
+    /// case-insensitively, by id or by well-known name (`inbox`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mailbox: Option<String>,
+    /// The contact folder this account watches, matched by display name
+    /// case-insensitively or by id, `Contacts` naming the default one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addressbook: Option<String>,
+    /// The calendar this account watches, matched by name
+    /// case-insensitively or by id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar: Option<String>,
+    /// The mailbox owner, a user id or a principal name, unset meaning
+    /// the token's own user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub tls: TlsConfig,
+    /// The ALPN identifiers offered during the TLS handshake, unset
+    /// taking `["http/1.1"]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<Vec<String>>,
+    /// Proxy the connection goes through, falling back to the account one
+    /// and then to the `all_proxy`/`https_proxy` environment variables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
+    /// Authentication: the bearer token.
+    pub auth: BearerAuthConfig,
+    /// How this account learns about a change. Unset polls.
+    #[serde(default)]
+    pub watch: Option<ApiWatchConfig>,
+    /// The hooks this backend fires.
+    #[serde(default, alias = "hooks")]
+    pub hook: DomainsHookConfig,
+}
+
+#[cfg(feature = "msgraph")]
+impl MsgraphConfig {
+    /// The collection an event of `domain` is about, under its own name,
+    /// when the account configures one.
+    pub fn collection(&self, domain: WatchDomain) -> Option<HookCollection<'_>> {
+        domain_collection(domain, &self.mailbox, &self.addressbook, &self.calendar)
+    }
+
+    /// Every collection this backend watches, with its domain.
+    pub fn collections(&self) -> Vec<(WatchDomain, HookCollection<'_>)> {
+        DOMAINS
+            .into_iter()
+            .filter_map(|domain| Some((domain, self.collection(domain)?)))
+            .collect()
+    }
+
+    /// Refuses a block watching nothing, a hook whose domain has no
+    /// collection, and a notification naming what its event cannot fill.
+    pub fn validate(&self) -> Result<()> {
+        let collection = |domain| self.collection(domain).is_some();
+        refuse_unwatched("msgraph", collection, self.hook.configured())?;
+        self.hook.validate("msgraph")
+    }
+}
+
+/// Gmail configuration: one watched label.
+#[cfg(feature = "gmail")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct GmailConfig {
+    /// The label this account watches, by name (`INBOX`, `Work/Clients`)
+    /// or by id.
+    pub mailbox: String,
+    /// The mailbox owner, unset meaning the token's own user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub tls: TlsConfig,
+    /// The ALPN identifiers offered during the TLS handshake, unset
+    /// taking `["http/1.1"]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<Vec<String>>,
+    /// Proxy the connection goes through, falling back to the account one
+    /// and then to the `all_proxy`/`https_proxy` environment variables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
+    /// Authentication: the bearer token.
+    pub auth: BearerAuthConfig,
+    /// How this account learns about a change. Unset polls.
+    #[serde(default)]
+    pub watch: Option<ApiWatchConfig>,
+    /// The hooks this backend fires.
+    #[serde(default, alias = "hooks")]
+    pub hook: GmailHookConfig,
+}
+
+#[cfg(feature = "gmail")]
+impl GmailConfig {
+    /// The collection this backend watches, under its own name.
+    pub fn collection(&self) -> HookCollection<'_> {
+        HookCollection {
+            name: WatchDomain::Message.collection_name(),
+            value: &self.mailbox,
+        }
+    }
+}
+
+/// Google Calendar configuration: one watched calendar.
+#[cfg(feature = "gcal")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct GcalConfig {
+    /// The calendar this account watches, by name case-insensitively or
+    /// by id, `primary` naming the account's own.
+    pub calendar: String,
+    #[serde(default)]
+    pub tls: TlsConfig,
+    /// The ALPN identifiers offered during the TLS handshake, unset
+    /// taking `["http/1.1"]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<Vec<String>>,
+    /// Proxy the connection goes through, falling back to the account one
+    /// and then to the `all_proxy`/`https_proxy` environment variables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
+    /// Authentication: the bearer token.
+    pub auth: BearerAuthConfig,
+    /// How this account learns about a change. Unset polls.
+    #[serde(default)]
+    pub watch: Option<ApiWatchConfig>,
+    /// The hooks this backend fires.
+    #[serde(default, alias = "hooks")]
+    pub hook: GcalHookConfig,
+}
+
+#[cfg(feature = "gcal")]
+impl GcalConfig {
+    /// The collection this backend watches, under its own name.
+    pub fn collection(&self) -> HookCollection<'_> {
+        HookCollection {
+            name: WatchDomain::Event.collection_name(),
+            value: &self.calendar,
+        }
+    }
+}
+
+/// Google People configuration: one watched contact group.
+#[cfg(feature = "gpeople")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct GpeopleConfig {
+    /// The contact group this account watches, by name case-insensitively
+    /// or by resource name, `myContacts` holding every contact the
+    /// account owns.
+    pub addressbook: String,
+    #[serde(default)]
+    pub tls: TlsConfig,
+    /// The ALPN identifiers offered during the TLS handshake, unset
+    /// taking `["http/1.1"]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<Vec<String>>,
+    /// Proxy the connection goes through, falling back to the account one
+    /// and then to the `all_proxy`/`https_proxy` environment variables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
+    /// Authentication: the bearer token.
+    pub auth: BearerAuthConfig,
+    /// How this account learns about a change. Unset polls.
+    #[serde(default)]
+    pub watch: Option<ApiWatchConfig>,
+    /// The hooks this backend fires.
+    #[serde(default, alias = "hooks")]
+    pub hook: GpeopleHookConfig,
+}
+
+#[cfg(feature = "gpeople")]
+impl GpeopleConfig {
+    /// The collection this backend watches, under its own name.
+    pub fn collection(&self) -> HookCollection<'_> {
+        HookCollection {
+            name: WatchDomain::Card.collection_name(),
+            value: &self.addressbook,
+        }
+    }
+}
+
+/// The credential a vendor API takes, a bearer token alone.
+#[cfg(api)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct BearerAuthConfig {
+    /// The OAuth 2.0 access token, usually a broker command since it
+    /// expires.
+    pub token: Secret,
+}
+
+/// How a vendor API account learns about a change.
+#[cfg(api)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum ApiWatchConfig {
+    /// Read the change feed on an interval, what these APIs offer a
+    /// client with no public endpoint.
+    Poll(PollWatchConfig),
+}
+
+#[cfg(api)]
+impl ApiWatchConfig {
+    /// The poll interval, unset taking the backend default.
+    pub fn interval(watch: &Option<Self>) -> Option<Duration> {
+        let Some(Self::Poll(poll)) = watch else {
+            return None;
+        };
+
+        poll.interval()
+    }
+}
+
+/// Hooks a Gmail watch fires.
+#[cfg(feature = "gmail")]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct GmailHookConfig {
+    /// Fires when a message arrives in the watched label.
+    pub on_message_added: Option<ItemHook>,
+    /// Fires when a message leaves it, deleted or relabelled.
+    pub on_message_removed: Option<ItemHook>,
+    /// Fires once for each flag set on a message: `Seen` when `UNREAD`
+    /// is cleared, `Flagged` when `STARRED` is set.
+    pub on_flag_added: Option<FlagHook>,
+    /// Fires once for each flag cleared on a message.
+    pub on_flag_removed: Option<FlagHook>,
+}
+
+#[cfg(feature = "gmail")]
+impl GmailHookConfig {
+    /// The hook `event` calls for, when one is configured.
+    pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
+        match event {
+            WatchEvent::ItemAdded { .. } => self.on_message_added.as_ref().map(Hook::Item),
+            WatchEvent::ItemRemoved { .. } => self.on_message_removed.as_ref().map(Hook::Item),
+            WatchEvent::ItemChanged { .. } => None,
+            WatchEvent::FlagAdded { .. } => self.on_flag_added.as_ref().map(Hook::Flag),
+            WatchEvent::FlagRemoved { .. } => self.on_flag_removed.as_ref().map(Hook::Flag),
+        }
+    }
+
+    /// Refuses a notification naming what its event cannot fill.
+    ///
+    /// The arrival's envelope rides the metadata the poll already reads,
+    /// so its hook may name one.
+    pub fn validate(&self) -> Result<()> {
+        let mailbox = WatchDomain::Message.collection_name();
+        hook::validate(
+            self.on_message_added
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            Vocabulary::resolved(mailbox),
+            "gmail.hook.on-message-added",
+        )?;
+        hook::validate(
+            self.on_message_removed
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            Vocabulary::item(mailbox),
+            "gmail.hook.on-message-removed",
+        )?;
+        hook::validate(
+            self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
+            Vocabulary::flag(mailbox),
+            "gmail.hook.on-flag-added",
+        )?;
+        hook::validate(
+            self.on_flag_removed
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            Vocabulary::flag(mailbox),
+            "gmail.hook.on-flag-removed",
+        )
+    }
+}
+
+/// Hooks a Google Calendar watch fires, events alone: the API has no
+/// task type.
+#[cfg(feature = "gcal")]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct GcalHookConfig {
+    /// Fires when an event appears in the watched calendar.
+    pub on_event_added: Option<ItemHook>,
+    /// Fires when an event leaves it.
+    pub on_event_removed: Option<ItemHook>,
+    /// Fires when an event is edited where it stands.
+    pub on_event_changed: Option<ItemHook>,
+}
+
+#[cfg(feature = "gcal")]
+impl GcalHookConfig {
+    /// The hook `event` calls for, when one is configured.
+    pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
+        let hook = match event {
+            WatchEvent::ItemAdded { .. } => &self.on_event_added,
+            WatchEvent::ItemRemoved { .. } => &self.on_event_removed,
+            WatchEvent::ItemChanged { .. } => &self.on_event_changed,
+            _ => return None,
+        };
+
+        hook.as_ref().map(Hook::Item)
+    }
+
+    /// Refuses a notification naming what its event cannot fill.
+    pub fn validate(&self) -> Result<()> {
+        for (hook, name) in [
+            (&self.on_event_added, "on-event-added"),
+            (&self.on_event_removed, "on-event-removed"),
+            (&self.on_event_changed, "on-event-changed"),
+        ] {
+            let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
+            hook::validate(
+                notify,
+                Vocabulary::item(WatchDomain::Event.collection_name()),
+                &format!("gcal.hook.{name}"),
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Hooks a Google People watch fires.
+#[cfg(feature = "gpeople")]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct GpeopleHookConfig {
+    /// Fires when a contact joins the watched group.
+    pub on_card_added: Option<ItemHook>,
+    /// Fires when one leaves it, deleted or ungrouped.
+    pub on_card_removed: Option<ItemHook>,
+    /// Fires when one is edited where it stands.
+    pub on_card_changed: Option<ItemHook>,
+}
+
+#[cfg(feature = "gpeople")]
+impl GpeopleHookConfig {
+    /// The hook `event` calls for, when one is configured.
+    pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
+        let hook = match event {
+            WatchEvent::ItemAdded { .. } => &self.on_card_added,
+            WatchEvent::ItemRemoved { .. } => &self.on_card_removed,
+            WatchEvent::ItemChanged { .. } => &self.on_card_changed,
+            _ => return None,
+        };
+
+        hook.as_ref().map(Hook::Item)
+    }
+
+    /// Refuses a notification naming what its event cannot fill.
+    pub fn validate(&self) -> Result<()> {
+        for (hook, name) in [
+            (&self.on_card_added, "on-card-added"),
+            (&self.on_card_removed, "on-card-removed"),
+            (&self.on_card_changed, "on-card-changed"),
+        ] {
+            let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
+            hook::validate(
+                notify,
+                Vocabulary::item(WatchDomain::Card.collection_name()),
+                &format!("gpeople.hook.{name}"),
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(all(test, feature = "imap"))]
 mod tests {
     use super::*;
@@ -1856,5 +2301,82 @@ mod tests {
             jmap.collection(card.domain()).map(|c| c.value)
         );
         assert!(jmap.hook.get(&card).is_none());
+    }
+
+    /// An account in the shape the vendor API tests vary, `block` being
+    /// the backend's own lines.
+    #[cfg(api)]
+    fn api(block: &str) -> Result<Config> {
+        let document = format!("[accounts.perso]\n{block}");
+        let config: Config = toml::from_str(&document)?;
+        config.accounts["perso"].validate()?;
+
+        Ok(config)
+    }
+
+    #[cfg(feature = "msgraph")]
+    #[test]
+    fn a_graph_account_is_checked_like_a_jmap_one() {
+        let token = "msgraph.auth.token.raw = \"token\"\n";
+
+        let err = format!("{:#}", api(token).expect_err("nothing to watch"));
+        assert!(err.contains("`msgraph.mailbox`"), "got {err}");
+
+        let hook = "msgraph.hook.on-event-changed.cmd = \"true\"\n";
+        let err = format!(
+            "{:#}",
+            api(&format!("{token}msgraph.mailbox = \"inbox\"\n{hook}")).expect_err("no calendar")
+        );
+        assert!(err.contains("msgraph.hook.on-event-changed"), "got {err}");
+        assert!(err.contains("`msgraph.calendar`"), "got {err}");
+
+        let config = api(&format!("{token}msgraph.calendar = \"Calendar\"\n{hook}"))
+            .expect("a calendar and its hook");
+        let msgraph = config.accounts["perso"].msgraph.as_ref().unwrap();
+        let names: Vec<_> = msgraph.collections().iter().map(|(_, c)| c.name).collect();
+
+        assert_eq!(vec!["calendar"], names);
+    }
+
+    #[cfg(feature = "gpeople")]
+    #[test]
+    fn a_google_contact_group_templates_as_an_addressbook() {
+        let block = "gpeople.addressbook = \"myContacts\"\n\
+                     gpeople.auth.token.raw = \"token\"\n";
+
+        let config = api(&format!(
+            "{block}gpeople.hook.on-card-changed.notify.summary = \"$addressbook\"\n"
+        ))
+        .expect("an addressbook hook");
+        let gpeople = config.accounts["perso"].gpeople.as_ref().unwrap();
+        assert_eq!("addressbook", gpeople.collection().name);
+
+        let err = format!(
+            "{:#}",
+            api(&format!(
+                "{block}gpeople.hook.on-card-added.notify.summary = \"$calendar\"\n"
+            ))
+            .expect_err("$calendar")
+        );
+        assert!(err.contains("$addressbook"), "got {err}");
+    }
+
+    /// The poll is the one method a vendor API has, and Google Calendar
+    /// has no task type to hook.
+    #[cfg(feature = "gcal")]
+    #[test]
+    fn a_google_calendar_takes_a_poll_and_no_task_hook() {
+        let block = "gcal.calendar = \"primary\"\n\
+                     gcal.auth.token.raw = \"token\"\n";
+
+        let config = api(&format!("{block}gcal.watch.poll.interval = 120\n")).expect("a poll");
+        let gcal = config.accounts["perso"].gcal.as_ref().unwrap();
+        assert_eq!(
+            Some(Duration::from_secs(120)),
+            ApiWatchConfig::interval(&gcal.watch)
+        );
+
+        assert!(api(&format!("{block}gcal.watch.push.ping = 30\n")).is_err());
+        assert!(api(&format!("{block}gcal.hook.on-task-added.cmd = \"true\"\n")).is_err());
     }
 }

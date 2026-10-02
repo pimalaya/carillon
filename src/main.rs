@@ -25,10 +25,13 @@
 //! actually be watched with. What is done with the account, a file to
 //! create, a block to append or a document on stdout, is configure's.
 //!
-//! The backends: imap, jmap, maildir and dav, each behind its cargo
-//! feature, learning about changes its own way and reporting them in the
-//! one vocabulary event defines. How a change is learned is io-imap's,
-//! io-jmap's, io-maildir's or io-webdav's; what to do about it is here.
+//! The backends: imap, jmap, maildir, dav, msgraph, gmail, gcal and
+//! gpeople, each behind its cargo feature, learning about changes its own
+//! way and reporting them in the one vocabulary event defines. How a
+//! change is learned is the protocol crate's; what to do about it is
+//! here. poll holds the sleep every polled backend waits on, and picture
+//! what a REST change feed (a Graph delta link, a Google sync token) is
+//! reconciled against.
 //!
 //! The dav module serves the two configured DAV backends, CalDAV and
 //! CardDAV being one poll over collections that differ in what they hold.
@@ -54,6 +57,12 @@ mod config;
 #[cfg(feature = "dav")]
 mod dav;
 mod event;
+#[cfg(feature = "gcal")]
+mod gcal;
+#[cfg(feature = "gmail")]
+mod gmail;
+#[cfg(feature = "gpeople")]
+mod gpeople;
 mod hook;
 #[cfg(feature = "imap")]
 mod imap;
@@ -62,6 +71,12 @@ mod jmap;
 mod json_schema;
 #[cfg(feature = "maildir")]
 mod maildir;
+#[cfg(feature = "msgraph")]
+mod msgraph;
+#[cfg(any(feature = "msgraph", feature = "gcal", feature = "gpeople"))]
+mod picture;
+#[cfg(any(feature = "jmap", feature = "maildir", feature = "dav", api))]
+mod poll;
 mod watch;
 mod wizard;
 

@@ -21,10 +21,11 @@ CLI to watch PIM collection changes, written in Rust
 
 - Mail backend support: **IMAP** <sup>[rfc2177](https://www.rfc-editor.org/rfc/rfc2177)</sup>, **JMAP** <sup>[rfc8621](https://www.rfc-editor.org/rfc/rfc8621)</sup>, **Maildir** <sup>[specs](https://cr.yp.to/proto/maildir.html)</sup>
 - Calendars and contacts backend support: **CalDAV**, **CardDAV** <sup>[rfc6578](https://www.rfc-editor.org/rfc/rfc6578)</sup>, **JMAP** <sup>[rfc9610](https://www.rfc-editor.org/rfc/rfc9610), [calendars](https://datatracker.ietf.org/doc/draft-ietf-jmap-calendars/)</sup>
+- Vendor API support: **Microsoft Graph** (mail, contacts, calendar), **Gmail**, **Google Calendar**, **Google People**
 - **Watch** support: IMAP idle, JMAP event stream, collection poll everywhere else
 - **Hook** support: desktop notification, shell command, or both, on every change
 - **Simple auth** support for IMAP: anonymous, login, plain, oauthbearer, xoauth2, scram-sha-256
-- **HTTP auth** support for JMAP (basic, bearer, raw header) and DAV (basic, bearer)
+- **HTTP auth** support for JMAP (basic, bearer, raw header), DAV (basic, bearer) and the vendor APIs (bearer)
 - **TLS** support:
   - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature, enabled by default)
   - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
@@ -53,7 +54,7 @@ Not released yet. Until it is, the [releases](https://github.com/pimalaya/carill
 cargo install --locked --git https://github.com/pimalaya/carillon.git
 ```
 
-With IMAP support only, which drops the JMAP, Maildir and WebDAV backends:
+With IMAP support only, which drops every other backend:
 
 ```sh
 cargo install --locked --git https://github.com/pimalaya/carillon.git \
@@ -93,11 +94,11 @@ The configuration is loaded from the first existing path among:
 
 Override the path with `carillon -c <PATH>` or `CARILLON_CONFIG=<PATH>`. Multiple paths can be passed at once, separated by `:`; the first is the base and the rest are deep-merged on top. The full field reference lives in [config.sample.toml](./config.sample.toml).
 
-Run `carillon` with no command to launch the wizard, `carillon configure` to run it again later. It discovers the services your provider publishes from your email address, asks which one to watch and how to authenticate, then tests the connection.
+Run `carillon` with no command to launch the wizard, `carillon configure` to run it again later. It discovers the services your provider publishes from your email address, offering the Microsoft Graph or Google APIs first for such an account, asks which one to watch and how to authenticate, then tests the connection.
 
 The watch method is never asked: an account takes the best one its backend supports. The result is saved, appended to the configuration already there, or printed for you to place by hand.
 
-An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`) carrying the collection it watches (one per domain over JMAP, sharing one connection), how it watches it (`watch`) and what it fires (`hook`). Declaring several is allowed, `-b/--backend` then selecting one.
+An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople`) carrying the collection it watches (one per domain over JMAP and Microsoft Graph, sharing one connection), how it watches it (`watch`) and what it fires (`hook`). Declaring several is allowed, `-b/--backend` then selecting one.
 
 ## Usage
 

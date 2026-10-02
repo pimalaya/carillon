@@ -13,7 +13,7 @@ use std::{fmt, path::PathBuf};
 use anyhow::{Result, anyhow, bail};
 use clap::Parser;
 use pimalaya_cli::printer::Printer;
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[cfg(network)]
 use pimalaya_config::secret::SecretResolver;
 use pimalaya_config::toml::TomlConfig;
 use schemars::JsonSchema;
@@ -21,6 +21,14 @@ use serde::Serialize;
 
 #[cfg(feature = "maildir")]
 use crate::config::MaildirConfig;
+#[cfg(feature = "gcal")]
+use crate::gcal;
+#[cfg(feature = "gmail")]
+use crate::gmail;
+#[cfg(feature = "gpeople")]
+use crate::gpeople;
+#[cfg(feature = "msgraph")]
+use crate::msgraph;
 use crate::{backend::Backend, cli::load_config};
 #[cfg(feature = "dav")]
 use crate::{config::DavServer, dav};
@@ -61,7 +69,7 @@ impl CheckCommand {
 
         // NOTE: one resolver for the whole account, so two backends
         // naming one credential command unlock its store once.
-        #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+        #[cfg(network)]
         let mut resolver = SecretResolver::new();
 
         #[cfg(feature = "imap")]
@@ -107,6 +115,38 @@ impl CheckCommand {
                 &carddav_config.addressbook,
                 &mut resolver,
             ));
+        }
+
+        #[cfg(feature = "msgraph")]
+        if backend.allows_msgraph()
+            && let Some(msgraph_config) = account_config.msgraph.clone()
+        {
+            let result = msgraph::probe(&msgraph_config, &mut resolver);
+            report.backends.push(BackendCheck::from("msgraph", result));
+        }
+
+        #[cfg(feature = "gmail")]
+        if backend.allows_gmail()
+            && let Some(gmail_config) = account_config.gmail.clone()
+        {
+            let result = gmail::probe(&gmail_config, &mut resolver);
+            report.backends.push(BackendCheck::from("gmail", result));
+        }
+
+        #[cfg(feature = "gcal")]
+        if backend.allows_gcal()
+            && let Some(gcal_config) = account_config.gcal.clone()
+        {
+            let result = gcal::probe(&gcal_config, &mut resolver);
+            report.backends.push(BackendCheck::from("gcal", result));
+        }
+
+        #[cfg(feature = "gpeople")]
+        if backend.allows_gpeople()
+            && let Some(gpeople_config) = account_config.gpeople.clone()
+        {
+            let result = gpeople::probe(&gpeople_config, &mut resolver);
+            report.backends.push(BackendCheck::from("gpeople", result));
         }
 
         if report.backends.is_empty() {

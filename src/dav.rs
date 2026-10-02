@@ -24,7 +24,6 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
     time::Duration,
 };
 
@@ -56,6 +55,7 @@ use url::Url;
 use crate::{
     config::{DavAuthConfig, DavServer, ProxyConfig},
     event::{ItemSummary, WatchDomain, WatchEvent},
+    poll,
 };
 
 /// How long the watch waits between two reports, unless the config
@@ -63,8 +63,6 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How long a poll may sit in a read before looking at the shutdown flag.
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
-/// How long the watch sleeps at a time, so a shutdown is noticed promptly.
-const POLL_STEP: Duration = Duration::from_millis(200);
 /// Per-read scratch buffer.
 const READ_BUF: usize = 8 * 1024;
 
@@ -163,7 +161,7 @@ pub fn watch(
     debug!("watching dav collection with {} members", known.len());
 
     while !shutdown.load(Ordering::SeqCst) {
-        if !sleep(interval, shutdown) {
+        if !poll::sleep(interval, shutdown) {
             break;
         }
 
@@ -606,24 +604,6 @@ fn is_timeout(err: &io::Error) -> bool {
         err.kind(),
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
     )
-}
-
-/// Sleeps `total` in small steps, returning false as soon as a
-/// shutdown is requested.
-fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
-    let mut left = total;
-
-    while left > Duration::ZERO {
-        if shutdown.load(Ordering::SeqCst) {
-            return false;
-        }
-
-        let step = left.min(POLL_STEP);
-        thread::sleep(step);
-        left -= step;
-    }
-
-    !shutdown.load(Ordering::SeqCst)
 }
 
 /// Opens the collection and runs one report, which is what `check` needs.
