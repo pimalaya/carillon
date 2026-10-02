@@ -16,6 +16,7 @@
 
 mod common;
 
+#[cfg(any(feature = "gmail", feature = "gpeople"))]
 use std::slice;
 
 #[cfg(feature = "gcal")]

@@ -309,7 +309,12 @@ fn stalwart_mail_is_pushed() {
 #[test]
 #[ignore = "live: needs a Fastmail API token"]
 fn fastmail_mail_is_pushed() {
-    let token = env::var("FASTMAIL_API_TOKEN").expect("set FASTMAIL_API_TOKEN");
+    // NOTE: a GitHub secret the repository cannot see reaches the job as
+    // an empty variable, which would only surface as a 401.
+    let token = env::var("FASTMAIL_API_TOKEN")
+        .ok()
+        .filter(|token| !token.is_empty())
+        .expect("set FASTMAIL_API_TOKEN, a Fastmail API token with the mail scope");
     let auth = format!("Bearer {token}");
     let tag = tag();
     let mut jmap = Jmap::open(FASTMAIL_SERVER, &auth);
