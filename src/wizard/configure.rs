@@ -338,6 +338,7 @@ mod tests {
             server: String::from("imaps://posteo.de:993"),
             tls: Default::default(),
             alpn: None,
+            proxy: None,
             starttls: false,
             sasl: Some(SaslConfig::Plain(SaslPlainConfig {
                 authzid: None,

@@ -291,6 +291,7 @@ fn config(endpoint: &TcpEndpoint, sasl: Option<SaslConfig>) -> ImapConfig {
         server: format!("{scheme}://{}:{}", endpoint.host, endpoint.port),
         tls: Default::default(),
         alpn: None,
+        proxy: None,
         starttls: endpoint.security == DiscoverySecurity::Starttls,
         sasl,
         sasl_ir: None,

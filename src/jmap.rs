@@ -44,7 +44,7 @@ use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 
 use crate::{
-    config::{JmapAuthConfig, JmapConfig},
+    config::{JmapAuthConfig, JmapConfig, ProxyConfig},
     event::{ItemSummary, WatchDomain, WatchEvent},
 };
 
@@ -71,7 +71,7 @@ pub fn open(config: &JmapConfig, resolver: &mut SecretResolver) -> Result<(JmapC
     let auth = http_auth(config.auth.clone(), resolver)?;
     let opts = JmapClientStdConnectOptions {
         tls,
-        ..Default::default()
+        proxy: ProxyConfig::resolve(config.proxy.clone(), resolver)?,
     };
 
     let mut client = JmapClientStd::connect(&url, auth, opts)?;

@@ -26,6 +26,8 @@ use std::{
 
 #[cfg(feature = "imap")]
 use anyhow::anyhow;
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+use anyhow::bail;
 use anyhow::{Context, Result};
 #[cfg(feature = "imap")]
 use io_imap::types::{
@@ -41,16 +43,17 @@ use io_sasl::{
 #[cfg(feature = "imap")]
 use log::warn;
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
-use pimalaya_config::secret::Secret;
-#[cfg(feature = "imap")]
-use pimalaya_config::secret::SecretResolver;
+use pimalaya_config::secret::{Secret, SecretResolver};
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
-use pimalaya_config::toml::shell_expanded_path;
+use pimalaya_config::toml::opt_shell_expanded_path;
 use pimalaya_config::{command, toml::TomlConfig};
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
-use pimalaya_stream::tls::{Rustls, RustlsCrypto, Tls, TlsProvider};
+use pimalaya_stream::{
+    proxy::{Proxy, ProxyAuth},
+    tls::{Rustls, RustlsCrypto, Tls, TlsProvider},
+};
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
-use serde::Deserializer;
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "dav")]
@@ -70,7 +73,9 @@ pub const CONFIG_SAMPLE_URL: &str =
 /// A key outside this list still renders, after the listed ones, so a
 /// field added to [`AccountConfig`] can never go missing from a generated
 /// document because nobody updated this table.
-const RENDER_ORDER: [&str; 6] = ["default", "imap", "jmap", "maildir", "caldav", "carddav"];
+const RENDER_ORDER: [&str; 7] = [
+    "default", "proxy", "imap", "jmap", "maildir", "caldav", "carddav",
+];
 
 /// The keys a backend group leads with, in reading order: the collection
 /// it watches, the server, then the credential.
@@ -90,16 +95,6 @@ const BACKEND_ORDER: [&str; 6] = [
 /// document down to what was actually configured.
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
-}
-
-/// Expands a leading tilde and any shell variable in an optional path, as
-/// [`shell_expanded_path`] does for a mandatory one.
-///
-/// TODO: drop this for `pimalaya_config::toml::opt_shell_expanded_path`
-/// once pimalaya-config ships an optional variant.
-#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
-fn opt_shell_expanded_path<'de, D: Deserializer<'de>>(de: D) -> Result<Option<PathBuf>, D::Error> {
-    shell_expanded_path(de).map(Some)
 }
 
 /// Ranks one dotted line inside its backend group, `imap.server = …`
@@ -163,6 +158,9 @@ impl Config {
             return Ok(None);
         };
 
+        #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+        let config = config.with_inherited_proxies();
+
         // NOTE: what a notification may name is as fixed as which hooks a
         // backend has, and serde cannot check it, a template being a
         // string until something expands it. Here, both are refused at
@@ -174,6 +172,17 @@ impl Config {
         }
 
         Ok(Some(config))
+    }
+
+    /// Hands each account proxy down to its backends, so every connection
+    /// reads its own backend's key.
+    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+    fn with_inherited_proxies(mut self) -> Self {
+        for account in self.accounts.values_mut() {
+            account.inherit_proxy();
+        }
+
+        self
     }
 }
 
@@ -188,6 +197,11 @@ pub struct AccountConfig {
     /// Use this account when `-a/--account` names none.
     #[serde(default, skip_serializing_if = "is_default")]
     pub default: bool,
+    /// Proxy every network backend of this account goes through, unless
+    /// its own block names one.
+    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
     #[cfg(feature = "imap")]
     #[serde(default)]
     pub imap: Option<ImapConfig>,
@@ -271,6 +285,30 @@ impl AccountConfig {
         Ok(document)
     }
 
+    /// Hands the account proxy to every network backend naming none of
+    /// its own.
+    #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+    fn inherit_proxy(&mut self) {
+        let Some(proxy) = &self.proxy else {
+            return;
+        };
+
+        let slots = [
+            #[cfg(feature = "imap")]
+            self.imap.as_mut().map(|c| &mut c.proxy),
+            #[cfg(feature = "jmap")]
+            self.jmap.as_mut().map(|c| &mut c.proxy),
+            #[cfg(feature = "dav")]
+            self.caldav.as_mut().map(|c| &mut c.proxy),
+            #[cfg(feature = "dav")]
+            self.carddav.as_mut().map(|c| &mut c.proxy),
+        ];
+
+        for slot in slots.into_iter().flatten() {
+            slot.get_or_insert_with(|| proxy.clone());
+        }
+    }
+
     /// Refuses a hook whose notification names a variable its event cannot
     /// fill, which serde cannot see: a template is a string until expanded.
     pub fn validate(&self) -> Result<()> {
@@ -330,6 +368,10 @@ pub struct ImapConfig {
     /// ALPN.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpn: Option<Vec<String>>,
+    /// Proxy the connection goes through, falling back to the account one
+    /// and then to the `all_proxy`/`https_proxy` environment variables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
     /// The SASL credentials, omitted to skip authentication entirely.
     pub sasl: Option<SaslConfig>,
     /// Forces the RFC 4959 SASL-IR initial response on or off.
@@ -442,6 +484,10 @@ pub struct JmapConfig {
     /// ALPN.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpn: Option<Vec<String>>,
+    /// Proxy the connection goes through, falling back to the account one
+    /// and then to the `all_proxy`/`https_proxy` environment variables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
     /// Authentication: exactly one of `header`, `bearer`, `basic`.
     pub auth: JmapAuthConfig,
     /// How this account learns about a change. Unset holds the stream.
@@ -482,6 +528,62 @@ pub struct MaildirConfig {
     /// The hooks this backend fires.
     #[serde(default, alias = "hooks")]
     pub hook: MaildirHookConfig,
+}
+
+/// Proxy configuration.
+///
+/// `url` is a `socks5://`, `socks5h://` or `http://` proxy URL. Its user
+/// info authenticates too, but `username` and `password` keep the secret
+/// out of the URL.
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProxyConfig {
+    /// The proxy URL.
+    pub url: String,
+    /// The proxy username, required by `password`.
+    pub username: Option<String>,
+    /// The proxy password.
+    pub password: Option<Secret>,
+}
+
+#[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
+impl ProxyConfig {
+    /// Resolves an optional configuration, an absent one reading the
+    /// environment at connect time.
+    pub fn resolve(config: Option<Self>, resolver: &mut SecretResolver) -> Result<Proxy> {
+        match config {
+            Some(config) => config.try_into_proxy(resolver),
+            None => Ok(Proxy::System),
+        }
+    }
+
+    /// Resolves the configuration into a runtime [`Proxy`], the password
+    /// going through `resolver`.
+    pub fn try_into_proxy(self, resolver: &mut SecretResolver) -> Result<Proxy> {
+        let mut proxy = Proxy::from_url(&self.url)?;
+
+        let auth = match (self.username, self.password) {
+            (None, None) => return Ok(proxy),
+            (None, Some(_)) => bail!("Proxy password requires a username"),
+            (Some(user), pass) => ProxyAuth {
+                user,
+                pass: match pass {
+                    Some(pass) => resolver.resolve(pass)?,
+                    None => SecretString::default(),
+                },
+            },
+        };
+
+        match &mut proxy {
+            Proxy::Socks5 { auth: slot, .. } | Proxy::Http { auth: slot, .. } => {
+                *slot = Some(auth);
+            }
+            Proxy::None | Proxy::System => {}
+        }
+
+        Ok(proxy)
+    }
 }
 
 #[cfg(any(feature = "imap", feature = "jmap", feature = "dav"))]
@@ -1189,6 +1291,10 @@ pub struct CaldavConfig {
     /// ALPN.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpn: Option<Vec<String>>,
+    /// Proxy the connection goes through, falling back to the account one
+    /// and then to the `all_proxy`/`https_proxy` environment variables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
     /// Authentication, none by default, for a calendar readable without.
     #[serde(default, skip_serializing_if = "DavAuthConfig::is_none")]
     pub auth: DavAuthConfig,
@@ -1221,6 +1327,10 @@ pub struct CarddavConfig {
     /// ALPN.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpn: Option<Vec<String>>,
+    /// Proxy the connection goes through, falling back to the account one
+    /// and then to the `all_proxy`/`https_proxy` environment variables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
     /// Authentication, none by default, for a book readable without.
     #[serde(default, skip_serializing_if = "DavAuthConfig::is_none")]
     pub auth: DavAuthConfig,
@@ -1239,6 +1349,7 @@ pub struct DavServer<'a> {
     pub server: &'a str,
     pub tls: &'a TlsConfig,
     pub alpn: Option<&'a [String]>,
+    pub proxy: Option<&'a ProxyConfig>,
     pub auth: &'a DavAuthConfig,
 }
 
@@ -1250,6 +1361,7 @@ impl CaldavConfig {
             server: &self.server,
             tls: &self.tls,
             alpn: self.alpn.as_deref(),
+            proxy: self.proxy.as_ref(),
             auth: &self.auth,
         }
     }
@@ -1263,6 +1375,7 @@ impl CarddavConfig {
             server: &self.server,
             tls: &self.tls,
             alpn: self.alpn.as_deref(),
+            proxy: self.proxy.as_ref(),
             auth: &self.auth,
         }
     }
@@ -1473,5 +1586,36 @@ mod tests {
             .expect("render the account");
 
         assert!(!rendered.contains("alpn"));
+    }
+
+    #[test]
+    fn the_account_proxy_is_inherited_unless_the_backend_names_one() {
+        let proxy = |extra: &str| {
+            let config: Config = toml::from_str(&document(extra)).expect("parse the config");
+            let config = config.with_inherited_proxies();
+            let imap = config.accounts["perso"].imap.clone().unwrap();
+            imap.proxy.map(|proxy| proxy.url)
+        };
+
+        let account = "proxy.url = \"socks5h://127.0.0.1:9050\"\n";
+        let backend = "imap.proxy.url = \"http://proxy.example.org:3128\"\n";
+
+        assert_eq!(proxy(""), None);
+        assert_eq!(proxy(account).as_deref(), Some("socks5h://127.0.0.1:9050"));
+        assert_eq!(
+            proxy(&format!("{account}{backend}")).as_deref(),
+            Some("http://proxy.example.org:3128")
+        );
+    }
+
+    #[test]
+    fn a_proxy_password_without_a_username_is_refused() {
+        let config = ProxyConfig {
+            url: String::from("socks5://127.0.0.1:1080"),
+            username: None,
+            password: Some(Secret::Raw(SecretString::from("secret"))),
+        };
+
+        assert!(config.try_into_proxy(&mut SecretResolver::new()).is_err());
     }
 }

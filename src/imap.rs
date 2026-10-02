@@ -53,7 +53,7 @@ use pimalaya_config::secret::SecretResolver;
 use url::Url;
 
 use crate::{
-    config::{ImapConfig, resolve_auto_id_params},
+    config::{ImapConfig, ProxyConfig, resolve_auto_id_params},
     event::{ItemSummary, WatchDomain, WatchEvent},
 };
 
@@ -103,13 +103,13 @@ pub fn open(
 
     let opts = ImapClientStdConnectOptions {
         tls,
+        proxy: ProxyConfig::resolve(config.proxy.clone(), resolver)?,
         sasl,
         session: ImapSessionOpenOptions {
             starttls: config.starttls,
             auto_id: resolve_auto_id_params(&config.id)?,
             sasl_ir: config.sasl_ir,
         },
-        ..Default::default()
     };
 
     debug!("opening imap session");

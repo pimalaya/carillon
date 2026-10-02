@@ -54,7 +54,7 @@ use secrecy::ExposeSecret;
 use url::Url;
 
 use crate::{
-    config::{DavAuthConfig, DavServer},
+    config::{DavAuthConfig, DavServer, ProxyConfig},
     event::{ItemSummary, WatchDomain, WatchEvent},
 };
 
@@ -107,13 +107,14 @@ pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<Webd
         None => HttpClientStd::default_alpn(),
     };
     let tls = config.tls.clone().into_tls(alpn);
+    let proxy = ProxyConfig::resolve(config.proxy.cloned(), resolver)?;
 
     let stream = match url.scheme() {
         "http" => {
             let port = url.port().unwrap_or(80);
             let opts = TcpConnectOptions {
+                proxy,
                 retry: Retry::Never,
-                ..Default::default()
             };
             Stream::connect_tcp(&host, port, opts)?
         }
@@ -121,8 +122,8 @@ pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<Webd
             let port = url.port().unwrap_or(443);
             let opts = TlsConnectOptions {
                 tls,
+                proxy,
                 retry: Retry::Never,
-                ..Default::default()
             };
             Stream::connect_tls(&host, port, opts)?
         }

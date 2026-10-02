@@ -273,6 +273,19 @@ Every backend speaking TLS SHALL carry a `tls` table and an `alpn` key of its ow
 - **WHEN** the configuration is read
 - **THEN** the path is expanded against the home directory rather than read as a relative `./~/certs/example.pem`
 
+### Requirement: A network backend reaches its server through a configurable proxy
+An account SHALL accept a `proxy` table, and every backend opening a socket (`imap`, `jmap`, `caldav`, `carddav`) SHALL accept one of its own, overriding the account's. The table SHALL carry a `url` (`socks5://`, `socks5h://` or `http://`), an optional `username` and an optional `password` resolved as a secret; a password without a username SHALL be refused. A backend naming none SHALL inherit the account's when the file is loaded, and with neither the `all_proxy` and `https_proxy` environment variables SHALL be read, `no_proxy` and loopback bypassing them.
+
+#### Scenario: One account behind a SOCKS proxy
+- **GIVEN** an account with `proxy.url = "socks5h://127.0.0.1:9050"` and an `imap` block naming no proxy
+- **WHEN** it is watched
+- **THEN** the IMAP connection, the envelope resolver's and every reconnect go through the proxy
+
+#### Scenario: A configuration naming no proxy
+- **GIVEN** an account carrying no `proxy` key anywhere
+- **WHEN** it is watched with `all_proxy` unset and `https_proxy` unset
+- **THEN** it connects directly, and nothing is written back into a generated document
+
 
 ### Requirement: Every printed output has a published schema
 Every command handing data to the printer SHALL return a named `*Output` type deriving `Display`, `Serialize` and `JsonSchema`, and `carillon json-schema` SHALL publish the schema of each, keyed by the command path joined with hyphens and prefixed `carillon-`. Every type reaching the printer SHALL spell its keys in camelCase, declared as `rename_all` on the type, which is the convention of the `--json` output alone and not of the TOML configuration, whose keys stay kebab-case. A command that writes files rather than data SHALL stay out of the registry, and `watch` SHALL print nothing, reporting through its hooks alone.

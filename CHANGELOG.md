@@ -16,14 +16,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   It writes one schema to stdout, or one file per command into `--dir`. `check` and `configure` are the two commands that print data.
 
+- Added `proxy`, a per-account SOCKS5 or HTTP proxy for every network backend, and `<backend>.proxy` to override it for one backend.
+
+  The password is a secret like any credential, so it stays out of the URL. Without either, the `all_proxy` and `https_proxy` environment variables are read, `no_proxy` bypassing them.
+
 ### Changed
+
+- Renamed `completions` and `manuals` to `completion` and `manual`, the plural staying as a hidden alias.
 
 - Expanded the leading tilde and the shell variables in `imap.tls.cert`, `jmap.tls.cert`, `caldav.tls.cert` and `carddav.tls.cert`.
 
   `cert = "~/certs/example.pem"` used to be read as the literal relative path `./~/certs/example.pem`, so the certificate was never found. It is now expanded when the file is read, as every other path in the configuration already was.
 
-
-- **BREAKING**: renamed `completions` and `manuals` to `completion` and `manual`, the plural staying as a hidden alias.
 - Spawned a credential command once per checked account, rather than once per backend naming it.
 
   An account whose CalDAV and CardDAV tables read the same `pass` or `gpg` entry unlocked its store twice; `carillon check` now resolves the whole account through one resolver, so the key unlocks once.

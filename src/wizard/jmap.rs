@@ -127,6 +127,7 @@ fn config(server: String, auth: JmapAuthConfig) -> JmapConfig {
         server,
         tls: Default::default(),
         alpn: None,
+        proxy: None,
         auth,
         watch: None,
         hook: hook(),
