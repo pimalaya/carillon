@@ -65,14 +65,26 @@ use crate::{
 
 /// The documented sample, pointed at wherever a configuration is missing
 /// and wherever the wizard stops short.
+#[cfg(feature = "wizard")]
 pub const CONFIG_SAMPLE_URL: &str =
     "https://github.com/pimalaya/carillon/blob/master/config.sample.toml";
+
+/// How to get a configuration, for the errors meeting none.
+#[cfg(feature = "wizard")]
+pub const NO_CONFIG_HINT: &str = "run `carillon configure` to generate one, or write it by hand: \
+     https://github.com/pimalaya/carillon/blob/master/config.sample.toml";
+
+/// How to get a configuration, for the errors meeting none.
+#[cfg(not(feature = "wizard"))]
+pub const NO_CONFIG_HINT: &str = "write one by hand: \
+     https://github.com/pimalaya/carillon/blob/master/config.sample.toml";
 
 /// The order a rendered account groups its keys in, most defining first.
 ///
 /// A key outside this list still renders, after the listed ones, so a
 /// field added to [`AccountConfig`] can never go missing from a generated
 /// document because nobody updated this table.
+#[cfg(feature = "wizard")]
 const RENDER_ORDER: [&str; 11] = [
     "default", "proxy", "imap", "jmap", "msgraph", "gmail", "maildir", "caldav", "gcal", "carddav",
     "gpeople",
@@ -83,6 +95,7 @@ const RENDER_ORDER: [&str; 11] = [
 ///
 /// Everything else follows alphabetically, only adjusting what those
 /// three state.
+#[cfg(feature = "wizard")]
 const BACKEND_ORDER: [&str; 6] = [
     "mailbox",
     "calendar",
@@ -102,6 +115,7 @@ fn is_default<T: Default + PartialEq>(value: &T) -> bool {
 /// ranking on `server`.
 ///
 /// The SASL table is the IMAP spelling of `auth`, so it ranks with it.
+#[cfg(feature = "wizard")]
 fn backend_rank(group: &str, line: &str) -> usize {
     let Some(key) = line
         .split_once(" = ")
@@ -239,6 +253,7 @@ impl AccountConfig {
     /// The serializer decides what is written, so a defaulted field is
     /// omitted. What this adds is reading order: alphabetical dotted keys
     /// bury `imap.server` under the credentials authenticating against it.
+    #[cfg(feature = "wizard")]
     pub fn render(&self, name: &str) -> Result<String> {
         // NOTE: borrowed rather than built into a `Config`, which would
         // mean cloning the account to render it. The emitter only looks

@@ -13,6 +13,8 @@ use std::{
 
 use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser, Subcommand};
+#[cfg(feature = "wizard")]
+use pimalaya_cli::prompt;
 use pimalaya_cli::{
     clap::{
         args::{AccountFlag, JsonFlag, LogFlags},
@@ -21,17 +23,17 @@ use pimalaya_cli::{
     },
     footer, long_version,
     printer::Printer,
-    prompt,
 };
 use pimalaya_config::toml::TomlConfig;
 
+#[cfg(feature = "wizard")]
+use crate::wizard::{self, configure::ConfigureCommand};
 use crate::{
     backend::Backend,
     check::CheckCommand,
-    config::{CONFIG_SAMPLE_URL, Config},
+    config::{Config, NO_CONFIG_HINT},
     json_schema,
     watch::WatchCommand,
-    wizard::{self, configure::ConfigureCommand},
 };
 
 /// Top-level CLI: global flags and subcommand dispatch.
@@ -85,6 +87,7 @@ pub enum Command {
     /// Validate the account configuration against each allowed backend.
     Check(CheckCommand),
     /// Configure an account interactively.
+    #[cfg(feature = "wizard")]
     #[command(visible_alias = "wizard")]
     Configure(ConfigureCommand),
     /// Generate man pages into the given directory.
@@ -148,6 +151,7 @@ impl Command {
         match self {
             Self::Watch(cmd) => cmd.execute(printer, config_paths, account_name, backend),
             Self::Check(cmd) => cmd.execute(printer, config_paths, account_name, backend),
+            #[cfg(feature = "wizard")]
             Self::Configure(cmd) => cmd.execute(printer, config_paths),
             Self::Manual(cmd) => cmd.execute(printer, Cli::command()),
             Self::Completion(cmd) => cmd.execute(printer, Cli::command()),
@@ -181,7 +185,7 @@ pub fn load_config(printer: &mut impl Printer, config_paths: &[PathBuf]) -> Resu
     match Config::load(config_paths)? {
         Some(config) => Ok(config),
         None => bail!(
-            "No configuration found at {}, run `carillon configure` to generate one or write it by hand: {CONFIG_SAMPLE_URL}",
+            "No configuration found at {}, {NO_CONFIG_HINT}",
             path.display(),
         ),
     }
@@ -192,6 +196,7 @@ pub fn load_config(printer: &mut impl Printer, config_paths: &[PathBuf]) -> Resu
 /// Raised from the two places nothing can happen without a configuration:
 /// a bare invocation, and a command needing an account. It is a hook
 /// rather than a gate, so what a decline leads to is the caller's.
+#[cfg(feature = "wizard")]
 fn offer_configuration(
     printer: &mut impl Printer,
     config_paths: &[PathBuf],
@@ -206,4 +211,15 @@ fn offer_configuration(
     ConfigureCommand.execute(printer, config_paths)?;
 
     Ok(true)
+}
+
+/// Offers nothing in a build without the wizard, so the caller falls back
+/// to what it does when the offer is declined.
+#[cfg(not(feature = "wizard"))]
+fn offer_configuration(
+    _printer: &mut impl Printer,
+    _config_paths: &[PathBuf],
+    _path: &Path,
+) -> Result<bool> {
+    Ok(false)
 }

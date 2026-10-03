@@ -78,6 +78,7 @@ mod picture;
 #[cfg(any(feature = "jmap", feature = "maildir", feature = "dav", api))]
 mod poll;
 mod watch;
+#[cfg(feature = "wizard")]
 mod wizard;
 
 use anyhow::Result;

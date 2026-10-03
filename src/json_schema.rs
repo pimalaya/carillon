@@ -31,6 +31,7 @@ pub fn schemas() -> BTreeMap<String, Value> {
     }
 
     insert!("carillon-check", crate::check::CheckOutput);
+    #[cfg(feature = "wizard")]
     insert!(
         "carillon-configure",
         crate::wizard::configure::ConfigureOutput

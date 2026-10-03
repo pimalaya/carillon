@@ -41,6 +41,8 @@ CLI to watch PIM collection changes, written in Rust
 
 > [!TIP]
 > Carillon is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
+>
+> The default `wizard` feature brings the interactive `configure`; leave it out of a scripted or embedded build that never prompts.
 
 ## Installation
 

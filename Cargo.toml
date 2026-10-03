@@ -12,19 +12,20 @@ homepage = "https://pimalaya.org"
 repository = "https://github.com/pimalaya/carillon"
 
 [features]
-default = ["rustls-ring", "imap", "jmap", "maildir", "dav", "msgraph", "gmail", "gcal", "gpeople"]
-native-tls = ["pimalaya-stream/native-tls", "io-pim-discovery?/native-tls", "io-imap?/native-tls", "io-jmap?/native-tls", "io-webdav?/native-tls", "io-msgraph?/native-tls", "io-gmail?/native-tls", "io-gcal?/native-tls", "io-gpeople?/native-tls"]
-rustls-aws = ["pimalaya-stream/rustls-aws", "io-pim-discovery?/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws", "io-webdav?/rustls-aws", "io-msgraph?/rustls-aws", "io-gmail?/rustls-aws", "io-gcal?/rustls-aws", "io-gpeople?/rustls-aws"]
-rustls-ring = ["pimalaya-stream/rustls-ring", "io-pim-discovery?/rustls-ring", "io-imap?/rustls-ring", "io-jmap?/rustls-ring", "io-webdav?/rustls-ring", "io-msgraph?/rustls-ring", "io-gmail?/rustls-ring", "io-gcal?/rustls-ring", "io-gpeople?/rustls-ring"]
-imap = ["dep:io-imap", "dep:io-pim-discovery", "io-imap/client", "pimalaya-cli/imap"]
-jmap = ["dep:base64", "dep:io-jmap", "dep:io-pim-discovery", "io-jmap/client", "pimalaya-cli/jmap"]
+default = ["rustls-ring", "imap", "jmap", "maildir", "dav", "msgraph", "gmail", "gcal", "gpeople", "wizard"]
+native-tls = ["pimalaya-stream/native-tls", "io-http?/native-tls", "io-pim-discovery?/native-tls", "io-imap?/native-tls", "io-jmap?/native-tls", "io-webdav?/native-tls", "io-msgraph?/native-tls", "io-gmail?/native-tls", "io-gcal?/native-tls", "io-gpeople?/native-tls"]
+rustls-aws = ["pimalaya-stream/rustls-aws", "io-http?/rustls-aws", "io-pim-discovery?/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws", "io-webdav?/rustls-aws", "io-msgraph?/rustls-aws", "io-gmail?/rustls-aws", "io-gcal?/rustls-aws", "io-gpeople?/rustls-aws"]
+rustls-ring = ["pimalaya-stream/rustls-ring", "io-http?/rustls-ring", "io-pim-discovery?/rustls-ring", "io-imap?/rustls-ring", "io-jmap?/rustls-ring", "io-webdav?/rustls-ring", "io-msgraph?/rustls-ring", "io-gmail?/rustls-ring", "io-gcal?/rustls-ring", "io-gpeople?/rustls-ring"]
+imap = ["dep:io-imap", "io-imap/client"]
+jmap = ["dep:base64", "dep:io-jmap", "io-jmap/client"]
 maildir = ["dep:io-maildir", "io-maildir/client", "io-maildir/parser"]
-dav = ["dep:io-http", "dep:io-pim-discovery", "dep:io-webdav", "io-webdav/client"]
-msgraph = ["dep:io-msgraph", "dep:io-pim-discovery", "io-msgraph/client"]
-gmail = ["dep:io-gmail", "dep:io-pim-discovery", "io-gmail/client"]
-gcal = ["dep:io-gcal", "dep:io-pim-discovery", "io-gcal/client"]
-gpeople = ["dep:io-gpeople", "dep:io-pim-discovery", "io-gpeople/client"]
-vendored = ["pimalaya-stream/vendored", "notify-rust/d_vendored"]
+dav = ["dep:io-http", "dep:io-webdav", "io-webdav/client"]
+msgraph = ["dep:io-msgraph", "io-msgraph/client"]
+gmail = ["dep:io-gmail", "io-gmail/client"]
+gcal = ["dep:io-gcal", "io-gcal/client"]
+gpeople = ["dep:io-gpeople", "io-gpeople/client"]
+vendored = ["pimalaya-stream/vendored", "io-http?/vendored", "notify-rust/d_vendored"]
+wizard = ["dep:io-pim-discovery", "pimalaya-cli/prompt", "pimalaya-cli/wizard", "pimalaya-cli/imap", "pimalaya-cli/jmap"]
 
 [profile.release]
 lto = "fat"
@@ -53,12 +54,12 @@ io-imap = { version = "0.7", default-features = false, optional = true }
 io-jmap = { version = "0.4.2", default-features = false, optional = true }
 io-maildir = { version = "0.3", default-features = false, optional = true }
 io-msgraph = { version = "0.4", default-features = false, optional = true }
-io-pim-discovery = { version = "0.8", default-features = false, features = ["autoconfig", "pacc", "rfc6186", "rfc6764", "rfc8620"], optional = true }
+io-pim-discovery = { version = "0.8", default-features = false, features = ["autoconfig", "pacc", "rfc6186", "rfc6764", "rfc8620", "stream"], optional = true }
 io-sasl = { version = "0.1", default-features = false, features = ["scram"] }
 io-webdav = { version = "0.5", default-features = false, optional = true }
 log = "0.4"
 notify-rust = { version = "4", default-features = false, features = ["d"] }
-pimalaya-cli = { version = "0.2", default-features = false, features = ["terminal", "prompt", "spinner", "wizard"] }
+pimalaya-cli = { version = "0.2", default-features = false, features = ["terminal", "spinner"] }
 pimalaya-config = { version = "0.2.1", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.3", default-features = false, features = ["std"] }
 schemars = "1"
