@@ -2196,6 +2196,7 @@ mod tests {
         assert_eq!(alpn(&listed), Some(vec![String::from("imap")]));
     }
 
+    #[cfg(feature = "wizard")]
     #[test]
     fn an_unset_alpn_is_not_rendered_back() {
         let config: Config =
