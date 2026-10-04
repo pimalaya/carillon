@@ -1595,6 +1595,7 @@ pub struct CarddavConfig {
 /// The transport half of a DAV backend, shared by a calendar and an
 /// addressbook.
 #[cfg(feature = "dav")]
+#[derive(Clone, Copy)]
 pub struct DavServer<'a> {
     pub server: &'a str,
     pub tls: &'a TlsConfig,

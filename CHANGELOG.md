@@ -10,6 +10,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Added the `wizard` cargo feature, on by default, gating the interactive configuration: the `configure` command and the offer a first run makes. A build without it drops the prompts and the dependencies only they use, and a missing configuration points at the documented sample instead.
 
+### Changed
+
+- Changed `caldav.calendar` and `carddav.addressbook` named by one path segment to be looked up under the calendar or addressbook home set the server's principal names, which is the id a listing of the account gives. Absolute paths and other relative paths read as before.
+
+### Fixed
+
+- Fixed a DAV watch losing what moved when the server closed its idle connection: the round is run again on a fresh connection.
+- Fixed a DAV server with no `sync-collection` being unwatchable: the collection is listed on every poll instead.
+- Fixed a rejected DAV sync token hiding what moved meanwhile: the collection is read again against what the watch knew.
+- Fixed a calendar holding events and tasks skipping every member whose content type names no component.
+
 ## [0.2.0] - 2026-10-02
 
 ### Added

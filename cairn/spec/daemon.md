@@ -39,12 +39,17 @@ Bare `carillon watch` SHALL watch every configured account at once, one thread e
 - **THEN** the failure is logged and retried for that account alone, and the other account keeps watching
 
 ### Requirement: An account watches one collection, one way
-An account SHALL watch the collection its backend names, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection of the same domain is a second account, which is also how it gets its own hooks. A backend serving several domains MAY name one collection per domain, since the domains do not share an event name and each therefore already has hooks of its own; what they share is the connection and the credential, which is what a second account would waste. Every backend SHALL read its collection the same way, the DAV ones included, whose `server` names the DAV root and whose collection is the path under it.
+An account SHALL watch the collection its backend names, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection of the same domain is a second account, which is also how it gets its own hooks. A backend serving several domains MAY name one collection per domain, since the domains do not share an event name and each therefore already has hooks of its own; what they share is the connection and the credential, which is what a second account would waste. Every backend SHALL name its collection by the id a listing of the account gives it, so a collection picked from a listing is watched without translation. A DAV collection named by one path segment SHALL be looked up under the calendar or addressbook home set the server's principal names, read under `server` when the server names none; an absolute path SHALL be taken as it stands, and any other relative path read under `server`.
 
 #### Scenario: A second collection
 - **GIVEN** an account watching one mailbox
 - **WHEN** a second mailbox is to be watched
 - **THEN** it is a second account, with its own hooks, and no flag exists to ask for it
+
+#### Scenario: A calendar named by its listed id
+- **GIVEN** a CalDAV server whose principal names the home set `/dav/cal/alice/`, holding `/dav/cal/alice/default/`
+- **WHEN** an account sets `caldav.calendar = "default"`
+- **THEN** the watch reads `/dav/cal/alice/default`, whatever path `server` names
 
 ### Requirement: The watch method belongs to the backend
 The method SHALL be configured under its backend (`imap.watch`, `jmap.watch`, `maildir.watch`, and `watch` under each of `caldav` and `carddav`) and named by its mechanism, the way a SASL mechanism and an HTTP auth scheme already are. Each backend SHALL declare only the methods it has, so a method it does not have is refused when the configuration is read rather than when the watch runs. Unset, an account SHALL watch the best way its backend has: IDLE for IMAP, a held event stream for JMAP, a poll for the backends with nothing else. Every backend SHALL offer the poll, whose interval MAY be given and otherwise takes what suits that backend.
@@ -81,7 +86,7 @@ Every backend SHALL report changes in one vocabulary: an item added, an item rem
 - **THEN** `carddav.hook.on-card-changed` fires, an event no mail backend accepts a hook for
 
 ### Requirement: A WebDAV collection is watchable
-The daemon SHALL watch a WebDAV collection by polling an RFC 6578 `sync-collection` report, under whichever of `caldav` and `carddav` names the domain it holds, both sharing one server, authentication and poll shape. It SHALL request `getetag`, and the content type only where a mixed calendar needs it, so a poll never carries a contact or an event; it SHALL keep an href to etag and domain picture of the collection, so that a member it has never seen reads as an arrival, a known member whose etag moved reads as an edit, and a member that vanished is still reported under the domain it had. A truncated report SHALL be drained immediately rather than at the next interval, and a sync token the server rejects SHALL cause a re-enumeration, which reports nothing because a re-baseline is not news. No backend SHALL watch a collection holding neither calendars nor contacts: the domains that exist have their own backend, and a collection naming none of them has no hook worth firing.
+The daemon SHALL watch a WebDAV collection by polling an RFC 6578 `sync-collection` report, under whichever of `caldav` and `carddav` names the domain it holds, both sharing one server, authentication and poll shape. It SHALL request `getetag`, and the content type only where a mixed calendar needs it, so a poll never carries a contact or an event; it SHALL keep an href to etag and domain picture of the collection, so that a member it has never seen reads as an arrival, a known member whose etag moved reads as an edit, and a member that vanished is still reported under the domain it had. A truncated report SHALL be drained immediately rather than at the next interval. A sync token the server rejects SHALL cause a re-enumeration read against the picture, reporting only what differs. A server refusing the report SHALL be listed with a `PROPFIND` on every poll instead, read against the picture the same way, and a truncated listing SHALL report no removal. A round that fails SHALL be run again on a fresh connection, picture and token kept, before the session is given up. No backend SHALL watch a collection holding neither calendars nor contacts: the domains that exist have their own backend, and a collection naming none of them has no hook worth firing.
 
 #### Scenario: A contact is edited
 - **GIVEN** a CardDAV account watching an addressbook it has already enumerated
@@ -91,7 +96,17 @@ The daemon SHALL watch a WebDAV collection by polling an RFC 6578 `sync-collecti
 #### Scenario: The server forgets its history
 - **GIVEN** a watch holding a sync token the server no longer honours
 - **WHEN** the next report is refused
-- **THEN** the collection is enumerated again, no event is fired for what was already there, and the watch continues from the fresh token
+- **THEN** the collection is enumerated again, only what differs from the picture is reported, and the watch continues from the fresh token
+
+#### Scenario: A server with no sync-collection
+- **GIVEN** a CalDAV server answering `sync-collection` with `501 Not Implemented`
+- **WHEN** an event is added, another edited and a third deleted between two polls
+- **THEN** the listing that poll makes fires `on-event-added`, `on-event-changed` and `on-event-removed` for them
+
+#### Scenario: An idle connection closed between two polls
+- **GIVEN** a DAV watch whose server closed the connection while it slept
+- **WHEN** the next round runs
+- **THEN** it reconnects and runs again from the same token, and the session is given up only if that also fails
 
 ### Requirement: Arrivals are resolved only when a hook wants them
 A watch learns that an item arrived, and sometimes what it says. A backend SHALL report an arrival together with the summary it already read, and SHALL read one it does not have only when the active backend configures the arrival hook of that domain. JMAP SHALL take its summary from the `Email/get` its round already makes, asking for the envelope properties only when a hook wants them. IMAP SHALL read one on a second connection, never the one holding the watch, an IMAP delta naming a UID and nothing more. A backend that can read no envelope SHALL leave the summary empty, and a resolution failure SHALL degrade to an unresolved event rather than ending the watch.
@@ -170,7 +185,7 @@ A hook SHALL be named after what it carries. Mail SHALL be `on-message-added` an
 - **THEN** the command runs once, with `$flag` as `Seen`
 
 ### Requirement: A CalDAV calendar knows its components
-A CalDAV watch SHALL resolve what its collection holds from `supported-calendar-component-set` when the watch starts. A calendar advertising a single component SHALL report every member as that component, at no cost per member. A calendar advertising several SHALL read `getcontenttype` on a member it has not seen and route it by the `component` parameter RFC 4791 §10.1 allows, falling back to the components the calendar advertises when the server sends no parameter. A member SHALL never be fetched to find out what it is, since a poll carrying a VEVENT is what asking for etags alone exists to avoid; reading a property is not fetching a member. The domain of each member SHALL be remembered beside its etag, since a removal leaves only an href behind.
+A CalDAV watch SHALL resolve what its collection holds from `supported-calendar-component-set` when the watch starts. A calendar advertising a single component SHALL report every member as that component, at no cost per member. A calendar advertising several SHALL read `getcontenttype` on a member it has not seen and route it by the `component` parameter RFC 4791 §10.1 allows; a member whose content type names no component SHALL be taken for the one domain the account's hooks name, or for an event when they name both. A member SHALL never be fetched to find out what it is, since a poll carrying a VEVENT is what asking for etags alone exists to avoid; reading a property is not fetching a member. The domain of each member SHALL be remembered beside its etag, since a removal leaves only an href behind.
 
 #### Scenario: A task is deleted from a calendar holding both
 - **GIVEN** a CalDAV account watching a calendar of events and tasks, with `on-task-removed` configured
@@ -181,6 +196,11 @@ A CalDAV watch SHALL resolve what its collection holds from `supported-calendar-
 - **GIVEN** a CalDAV account watching a calendar advertising `VEVENT` alone
 - **WHEN** a member is added
 - **THEN** `on-event-added` fires without any further request, and the account's task hooks are refused when the configuration is read
+
+#### Scenario: A server naming no component
+- **GIVEN** a calendar advertising `VEVENT` and `VTODO` whose members' content type is a bare `text/calendar`, and an account hooking `on-event-*` alone
+- **WHEN** an event is added
+- **THEN** `on-event-added` fires
 
 ### Requirement: A hook templates against what its event carries
 Each hook SHALL declare the variables it can fill, and a notification naming anything else SHALL be refused when the configuration is read. `$id` SHALL be available to every hook, the collection SHALL be available under the name its backend configures it as, `$flag` to a flag hook, and the envelope names only to the arrival hook of a backend that resolves one, which is IMAP alone. A `${name:default}` SHALL keep working whatever the name, a default being how a template says it can do without the value. A command SHALL NOT be validated, its placeholders reaching it as environment variables where an unset name is ordinary.

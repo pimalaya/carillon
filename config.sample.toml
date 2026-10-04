@@ -232,11 +232,13 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 # ---- CalDAV: a sync-collection poll over a calendar (RFC 6578) ------------------
 
-# The calendar this account watches, read as a path under `caldav.server`, or as
-# an absolute path when it starts with a slash. Required.
-#caldav.calendar = "calendars/alice/work/"
+# The calendar this account watches. A bare id (one path segment) is looked up
+# under the calendar home set the server's principal names, which is the id a
+# listing of the account gives; an absolute path is taken as it stands, and any
+# other path is read under `caldav.server`. Required.
+#caldav.calendar = "work"
 
-# The DAV server URL, naming the root the calendar hangs under.
+# The DAV server URL, where the principal is discovered from.
 #caldav.server = "https://dav.example.org/"
 
 # Omit for a calendar readable without authentication.
@@ -253,13 +255,16 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 # Proxy, read as `imap.proxy`.
 #caldav.proxy.url = "http://proxy.example.org:3128"
 
-# WebDAV has one way: ask sync-collection on an interval, a minute when unset.
+# WebDAV has one way: ask sync-collection on an interval, a minute when unset. A
+# server with no sync-collection is listed with a PROPFIND on every poll instead,
+# its etags read against the last listing.
 #caldav.watch.poll.interval = 60
 
 # A calendar holds events, tasks or both, and the watch asks it which when it
 # starts: hooks naming a component it does not hold are refused there. Holding
 # both costs one property read per member the watch has not seen, which reads
-# its content type and never the event itself.
+# its content type and never the event itself; a content type naming no
+# component is taken for the one the hooks name, an event when they name both.
 #caldav.hook.on-event-added.notify.summary = "New event"
 #caldav.hook.on-event-changed.cmd = "true"
 #caldav.hook.on-event-removed.cmd = "true"
@@ -270,8 +275,9 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 # ---- CardDAV: the same poll over an addressbook --------------------------------
 
-# The addressbook this account watches, read the same way. Required.
-#carddav.addressbook = "addressbooks/alice/default/"
+# The addressbook this account watches, read the same way under the addressbook
+# home set. Required.
+#carddav.addressbook = "default"
 
 #carddav.server = "https://dav.example.org/"
 #carddav.alpn = ["http/1.1"]

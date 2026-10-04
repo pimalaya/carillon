@@ -31,7 +31,10 @@ use crate::gpeople;
 use crate::msgraph;
 use crate::{backend::Backend, cli::load_config};
 #[cfg(feature = "dav")]
-use crate::{config::DavServer, dav};
+use crate::{
+    config::DavServer,
+    dav::{self, DavHome},
+};
 #[cfg(feature = "imap")]
 use crate::{config::ImapConfig, imap};
 #[cfg(feature = "jmap")]
@@ -99,6 +102,7 @@ impl CheckCommand {
         {
             report.backends.push(check_dav(
                 "caldav",
+                DavHome::Calendars,
                 caldav_config.server(),
                 &caldav_config.calendar,
                 &mut resolver,
@@ -111,6 +115,7 @@ impl CheckCommand {
         {
             report.backends.push(check_dav(
                 "carddav",
+                DavHome::Addressbooks,
                 carddav_config.server(),
                 &carddav_config.addressbook,
                 &mut resolver,
@@ -191,6 +196,7 @@ fn check_maildir(maildir_config: MaildirConfig) -> BackendCheck {
 #[cfg(feature = "dav")]
 fn check_dav(
     backend: &'static str,
+    home: DavHome,
     server: DavServer<'_>,
     collection: &str,
     resolver: &mut SecretResolver,
@@ -198,7 +204,7 @@ fn check_dav(
     // NOTE: opening proves the transport, and one report the credential
     // and that the collection is there, as a first poll would.
     let shutdown = Arc::new(AtomicBool::new(false));
-    let result = dav::probe(server, collection, &shutdown, resolver);
+    let result = dav::probe(server, home, collection, &shutdown, resolver);
 
     BackendCheck::from(backend, result)
 }
