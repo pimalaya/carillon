@@ -51,6 +51,9 @@ const PERSON_FIELDS: &[GpeoplePersonField] = &[
 ];
 /// The prefix a contact group's resource name carries.
 const GROUP_PREFIX: &str = "contactGroups/";
+/// The collection naming every contact the account owns, whatever its
+/// groups: the one address book a listing of the account gives.
+const EVERY_CONTACT: &str = "contacts";
 
 /// Opens a connection to the People API, resolving the token through
 /// `resolver`.
@@ -74,7 +77,18 @@ pub fn open(config: &GpeopleConfig, resolver: &mut SecretResolver) -> Result<Gpe
 /// transport, the token and that the group exists.
 pub fn probe(config: &GpeopleConfig, resolver: &mut SecretResolver) -> Result<()> {
     let mut client = open(config, resolver)?;
-    resolve_group(&mut client, &config.addressbook)?;
+
+    // NOTE: every contact resolves with no request, so a listing page is
+    // what proves the token there.
+    if resolve_group(&mut client, &config.addressbook)?.is_none() {
+        let params = GpeopleConnectionsListParams {
+            page_size: Some(1),
+            ..Default::default()
+        };
+        client
+            .connections_list(PERSON_FIELDS, &params)
+            .context("cannot list google contacts")?;
+    }
 
     Ok(())
 }
@@ -112,8 +126,9 @@ pub fn watch(
 
 /// The group the watch holds a picture of.
 struct Watched {
-    /// The group's resource name, which a membership names it by.
-    group: String,
+    /// The group's resource name, which a membership names it by, or
+    /// `None` for every contact.
+    group: Option<String>,
     /// What the group holds, as of `token`.
     known: Known,
     /// The sync token the next round reads from.
@@ -222,14 +237,19 @@ impl Watched {
             .collect()
     }
 
-    /// Whether a person belongs to the watched group.
+    /// Whether a person belongs to the watched group, which every
+    /// contact does when no group is watched.
     fn is_member(&self, person: &GpeoplePerson) -> bool {
+        let Some(watched) = &self.group else {
+            return true;
+        };
+
         person.memberships.iter().any(|membership| {
             membership
                 .contact_group_membership
                 .as_ref()
                 .and_then(|group| group.contact_group_resource_name.as_deref())
-                == Some(self.group.as_str())
+                == Some(watched.as_str())
         })
     }
 }
@@ -275,8 +295,13 @@ fn list(
 }
 
 /// Resolves a contact group by its name, case-insensitively, or by its
-/// resource name, with or without the `contactGroups/` prefix.
-fn resolve_group(client: &mut GpeopleClientStd, name: &str) -> Result<String> {
+/// resource name, with or without the `contactGroups/` prefix; `contacts`
+/// names every contact rather than a group, `None`.
+fn resolve_group(client: &mut GpeopleClientStd, name: &str) -> Result<Option<String>> {
+    if name == EVERY_CONTACT {
+        return Ok(None);
+    }
+
     let resource_name = match name.strip_prefix(GROUP_PREFIX) {
         Some(_) => name.to_string(),
         None => format!("{GROUP_PREFIX}{name}"),
@@ -306,7 +331,7 @@ fn resolve_group(client: &mut GpeopleClientStd, name: &str) -> Result<String> {
         });
 
         if let Some(group) = found {
-            return Ok(group.resource_name);
+            return Ok(Some(group.resource_name));
         }
 
         match page.next_page_token {
@@ -357,10 +382,26 @@ mod tests {
 
     fn watched() -> Watched {
         Watched {
-            group: String::from("contactGroups/myContacts"),
+            group: Some(String::from("contactGroups/myContacts")),
             known: Known::new(),
             token: String::new(),
         }
+    }
+
+    /// `contacts` is the one address book a listing gives, every contact.
+    #[test]
+    fn every_contact_is_pictured_when_no_group_is_watched() {
+        let mut watched = watched();
+        watched.group = None;
+        let known = watched.members(vec![
+            person("a", "1", &["myContacts"]),
+            person("b", "1", &[]),
+        ]);
+
+        assert_eq!(
+            vec!["people/a", "people/b"],
+            known.keys().collect::<Vec<_>>()
+        );
     }
 
     #[test]

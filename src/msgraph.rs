@@ -22,7 +22,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Error, Result, anyhow, bail};
+use anyhow::{Context, Error, Result, bail};
 use io_msgraph::v1::{
     client::{MsgraphClientStd, MsgraphClientStdConnectOptions, MsgraphClientStdError},
     rest::users::{
@@ -56,6 +56,11 @@ const ENVELOPE_SELECT: &str = "isRead,flag,subject,from,toRecipients,receivedDat
 const CONTACT_SELECT: &str = "displayName";
 /// The event properties a listing carries: what tells an edit apart.
 const EVENT_SELECT: &str = "id,changeKey";
+/// How many calendars or contact folders one listing page asks for.
+const FOLDER_PAGE: u32 = 100;
+/// The id a listing of the account gives the default contact folder,
+/// which Graph addresses by omitting the folder segment.
+const DEFAULT_CONTACT_FOLDER: &str = "contacts";
 /// How many events one listing page asks for.
 const EVENT_PAGE: u32 = 250;
 
@@ -494,9 +499,22 @@ fn resolve_mail_folder(client: &mut MsgraphClientStd, name: &str) -> Result<Stri
 
 /// Resolves a contact folder by display name or id, `Contacts` naming the
 /// default one, which Graph does not list.
+///
+/// `contacts` is the id a listing of the account gives the default
+/// folder, so it names that one before any folder of that name. A
+/// top-level folder is found by id or display name, and any other id is
+/// then asked for directly, which reaches a nested folder too.
 fn resolve_contact_folder(client: &mut MsgraphClientStd, name: &str) -> Result<Option<String>> {
+    if name == DEFAULT_CONTACT_FOLDER {
+        return Ok(None);
+    }
+
+    let params = MsgraphContactFoldersListParams {
+        top: Some(FOLDER_PAGE),
+        ..Default::default()
+    };
     let listed = client
-        .contact_folders_list(&MsgraphContactFoldersListParams::default())
+        .contact_folders_list(&params)
         .context("cannot list contact folders")?
         .response;
 
@@ -505,32 +523,52 @@ fn resolve_contact_folder(client: &mut MsgraphClientStd, name: &str) -> Result<O
         .into_iter()
         .find(|folder| folder.id == name || folder.display_name.eq_ignore_ascii_case(name));
 
-    match found {
-        Some(folder) => Ok(Some(folder.id)),
-        None if name.eq_ignore_ascii_case("contacts") => Ok(None),
-        None => bail!("Contact folder `{name}` not found on Microsoft Graph"),
+    if let Some(folder) = found {
+        return Ok(Some(folder.id));
     }
+
+    if name.eq_ignore_ascii_case(DEFAULT_CONTACT_FOLDER) {
+        return Ok(None);
+    }
+
+    let folder = client
+        .contact_folder_get(name)
+        .with_context(|| format!("Contact folder `{name}` not found on Microsoft Graph"))?
+        .response;
+
+    Ok(Some(folder.id))
 }
 
-/// Resolves a calendar by name or id.
+/// Resolves a calendar by id, the one a listing of the account gives, or
+/// by name, then asks for an id the first listing page did not hold.
 fn resolve_calendar(client: &mut MsgraphClientStd, name: &str) -> Result<String> {
+    let params = MsgraphCalendarsListParams {
+        top: Some(FOLDER_PAGE),
+        ..Default::default()
+    };
     let listed = client
-        .calendars_list(&MsgraphCalendarsListParams::default())
+        .calendars_list(&params)
         .context("cannot list calendars")?
         .response;
 
-    listed
-        .value
-        .into_iter()
-        .find(|calendar| {
-            calendar.id == name
-                || calendar
-                    .name
-                    .as_deref()
-                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name))
-        })
-        .map(|calendar| calendar.id)
-        .ok_or_else(|| anyhow!("Calendar `{name}` not found on Microsoft Graph"))
+    let found = listed.value.into_iter().find(|calendar| {
+        calendar.id == name
+            || calendar
+                .name
+                .as_deref()
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name))
+    });
+
+    if let Some(calendar) = found {
+        return Ok(calendar.id);
+    }
+
+    let calendar = client
+        .calendar_get(name)
+        .with_context(|| format!("Calendar `{name}` not found on Microsoft Graph"))?
+        .response;
+
+    Ok(calendar.id)
 }
 
 /// Whether a failure is Graph refusing an expired delta link (HTTP 410).

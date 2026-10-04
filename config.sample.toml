@@ -298,10 +298,10 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 # The collections this account watches, at least one, sharing one token and one
 # connection: a mail folder by display name, id or well-known name (`inbox`), a
-# contact folder (`Contacts` being the default one) and a calendar, both by name
-# or id.
+# contact folder (`contacts` being the default one, nested ones by id) and a
+# calendar, both by name or id.
 #msgraph.mailbox = "inbox"
-#msgraph.addressbook = "Contacts"
+#msgraph.addressbook = "contacts"
 #msgraph.calendar = "Calendar"
 
 # The mailbox owner, unset meaning the token's own user.
@@ -359,9 +359,9 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 # ---- Google People: a sync token poll over a contact group ---------------------
 
-# The contact group this account watches, by name or resource name, `myContacts`
-# holding every contact the account owns. Required.
-#gpeople.addressbook = "myContacts"
+# The contact group this account watches, by name or resource name, or
+# `contacts` for every contact the account owns, whatever its groups. Required.
+#gpeople.addressbook = "contacts"
 
 #gpeople.auth.token.command = ["ortie", "token", "read", "google"]
 #gpeople.watch.poll.interval = 60
