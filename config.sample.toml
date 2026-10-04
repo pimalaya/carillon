@@ -59,9 +59,11 @@ default = true
 # reaching it as environment variables either way.
 #
 # A hook templates against $id, which is the backend's own id (an IMAP UID, a
-# JMAP object id, a Maildir file name, a WebDAV href), and against the collection
-# under the name its backend configures it: $mailbox, $calendar, $addressbook. A
-# flag hook adds $flag, naming the one flag that moved.
+# JMAP object id, a Maildir file name, a WebDAV href, a Graph id, a Gmail message
+# id, a Google event id, a People resource name), and against the collection
+# under the name its backend configures it: $mailbox, $calendar, $addressbook,
+# and under $collection whatever the backend, so one command serves every domain.
+# A flag hook adds $flag, naming the one flag that moved.
 #
 # The envelope variables ($subject, $date, $sender, $sender_name,
 # $sender_address, $recipient, $recipient_name, $recipient_address) belong to the

@@ -203,7 +203,7 @@ A CalDAV watch SHALL resolve what its collection holds from `supported-calendar-
 - **THEN** `on-event-added` fires
 
 ### Requirement: A hook templates against what its event carries
-Each hook SHALL declare the variables it can fill, and a notification naming anything else SHALL be refused when the configuration is read. `$id` SHALL be available to every hook, the collection SHALL be available under the name its backend configures it as, `$flag` to a flag hook, and the envelope names only to the arrival hook of a backend that resolves one, which is IMAP alone. A `${name:default}` SHALL keep working whatever the name, a default being how a template says it can do without the value. A command SHALL NOT be validated, its placeholders reaching it as environment variables where an unset name is ordinary.
+Each hook SHALL declare the variables it can fill, and a notification naming anything else SHALL be refused when the configuration is read. `$id` SHALL be available to every hook, the collection SHALL be available under the name its backend configures it as and under `$collection` whatever the backend, `$flag` to a flag hook, and the envelope names only to the arrival hook of a backend that resolves one. A `${name:default}` SHALL keep working whatever the name, a default being how a template says it can do without the value. A command SHALL NOT be validated, its placeholders reaching it as environment variables where an unset name is ordinary.
 
 #### Scenario: A removal that asks for an envelope
 - **GIVEN** an account whose `imap.hook.on-message-removed` notification body reads `$subject`
@@ -215,8 +215,13 @@ Each hook SHALL declare the variables it can fill, and a notification naming any
 - **WHEN** a message arrives whose envelope carries no sender, or whose resolution failed
 - **THEN** the notification fires with that part empty, rather than being dropped
 
+#### Scenario: One command for every domain
+- **GIVEN** a `caldav` account on `work` and a `carddav` one on `default`, both running the same command
+- **WHEN** an event and a contact are added
+- **THEN** the command reads `collection=work` for the first and `collection=default` for the second, from the same variable
+
 ### Requirement: The collection belongs to the backend, under its own name
-Each backend SHALL take the collection it watches, required, under the name its domain uses: `imap.mailbox`, `maildir.mailbox`, `gmail.mailbox`, `caldav.calendar`, `gcal.calendar`, `carddav.addressbook` and `gpeople.addressbook`, and for the backends serving several domains `jmap.mailbox`, `jmap.addressbook` and `jmap.calendar`, and the same three under `msgraph`, of which at least one. No account-level key SHALL name it, so an account block carries nothing that needs a backend to be understood. A hook SHALL template against the name the collection its event is about was configured under, `$id` being the one variable every backend means the same way.
+Each backend SHALL take the collection it watches, required, under the name its domain uses: `imap.mailbox`, `maildir.mailbox`, `gmail.mailbox`, `caldav.calendar`, `gcal.calendar`, `carddav.addressbook` and `gpeople.addressbook`, and for the backends serving several domains `jmap.mailbox`, `jmap.addressbook` and `jmap.calendar`, and the same three under `msgraph`, of which at least one. No account-level key SHALL name it, so an account block carries nothing that needs a backend to be understood. A hook SHALL template against the name the collection its event is about was configured under, `$id` and `$collection` being the two variables every backend means the same way.
 
 #### Scenario: A mail hook naming its mailbox
 - **GIVEN** an account whose `imap.hook.on-message-added` summary reads `New mail in $mailbox`

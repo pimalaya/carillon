@@ -28,6 +28,9 @@ use crate::{
 
 /// The one variable every backend means the same way.
 const ID_VAR: &str = "id";
+/// The collection the event is about, whatever its backend calls it, so
+/// one hook runner reads every domain under one name.
+const COLLECTION_VAR: &str = "collection";
 /// What a flag hook adds: the one flag its firing is about.
 const FLAG_VAR: &str = "flag";
 /// What an arrival adds, where its backend can read an envelope.
@@ -107,7 +110,7 @@ impl Vocabulary {
         let envelope: &[&str] = if self.envelope { ENVELOPE_VARS } else { &[] };
         let flag = self.flag.then_some(FLAG_VAR);
 
-        [ID_VAR, self.collection]
+        [ID_VAR, COLLECTION_VAR, self.collection]
             .into_iter()
             .chain(envelope.iter().copied())
             .chain(flag)
@@ -190,6 +193,7 @@ fn run_flag_hook(hook: &FlagHook, id: &str, collection: HookCollection<'_>, flag
 
     let mut vars = seeded(Vocabulary::flag(collection.name));
     vars.insert(ID_VAR, id.to_string());
+    vars.insert(COLLECTION_VAR, collection.value.to_string());
     vars.insert(collection.name, collection.value.to_string());
     vars.insert(FLAG_VAR, flag.to_string());
 
@@ -208,6 +212,7 @@ fn item_vars(
 ) -> BTreeMap<&'static str, String> {
     let mut vars = seeded(Vocabulary::resolved(collection.name));
     vars.insert(ID_VAR, id.to_string());
+    vars.insert(COLLECTION_VAR, collection.value.to_string());
     vars.insert(collection.name, collection.value.to_string());
 
     let Some(summary) = summary else {
@@ -372,7 +377,7 @@ mod tests {
 
         assert!(err.contains("on-message-removed.notify.body"), "got {err}");
         assert!(err.contains("$subject"), "got {err}");
-        assert!(err.contains("$id, $mailbox"), "got {err}");
+        assert!(err.contains("$id, $collection, $mailbox"), "got {err}");
     }
 
     #[test]
@@ -430,5 +435,29 @@ mod tests {
         let vars = item_vars("42", mailbox(), Some(&summary));
         let expanded = subst::substitute("$subject from $sender", &vars).expect("expands");
         assert_eq!(" from alice@example.org", expanded);
+    }
+
+    /// One hook runner reads every domain: `$collection` is the value
+    /// the account configured, whatever its backend calls it.
+    #[test]
+    fn every_hook_names_its_collection_under_one_name() {
+        let calendar = HookCollection {
+            name: "calendar",
+            value: "work",
+        };
+        let vars = item_vars("/cal/alice/work/a.ics", calendar, None);
+
+        assert_eq!("work", vars["collection"]);
+        assert_eq!("work", vars["calendar"]);
+        assert_eq!("/cal/alice/work/a.ics", vars["id"]);
+        assert!(!vars.contains_key("mailbox"));
+
+        let notify = notified("$collection");
+        validate(
+            Some(&notify),
+            Vocabulary::item("addressbook"),
+            "gpeople.hook.on-card-added",
+        )
+        .expect("every hook has its collection");
     }
 }
