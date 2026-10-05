@@ -48,10 +48,11 @@ use crate::{
 /// How long the watch waits between two polls.
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// The mail properties a delta row carries when no hook wants an
-/// envelope: membership is the folder scope, so only the flags.
-const MESSAGE_SELECT: &str = "isRead,flag";
+/// envelope: membership is the folder scope, so only the flags and the
+/// `changeKey` an edit moves.
+const MESSAGE_SELECT: &str = "changeKey,isRead,flag";
 /// The same, plus what an arrival hook templates on.
-const ENVELOPE_SELECT: &str = "isRead,flag,subject,from,toRecipients,receivedDateTime";
+const ENVELOPE_SELECT: &str = "changeKey,isRead,flag,subject,from,toRecipients,receivedDateTime";
 /// The contact property a delta row carries, the id riding along anyway.
 const CONTACT_SELECT: &str = "displayName";
 /// The event properties a listing carries: what tells an edit apart.
@@ -438,7 +439,7 @@ fn message_row(row: MsgraphMessageDelta) -> Row {
         removed: removed.is_some(),
         item: Item {
             flags,
-            version: None,
+            version: message.change_key,
         },
         summary,
     }

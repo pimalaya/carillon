@@ -322,9 +322,11 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 # Same events as JMAP: `isRead` arrives as `Seen`, a follow-up flag as `Flagged`.
 # The calendar is listed on every poll and its `changeKey` compared, an event
-# being edited where it stands whatever its date.
+# being edited where it stands whatever its date. A draft edited in place fires
+# `on-message-changed`, unless a flag moved in the same edit.
 #msgraph.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
 #msgraph.hook.on-message-added.notify.body = "$subject"
+#msgraph.hook.on-message-changed.cmd = "true"
 #msgraph.hook.on-flag-added.flags = ["Flagged"]
 #msgraph.hook.on-card-changed.cmd = "true"
 #msgraph.hook.on-event-changed.notify.summary = "Event $id changed in $calendar"

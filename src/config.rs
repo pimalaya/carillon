@@ -931,6 +931,10 @@ impl JmapConfig {
     /// Refuses a block watching nothing, a hook whose domain has no
     /// collection, and a notification naming what its event cannot fill.
     pub fn validate(&self) -> Result<()> {
+        if self.hook.on_message_changed.is_some() {
+            bail!("Hook `jmap.hook.on-message-changed` never fires: a JMAP email is immutable");
+        }
+
         let collection = |domain| self.collection(domain).is_some();
         refuse_unwatched("jmap", collection, self.hook.configured())?;
         self.hook.validate("jmap")
@@ -982,7 +986,8 @@ impl CarddavConfig {
 // NOTE: each backend declares only the events it reports, so a hook it
 // cannot fire is refused when the file is read rather than staying quiet
 // forever. The events are named after their domain, which is why the
-// tables below do not share a shape: mail has no edit, WebDAV no flags.
+// tables below do not share a shape: mail has no edit but a Graph draft,
+// WebDAV no flags.
 
 /// Hooks an IMAP watch fires.
 #[cfg(feature = "imap")]
@@ -1008,6 +1013,9 @@ pub struct DomainsHookConfig {
     pub on_message_added: Option<ItemHook>,
     /// Fires when a message leaves it.
     pub on_message_removed: Option<ItemHook>,
+    /// Fires when a message is edited where it stands, which only a
+    /// Microsoft Graph draft is.
+    pub on_message_changed: Option<ItemHook>,
     /// Fires once for each keyword set on a message.
     pub on_flag_added: Option<FlagHook>,
     /// Fires once for each keyword cleared on a message.
@@ -1116,6 +1124,7 @@ impl DomainsHookConfig {
             }
             (WatchDomain::Message, WatchEvent::ItemAdded { .. }) => &self.on_message_added,
             (WatchDomain::Message, WatchEvent::ItemRemoved { .. }) => &self.on_message_removed,
+            (WatchDomain::Message, WatchEvent::ItemChanged { .. }) => &self.on_message_changed,
             (WatchDomain::Card, WatchEvent::ItemAdded { .. }) => &self.on_card_added,
             (WatchDomain::Card, WatchEvent::ItemRemoved { .. }) => &self.on_card_removed,
             (WatchDomain::Card, WatchEvent::ItemChanged { .. }) => &self.on_card_changed,
@@ -1141,6 +1150,11 @@ impl DomainsHookConfig {
                 "on-message-removed",
                 WatchDomain::Message,
                 self.on_message_removed.is_some(),
+            ),
+            (
+                "on-message-changed",
+                WatchDomain::Message,
+                self.on_message_changed.is_some(),
             ),
             (
                 "on-flag-added",
@@ -1338,6 +1352,13 @@ impl DomainsHookConfig {
                 .and_then(|h| h.notify.as_ref()),
             Vocabulary::item(mailbox),
             &format!("{backend}.hook.on-message-removed"),
+        )?;
+        hook::validate(
+            self.on_message_changed
+                .as_ref()
+                .and_then(|h| h.notify.as_ref()),
+            Vocabulary::item(mailbox),
+            &format!("{backend}.hook.on-message-changed"),
         )?;
         hook::validate(
             self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
@@ -2294,6 +2315,18 @@ mod tests {
         assert!(err.contains("jmap.addressbook"), "got {err}");
 
         jmap(&format!("jmap.addressbook = \"Personal\"\n{hook}")).expect("an addressbook");
+    }
+
+    #[cfg(feature = "jmap")]
+    #[test]
+    fn a_jmap_message_edit_hook_is_refused() {
+        let hook = "jmap.hook.on-message-changed.cmd = \"true\"\n";
+
+        let err = format!(
+            "{:#}",
+            jmap(&format!("jmap.mailbox = \"INBOX\"\n{hook}")).expect_err("immutable")
+        );
+        assert!(err.contains("jmap.hook.on-message-changed"), "got {err}");
     }
 
     #[cfg(feature = "jmap")]

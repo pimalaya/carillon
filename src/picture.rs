@@ -29,8 +29,9 @@ pub type Known = BTreeMap<String, Item>;
 /// Reads one item a change feed named, and reports what moved.
 ///
 /// An unknown item is an arrival. A known one is a flag delta for mail,
-/// which is immutable, and an edit for anything else, unless both sides
-/// carry the same version: a feed may name an item it did not change.
+/// or an edit where no flag moved but the version did (a Graph draft),
+/// and an edit for anything else, unless both sides carry the same
+/// version: a feed may name an item it did not change.
 pub fn touch(known: &mut Known, domain: WatchDomain, id: String, item: Item) -> Vec<WatchEvent> {
     match known.insert(id.clone(), item.clone()) {
         None => vec![WatchEvent::ItemAdded { domain, id }],
@@ -100,7 +101,17 @@ fn moved(
                 flag: flag.clone(),
             });
 
-        return added.chain(removed).collect();
+        let flagged: Vec<_> = added.chain(removed).collect();
+
+        // NOTE: a flag moves the version too, so an edit is reported only
+        // where no flag moved, and never for a message carrying none.
+        let edited = after.version.is_some() && before.version != after.version;
+
+        if flagged.is_empty() && edited {
+            return vec![WatchEvent::ItemChanged { domain, id }];
+        }
+
+        return flagged;
     }
 
     let unversioned = touched && after.version.is_none();
@@ -172,6 +183,33 @@ mod tests {
 
         let events = touch(&mut picture, mail, String::from("M"), Item::default());
         assert!(matches!(events[..], [WatchEvent::FlagRemoved { .. }]));
+    }
+
+    /// A Graph draft is edited where it stands, its `changeKey` moving,
+    /// which a flag moves as well.
+    #[test]
+    fn a_versioned_message_reports_an_edit_only_where_no_flag_moved() {
+        let mail = WatchDomain::Message;
+        let mut picture = known(&[("M", Some("1"))]);
+
+        let events = touch(&mut picture, mail, String::from("M"), item(Some("1")));
+        assert!(events.is_empty());
+
+        let events = touch(&mut picture, mail, String::from("M"), item(Some("2")));
+        assert_eq!(
+            vec![WatchEvent::ItemChanged {
+                domain: mail,
+                id: String::from("M"),
+            }],
+            events
+        );
+
+        let seen = Item {
+            flags: BTreeSet::from([String::from("Seen")]),
+            version: Some(String::from("3")),
+        };
+        let events = touch(&mut picture, mail, String::from("M"), seen);
+        assert!(matches!(events[..], [WatchEvent::FlagAdded { .. }]));
     }
 
     /// The reason a rebase exists: an expired feed listed again must not

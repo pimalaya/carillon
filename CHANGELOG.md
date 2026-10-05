@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Added the `wizard` cargo feature, on by default, gating the interactive configuration: the `configure` command and the offer a first run makes. A build without it drops the prompts and the dependencies only they use, and a missing configuration points at the documented sample instead.
 - Added `$collection` to every hook, templates and command environment alike: the collection as the account configured it, whatever the backend calls it, so one command serves every domain.
+- Added `msgraph.hook.on-message-changed`, fired when a draft is edited in place (its `changeKey` moving while no flag does).
 
 ### Changed
 

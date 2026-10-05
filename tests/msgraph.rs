@@ -48,8 +48,9 @@ fn block(key: &str, id: &str) -> String {
     )
 }
 
-/// A message filed in the watched folder arrives with its envelope, its
-/// flags are reported under the shared names, and its deletion leaves.
+/// A message filed in the watched folder arrives with its envelope, an
+/// edit of the draft is reported, its flags are reported under the shared
+/// names, and its deletion leaves.
 #[test]
 #[ignore = "live: needs the app registration's client secret"]
 fn a_graph_mail_folder_fires_its_hooks() {
@@ -69,7 +70,12 @@ fn a_graph_mail_folder_fires_its_hooks() {
             let watcher = Watcher::start(
                 "msgraph",
                 &block("mailbox", &folder),
-                &["on-message-added", "on-flag-added", "on-message-removed"],
+                &[
+                    "on-message-added",
+                    "on-message-changed",
+                    "on-flag-added",
+                    "on-message-removed",
+                ],
                 &token,
             );
 
@@ -82,6 +88,15 @@ fn a_graph_mail_folder_fires_its_hooks() {
 
             let line = watcher.wait_for("on-message-added", "the arrival fires");
             assert!(line.contains(&tag), "with its subject: {line}");
+
+            let edit = MsgraphMessage {
+                subject: Some(format!("{tag} edited")),
+                ..Default::default()
+            };
+            client
+                .message_update(&message, &edit)
+                .expect("edit the draft");
+            watcher.wait_for("on-message-changed", "the edit fires");
 
             // NOTE: a message filed through MIME is a draft, which Graph
             // may already count as read, so it is made unread first and

@@ -70,8 +70,9 @@ pub enum WatchEvent {
     /// An item's content changed where it stands.
     ///
     /// Only a backend holding mutable items reports this: a message is
-    /// immutable, so no mail backend does, while a card or an event is
-    /// edited in place, its WebDAV etag or JMAP state moving.
+    /// immutable, so no mail backend does but Microsoft Graph, whose
+    /// drafts are edited in place, while a card or an event is edited in
+    /// place, its WebDAV etag, JMAP state or Graph `changeKey` moving.
     ItemChanged {
         /// What the item is.
         domain: WatchDomain,

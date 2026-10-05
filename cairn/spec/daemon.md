@@ -73,7 +73,7 @@ The daemon SHALL own reconnection: a session that ends, for any reason other tha
 - **THEN** the daemon waits its backoff, resolves the credential again, and reopens the watch
 
 ### Requirement: One change vocabulary across backends
-Every backend SHALL report changes in one vocabulary: an item added, an item removed, an item changed, a flag added, a flag removed, each carrying the domain of what it is about. Flags SHALL be reported under one set of names whatever the backend spells them as, so that a filter written once (`flags = ["Seen"]`) fires against IMAP `\Seen`, JMAP `$seen` and the Maildir `S` letter alike. A backend SHALL report only the events its protocol can express, which is a property of the protocol rather than a gap: mail is immutable, so nothing mail reports an edit, and a WebDAV poll reads etags, so the flags of an item are unknown to it rather than empty, and it reports none. Unknown and empty are distinct, as they are in a pimdir store. The vocabulary SHALL stay one across the backends even though the hooks configuring it are per backend and per domain, so that one hook runner serves all of them.
+Every backend SHALL report changes in one vocabulary: an item added, an item removed, an item changed, a flag added, a flag removed, each carrying the domain of what it is about. Flags SHALL be reported under one set of names whatever the backend spells them as, so that a filter written once (`flags = ["Seen"]`) fires against IMAP `\Seen`, JMAP `$seen` and the Maildir `S` letter alike. A backend SHALL report only the events its protocol can express, which is a property of the protocol rather than a gap: mail is immutable, so nothing mail reports an edit but a Microsoft Graph draft, edited where it stands, and then only where no flag moved in the same edit, its `changeKey` moving with either, and a WebDAV poll reads etags, so the flags of an item are unknown to it rather than empty, and it reports none. Unknown and empty are distinct, as they are in a pimdir store. The vocabulary SHALL stay one across the backends even though the hooks configuring it are per backend and per domain, so that one hook runner serves all of them.
 
 #### Scenario: A message is marked read on each mail backend
 - **GIVEN** three accounts watching the same mailbox over IMAP, JMAP and Maildir
@@ -83,7 +83,7 @@ Every backend SHALL report changes in one vocabulary: an item added, an item rem
 #### Scenario: An item that is edited where it stands
 - **GIVEN** a CardDAV account watching an addressbook
 - **WHEN** a contact is edited and its etag moves
-- **THEN** `carddav.hook.on-card-changed` fires, an event no mail backend accepts a hook for
+- **THEN** `carddav.hook.on-card-changed` fires, an event only a Microsoft Graph mailbox also accepts a hook for among the mail backends
 
 ### Requirement: A WebDAV collection is watchable
 The daemon SHALL watch a WebDAV collection by polling an RFC 6578 `sync-collection` report, under whichever of `caldav` and `carddav` names the domain it holds, both sharing one server, authentication and poll shape. It SHALL request `getetag`, and the content type only where a mixed calendar needs it, so a poll never carries a contact or an event; it SHALL keep an href to etag and domain picture of the collection, so that a member it has never seen reads as an arrival, a known member whose etag moved reads as an edit, and a member that vanished is still reported under the domain it had. A truncated report SHALL be drained immediately rather than at the next interval. A sync token the server rejects SHALL cause a re-enumeration read against the picture, reporting only what differs. A server refusing the report SHALL be listed with a `PROPFIND` on every poll instead, read against the picture the same way, and a truncated listing SHALL report no removal. A round that fails SHALL be run again on a fresh connection, picture and token kept, before the session is given up. No backend SHALL watch a collection holding neither calendars nor contacts: the domains that exist have their own backend, and a collection naming none of them has no hook worth firing.
@@ -164,12 +164,17 @@ The hooks SHALL be configured under their backend (`imap.hook`, `jmap.hook`, `ma
 - **THEN** no hook fires from the IMAP table, and the Maildir table is what the watch reads
 
 ### Requirement: An event is named after its domain
-A hook SHALL be named after what it carries. Mail SHALL be `on-message-added` and `on-message-removed`, whichever of IMAP, JMAP and Maildir reports it. A CardDAV addressbook SHALL be `on-card-added`, `on-card-removed` and `on-card-changed`, and a CalDAV calendar the same three under `on-event-` and `on-task-`. A backend SHALL take only the domains it holds, so the domain a hook names is checked when the configuration is read rather than assumed while the watch runs. The domain SHALL be carried by the event itself, so that one hook runner still serves every backend.
+A hook SHALL be named after what it carries. Mail SHALL be `on-message-added` and `on-message-removed`, whichever of IMAP, JMAP and Maildir reports it, and `on-message-changed` for a Microsoft Graph draft edited where it stands, which no other mail backend accepts. A CardDAV addressbook SHALL be `on-card-added`, `on-card-removed` and `on-card-changed`, and a CalDAV calendar the same three under `on-event-` and `on-task-`. A backend SHALL take only the domains it holds, so the domain a hook names is checked when the configuration is read rather than assumed while the watch runs. The domain SHALL be carried by the event itself, so that one hook runner still serves every backend.
 
 #### Scenario: A calendar hook on an addressbook
 - **GIVEN** an account configuring `carddav.hook.on-event-added`
 - **WHEN** the configuration is read
 - **THEN** it is refused, and the account is pointed at `on-card-added`
+
+#### Scenario: A message edit hook on JMAP
+- **GIVEN** an account configuring `jmap.hook.on-message-changed`
+- **WHEN** the configuration is read
+- **THEN** it is refused, a JMAP email being immutable
 
 ### Requirement: A flag hook fires once per flag
 `on-flag-added` and `on-flag-removed` SHALL fire once for each flag that moved rather than once for the delta, so `$flag` SHALL always name the flag the firing is about and no plural variable SHALL be exposed. The optional `flags = [...]` filter SHALL narrow which of those firings happen, matching one flag at a time, with or without a leading `\` or `$` and without regard to case. A backend with no flags SHALL take no flag hook at all.
@@ -351,6 +356,11 @@ carillon SHALL offer four bearer-authenticated backends, each polled, none offer
 - **GIVEN** an account watching `msgraph.mailbox = "Inbox"` with `msgraph.hook.on-flag-added.flags = ["Flagged"]`
 - **WHEN** a message in the inbox is flagged for follow-up
 - **THEN** the hook fires with `$flag` set to `Flagged`
+
+#### Scenario: A draft edited in Outlook
+- **GIVEN** an account watching `msgraph.mailbox = "Drafts"` with `msgraph.hook.on-message-changed`
+- **WHEN** a draft's subject, body or recipients are edited
+- **THEN** the hook fires with the draft's `$id`, which the handler reads back itself
 
 #### Scenario: A far-future event
 - **GIVEN** an account watching `msgraph.calendar`
