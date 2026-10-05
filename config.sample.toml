@@ -34,49 +34,14 @@ default = true
 # Backend config
 # --------------------------------------------------------------------------------
 
-# Declare one or more of the `imap`, `jmap`, `maildir`, `caldav`, `carddav`,
-# `msgraph`, `gmail`, `gcal` and `gpeople` blocks below. With more than one,
-# `-b/--backend` selects the active one; `-b auto`, the default, takes the first
-# configured in that order.
-#
-# Each block carries the one collection it watches, required and named after its
-# own domain: `imap.mailbox`, `maildir.mailbox`, `gmail.mailbox`,
-# `caldav.calendar`, `gcal.calendar`, `carddav.addressbook`,
-# `gpeople.addressbook`. JMAP and Microsoft Graph take one per domain, at least
-# one of `<backend>.mailbox`, `<backend>.addressbook` and `<backend>.calendar`,
-# sharing one connection.
-# Watching a second collection of a domain is a second account, which is also how
-# it gets its own hooks.
-#
-# Each block also carries the hooks that backend fires, under `<backend>.hook`
-# (`hooks` also reads), named after what it holds: `on-message-*` for mail,
-# `on-card-*` for an addressbook, `on-event-*` and `on-task-*` for a calendar.
-# Anything else is refused when this file is read rather than staying quiet.
-#
-# Every hook fires a `notify` desktop notification, a `cmd`, or both. `cmd` is
-# either a string handed to the platform shell (/bin/sh -c on Unix, cmd /C on
-# Windows) or a [program, args...] list spawned directly, the placeholders
-# reaching it as environment variables either way.
-#
-# A hook templates against $id, which is the backend's own id (an IMAP UID, a
-# JMAP object id, a Maildir file name, a WebDAV href, a Graph id, a Gmail message
-# id, a Google event id, a People resource name), and against the collection
-# under the name its backend configures it: $mailbox, $calendar, $addressbook,
-# and under $collection whatever the backend, so one command serves every domain.
-# A flag hook adds $flag, naming the one flag that moved.
-#
-# The envelope variables ($subject, $date, $sender, $sender_name,
-# $sender_address, $recipient, $recipient_name, $recipient_address) belong to the
-# on-message-added hook of IMAP and JMAP alone, the two that read one. A
-# notification naming anything else is refused when this file is read.
-#
-# Write `${name:default}` where a hook can do without the value: a variable the
-# hook may use but this one item lacks (a message with no sender, an arrival
-# whose resolution failed) expands to nothing.
-#
-# Every secret below is either `raw = "..."` or `command = "..."`, the command
-# being a string handed to the platform shell or a [program, args...] list, and
-# its standard output the value.
+# Declare one or more backend blocks below; `-b/--backend` picks one, the first
+# declared by default. Each block names the collection it watches (JMAP and
+# Graph take one per domain) and its hooks under `<backend>.hook`, which fire a
+# `notify` notification, a `cmd` (shell string or [program, args...] list), or
+# both. Hooks template against $id, $collection, $mailbox/$calendar/$addressbook,
+# $flag for flag hooks and envelope variables ($subject, $sender…) for message
+# arrivals; `${name:default}` covers a missing value. A secret is `raw = "..."`
+# or `command = "..."`.
 
 # ---- IMAP: an idle connection (RFC 2177) ---------------------------------------
 
