@@ -49,8 +49,8 @@ fn block(key: &str, id: &str) -> String {
 }
 
 /// A message filed in the watched folder arrives with its envelope, an
-/// edit of the draft is reported, its flags are reported under the shared
-/// names, and its deletion leaves.
+/// edit of the draft is reported, attachments included, its flags are
+/// reported under the shared names, and its deletion leaves.
 #[test]
 #[ignore = "live: needs the app registration's client secret"]
 fn a_graph_mail_folder_fires_its_hooks() {
@@ -97,6 +97,18 @@ fn a_graph_mail_folder_fires_its_hooks() {
                 .message_update(&message, &edit)
                 .expect("edit the draft");
             watcher.wait_for("on-message-changed", "the edit fires");
+
+            let attachment = client
+                .attachment_create(&message, "note.txt", b"carillon", Some("text/plain"))
+                .expect("attach a file to the draft")
+                .response
+                .id;
+            watcher.wait_for("on-message-changed", "the attachment fires");
+
+            client
+                .attachment_delete(&message, &attachment)
+                .expect("detach the file");
+            watcher.wait_for("on-message-changed", "the detachment fires");
 
             // NOTE: a message filed through MIME is a draft, which Graph
             // may already count as read, so it is made unread first and

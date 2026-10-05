@@ -7,5 +7,5 @@ change: graph-draft-edits
 - [x] Report an edit for a message whose version moved and no flag did
 - [x] Add `on-message-changed` to the JMAP/Graph hook table, refused under JMAP
 - [x] Unit-test the picture and the refusal, extend the live Graph mail test
-- [ ] Run the live Graph mail test, and check whether an attachment change moves `changeKey`
+- [x] Run the live Graph mail test, and check whether an attachment change moves `changeKey`
 - [x] Document the sample, fold the delta, log the change
