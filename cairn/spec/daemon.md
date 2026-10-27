@@ -335,6 +335,14 @@ Every command handing data to the printer SHALL return a named `*Output` type de
 - **WHEN** it runs
 - **THEN** one file per command is written there, the directory being created if it is not already
 
+### Requirement: The JSON contract is described and versioned
+`carillon json-schema` SHALL describe, under the key `carillon-error`, the failure object every command prints under `--json`. Every generated schema SHALL carry an `$id` naming the contract version, which is the minor version while Carillon is below 1.0 (`v0.2`) and the major version after. Every registered payload SHALL be a JSON object, checked by a test. Piped `--json` output SHALL print one value per line.
+
+#### Scenario: A caller reads a failure against its schema
+- **GIVEN** `carillon json-schema carillon-error`
+- **WHEN** it runs
+- **THEN** the schema of the JSON failure object is printed, its `$id` being `https://pimalaya.org/schemas/carillon/v0.2/carillon-error.json`
+
 ### Requirement: A JMAP account watches every domain it configures
 The JMAP backend SHALL watch mail, contacts and calendar events, each under the collection key its domain uses (`jmap.mailbox`, `jmap.addressbook`, `jmap.calendar`), of which at least one SHALL be given. It SHALL fire `on-message-*` and `on-flag-*` for mail, `on-card-*` for contacts and `on-event-*` for calendar events, and SHALL NOT offer `on-task-*`, the JMAP calendars draft having no task type. A hook naming a domain the account configured no collection for SHALL be refused when the configuration is read, naming the hook and the key it would need. All the domains SHALL share one session, one connection and one event stream, that being what JMAP offers over a protocol needing an account per domain.
 

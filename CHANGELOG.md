@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Changed `gpeople.addressbook = "contacts"` to watch every contact the account owns, and `msgraph.addressbook = "contacts"` to name the default contact folder first; a Graph contact folder or calendar is also found by id beyond the first listing page, nested contact folders included.
 
 - Bumped io-gmail to 0.5, io-gpeople to 0.5, io-gcal to 0.2 and io-msgraph to 0.6, the versions Neverest builds with. Nothing changes in what a watch reports.
+- Changed piped `--json` output to print one value per line, each schema of `json-schema` to carry an `$id` naming the contract version (`v0.2`), and added `carillon-error`, the schema of the JSON failure object (pimalaya-cli `55b6693`).
 
 ### Fixed
 
