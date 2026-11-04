@@ -124,6 +124,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
+name = "base64-codec"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8c21fac036871f0cc54f32f04486210962fea0b2450233906c1b5b957be5262"
+dependencies = [
+ "simd-cpu",
+]
+
+[[package]]
 name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -200,7 +209,7 @@ dependencies = [
  "io-gcal",
  "io-gmail",
  "io-gpeople",
- "io-http",
+ "io-http 0.6.0",
  "io-imap",
  "io-jmap",
  "io-maildir",
@@ -1068,7 +1077,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17a7b0824811316d554c22abce3a7b85f03d6e224cbf11e44792894c1d0aa28b"
 dependencies = [
  "anyhow",
- "io-http",
+ "io-http 0.5.0",
  "log",
  "pimalaya-stream",
  "serde",
@@ -1085,7 +1094,7 @@ checksum = "9395ae6abe2e10289147290316e62226bedbd20a6b29fd6d9ae903d1483344c0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
- "io-http",
+ "io-http 0.5.0",
  "log",
  "pimalaya-stream",
  "serde",
@@ -1102,7 +1111,7 @@ checksum = "cfdcb1fd99f34eba6f6c4246fc7b1d7bdfa6ac0c32f1a574a819b8aca799b6cd"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
- "io-http",
+ "io-http 0.5.0",
  "log",
  "pimalaya-stream",
  "serde",
@@ -1121,6 +1130,22 @@ dependencies = [
  "httparse",
  "log",
  "memchr",
+ "pimalaya-stream",
+ "secrecy",
+ "thiserror",
+ "url",
+]
+
+[[package]]
+name = "io-http"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a9086cd840a757b9dd4105caad54a59fdb440c49be33882491a07274ca32e06"
+dependencies = [
+ "anyhow",
+ "base64-codec",
+ "httparse",
+ "log",
  "pimalaya-stream",
  "secrecy",
  "thiserror",
@@ -1152,7 +1177,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f15cf26ef3c2976bf52a1f89e29d82840bc4cede80d18785a025445cf4cb0e2a"
 dependencies = [
  "anyhow",
- "io-http",
+ "io-http 0.5.0",
  "log",
  "pimalaya-stream",
  "secrecy",
@@ -1181,7 +1206,7 @@ source = "git+https://github.com/pimalaya/io-msgraph?rev=2ae26370aefa671c16316db
 dependencies = [
  "anyhow",
  "base64 0.23.1",
- "io-http",
+ "io-http 0.5.0",
  "log",
  "pimalaya-stream",
  "serde",
@@ -1197,7 +1222,7 @@ checksum = "ab83f26e12cbd90c095c167a9611ad599be3fe086398ee93c01ab7b71fb5934e"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
- "io-http",
+ "io-http 0.5.0",
  "log",
  "pimalaya-stream",
  "rand",
@@ -1220,7 +1245,7 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "domain",
- "io-http",
+ "io-http 0.5.0",
  "ipconfig",
  "log",
  "pimalaya-stream",
@@ -1262,17 +1287,18 @@ dependencies = [
 
 [[package]]
 name = "io-webdav"
-version = "0.5.1"
-source = "git+https://github.com/pimalaya/io-webdav?rev=62fad898d1ecb3ebb25c37826a79eb72fcd54d7f#62fad898d1ecb3ebb25c37826a79eb72fcd54d7f"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fe0634d06f91a00dd0a36431c072ebd3482b6731bf7cc2f9e7e8b645bdf3f84"
 dependencies = [
  "anyhow",
- "io-http",
+ "io-http 0.6.0",
  "log",
+ "memchr",
  "pimalaya-stream",
  "serde",
  "thiserror",
  "url",
- "xmlparser",
 ]
 
 [[package]]
@@ -2415,6 +2441,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "simd-cpu"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d362f934351780e3ec67adf32bcb5bc341f23a393076d17a600a699c0c93b726"
+
+[[package]]
 name = "simd_cesu8"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3087,12 +3119,6 @@ name = "xml"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f45bb2c13fec6a6cb4c0f76a7e94839e110a14ec803ec2940777a94c347bc52"
-
-[[package]]
-name = "xmlparser"
-version = "0.13.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4"
 
 [[package]]
 name = "yoke"

@@ -46,7 +46,7 @@ anyhow = "1"
 base64 = { version = "0.23", optional = true }
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 ctrlc = { version = "3", features = ["termination"] }
-io-http = { version = "0.5", default-features = false, optional = true }
+io-http = { version = "0.6", default-features = false, optional = true }
 io-gcal = { version = "0.2", default-features = false, optional = true }
 io-gmail = { version = "0.5", default-features = false, optional = true }
 io-gpeople = { version = "0.5", default-features = false, optional = true }
@@ -56,7 +56,7 @@ io-maildir = { version = "0.3", default-features = false, optional = true }
 io-msgraph = { version = "0.6", default-features = false, optional = true }
 io-pim-discovery = { version = "0.8", default-features = false, features = ["autoconfig", "pacc", "rfc6186", "rfc6764", "rfc8620", "stream"], optional = true }
 io-sasl = { version = "0.1", default-features = false, features = ["scram"] }
-io-webdav = { version = "0.5", default-features = false, optional = true }
+io-webdav = { version = "0.7", default-features = false, optional = true }
 log = "0.4"
 notify-rust = { version = "4", default-features = false, features = ["d"] }
 pimalaya-cli = { version = "0.2", default-features = false, features = ["terminal", "spinner"] }
@@ -75,5 +75,4 @@ url = { version = "2.2", features = ["serde"] }
 io-http = { git = "https://github.com/pimalaya/io-http", rev = "e1815307771c1ec65a86b77256d46c33241d3038" }
 io-imap = { git = "https://github.com/pimalaya/io-imap", rev = "2f17d6a2d898fa0bca91da35af9cb8023dc8f150" }
 io-msgraph = { git = "https://github.com/pimalaya/io-msgraph", rev = "2ae26370aefa671c16316dbad98107634436bce6" }
-io-webdav = { git = "https://github.com/pimalaya/io-webdav", rev = "62fad898d1ecb3ebb25c37826a79eb72fcd54d7f" }
 pimalaya-cli = { git = "https://github.com/pimalaya/cli", rev = "55b66933950f02541892407667e5e0b254245871" }
