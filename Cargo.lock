@@ -223,7 +223,7 @@ dependencies = [
  "io-gcal",
  "io-gmail",
  "io-gpeople",
- "io-http 0.6.0",
+ "io-http",
  "io-imap",
  "io-jmap",
  "io-maildir",
@@ -1154,12 +1154,12 @@ dependencies = [
 
 [[package]]
 name = "io-gcal"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17a7b0824811316d554c22abce3a7b85f03d6e224cbf11e44792894c1d0aa28b"
+checksum = "d0d23bf4c6cc8c4adfc657e2438698084128350787761dac5d2e7da66e664cc1"
 dependencies = [
  "anyhow",
- "io-http 0.5.0",
+ "io-http",
  "log",
  "pimalaya-stream",
  "serde",
@@ -1170,13 +1170,13 @@ dependencies = [
 
 [[package]]
 name = "io-gmail"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9395ae6abe2e10289147290316e62226bedbd20a6b29fd6d9ae903d1483344c0"
+checksum = "8de29a10a00cb5eabc1dc610823a1614f43d1e4cfed88a92f4b274bac6bd4c33"
 dependencies = [
  "anyhow",
- "base64",
- "io-http 0.5.0",
+ "base64-codec",
+ "io-http",
  "log",
  "pimalaya-stream",
  "serde",
@@ -1187,33 +1187,17 @@ dependencies = [
 
 [[package]]
 name = "io-gpeople"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfdcb1fd99f34eba6f6c4246fc7b1d7bdfa6ac0c32f1a574a819b8aca799b6cd"
+checksum = "41b759c1a47fc928782416f373b41ce04204c3506c5a69cc9ad5e05419b8342d"
 dependencies = [
  "anyhow",
- "base64",
- "io-http 0.5.0",
+ "base64-codec",
+ "io-http",
  "log",
  "pimalaya-stream",
  "serde",
  "serde_json",
- "thiserror",
- "url",
-]
-
-[[package]]
-name = "io-http"
-version = "0.5.0"
-source = "git+https://github.com/pimalaya/io-http?rev=e1815307771c1ec65a86b77256d46c33241d3038#e1815307771c1ec65a86b77256d46c33241d3038"
-dependencies = [
- "anyhow",
- "base64",
- "httparse",
- "log",
- "memchr",
- "pimalaya-stream",
- "secrecy",
  "thiserror",
  "url",
 ]
@@ -1236,16 +1220,16 @@ dependencies = [
 
 [[package]]
 name = "io-imap"
-version = "0.7.1"
-source = "git+https://github.com/pimalaya/io-imap?rev=2f17d6a2d898fa0bca91da35af9cb8023dc8f150#2f17d6a2d898fa0bca91da35af9cb8023dc8f150"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a2dce7ef04a2e48e6e65477a317cc95cf4ebea64fe4d3bcd2d25590916bb038"
 dependencies = [
  "anyhow",
- "base64",
+ "base64-codec",
  "chrono",
  "imap-codec",
  "io-sasl",
  "log",
- "nom",
  "pimalaya-stream",
  "secrecy",
  "thiserror",
@@ -1254,12 +1238,12 @@ dependencies = [
 
 [[package]]
 name = "io-jmap"
-version = "0.4.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f15cf26ef3c2976bf52a1f89e29d82840bc4cede80d18785a025445cf4cb0e2a"
+checksum = "85710c72e0e7834323bdb580d654e7d5b47f80c8b112cd0397f857751211c186"
 dependencies = [
  "anyhow",
- "io-http 0.5.0",
+ "io-http",
  "log",
  "pimalaya-stream",
  "secrecy",
@@ -1283,12 +1267,13 @@ dependencies = [
 
 [[package]]
 name = "io-msgraph"
-version = "0.6.0"
-source = "git+https://github.com/pimalaya/io-msgraph?rev=2ae26370aefa671c16316dbad98107634436bce6#2ae26370aefa671c16316dbad98107634436bce6"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89da8753e70f7f48c32d2816162c69b3f146629a559045ad5f321a638f8b6698"
 dependencies = [
  "anyhow",
- "base64",
- "io-http 0.5.0",
+ "base64-codec",
+ "io-http",
  "log",
  "pimalaya-stream",
  "serde",
@@ -1298,13 +1283,13 @@ dependencies = [
 
 [[package]]
 name = "io-oauth"
-version = "0.3.1"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ada4f4b661b47b6e6d69e15ff342653f40446866762e1744270d721eb3a92276"
+checksum = "feb103a6a30769bb57c348b4b1b14abbde6955bd10272130613333f9d7dd603d"
 dependencies = [
  "anyhow",
- "base64",
- "io-http 0.5.0",
+ "base64-codec",
+ "io-http",
  "log",
  "pimalaya-stream",
  "rand",
@@ -1320,17 +1305,18 @@ dependencies = [
 
 [[package]]
 name = "io-pim-discovery"
-version = "0.8.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "091245d7c51eee2b93a613f95e3615b164377364819e7506f61f62bf1e5643cc"
+checksum = "319a7b0e55da6e8f93b8a81fc69e77f4762c90c39787467b859a4513f6720f19"
 dependencies = [
  "anyhow",
- "base64",
+ "base64-codec",
  "domain",
- "io-http 0.5.0",
+ "io-http",
  "ipconfig",
  "log",
  "pimalaya-stream",
+ "psl",
  "resolv-conf",
  "serde",
  "serde-xml-rs",
@@ -1343,8 +1329,9 @@ dependencies = [
 
 [[package]]
 name = "io-pimdir"
-version = "0.8.0"
-source = "git+https://github.com/pimalaya/io-pimdir?rev=0c701447473a03e5cf9effcd0039a49a78419c4d#0c701447473a03e5cf9effcd0039a49a78419c4d"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b20aef21b511a80f1aca283b39aea36855b2f161d88b0957d454b2dcd521e9a8"
 dependencies = [
  "blake3",
  "encoding_rs",
@@ -1390,7 +1377,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fe0634d06f91a00dd0a36431c072ebd3482b6731bf7cc2f9e7e8b645bdf3f84"
 dependencies = [
  "anyhow",
- "io-http 0.6.0",
+ "io-http",
  "log",
  "memchr",
  "pimalaya-stream",
@@ -1937,10 +1924,12 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pimalaya-cli"
-version = "0.2.6"
-source = "git+https://github.com/pimalaya/cli?rev=55b66933950f02541892407667e5e0b254245871#55b66933950f02541892407667e5e0b254245871"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dba4dd3812ec9810b5d8d353d1fb965c33b00d5356e61cae622884f9a8ac44b2"
 dependencies = [
  "anyhow",
+ "base64-codec",
  "clap",
  "clap_complete",
  "clap_mangen",
@@ -2062,6 +2051,21 @@ checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "psl"
+version = "2.1.247"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcf03dc0cd8c65e109a7848e3b4adf06236a181d937af94bff66966e3876b1aa"
+dependencies = [
+ "psl-types",
+]
+
+[[package]]
+name = "psl-types"
+version = "2.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 
 [[package]]
 name = "quote"

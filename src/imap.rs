@@ -363,6 +363,10 @@ where
             ImapCoroutineState::Yielded(ImapYield::WantsWrite(bytes)) => {
                 client.stream.write_all(&bytes).context("write failed")?;
             }
+            ImapCoroutineState::Yielded(ImapYield::WantsTag) => {
+                let tag = client.tags.generate();
+                arg = Some(tag.as_ref().as_bytes().to_vec());
+            }
             ImapCoroutineState::Complete(Ok(value)) => return Ok(value),
             ImapCoroutineState::Complete(Err(err)) => bail!("{err}"),
         }

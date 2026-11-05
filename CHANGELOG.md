@@ -31,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Bumped io-gmail to 0.5, io-gpeople to 0.5, io-gcal to 0.2 and io-msgraph to 0.6, the versions Neverest builds with. Nothing changes in what a watch reports.
 - Bumped io-webdav to 0.7, and io-http to 0.6 under the DAV watch, the versions Neverest builds with. A multistatus is parsed 3.4 to 9 times faster; nothing changes in what a watch reports.
+- Bumped io-gcal to 0.3, io-gmail to 0.6, io-gpeople to 0.6, io-imap to 0.8, io-jmap to 0.7, io-msgraph to 0.7, io-pimdir to 0.9, io-pim-discovery to 0.11 and pimalaya-cli to 0.3, their latest releases, which carry the fixes carillon pinned unreleased revisions of io-http, io-imap, io-msgraph, io-pimdir and pimalaya-cli for. `json-schema` now also describes `completion`, `manual` and `json-schema`.
 - Changed piped `--json` output to print one value per line, each schema of `json-schema` to carry an `$id` naming the contract version (`v0.2`), and added `carillon-error`, the schema of the JSON failure object (pimalaya-cli `55b6693`).
 
 ### Fixed
@@ -39,7 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fixed a DAV server with no `sync-collection` being unwatchable: the collection is listed on every poll instead.
 - Fixed a rejected DAV sync token hiding what moved meanwhile: the collection is read again against what the watch knew.
 - Fixed a calendar holding events and tasks skipping every member whose content type names no component.
-- Fixed a hostile or broken server reaching the watch through its protocol libraries, pinned to unreleased fixes. io-http (e181530) caps response heads at 64 KiB and bodies at 256 MiB, fails on a body cut short instead of spinning forever, and no longer panics on a huge chunk size. io-imap (b1ab38e) no longer panics on a greeting carrying a literal, scans FETCH lines incrementally under a cap, and keeps passwords and SASL responses out of trace logs. io-webdav (0.7) parses a multistatus in linear time and caps its nesting at 64, where a deep one overflowed the stack.
+- Fixed a hostile or broken server reaching the watch through its protocol libraries, now released. io-http (e181530, in 0.6) caps response heads at 64 KiB and bodies at 256 MiB, fails on a body cut short instead of spinning forever, and no longer panics on a huge chunk size. io-imap (b1ab38e, in 0.8) no longer panics on a greeting carrying a literal, scans FETCH lines incrementally under a cap, and keeps passwords and SASL responses out of trace logs. io-webdav (0.7) parses a multistatus in linear time and caps its nesting at 64, where a deep one overflowed the stack.
 
 ## [0.2.0] - 2026-10-02
 
