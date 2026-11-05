@@ -40,8 +40,8 @@ default = true
 # `notify` notification, a `cmd` (shell string or [program, args...] list), or
 # both. Hooks template against $id, $collection, $mailbox/$calendar/$addressbook,
 # $flag for flag hooks and envelope variables ($subject, $sender…) for message
-# arrivals; `${name:default}` covers a missing value. A secret is `raw = "..."`
-# or `command = "..."`.
+# arrivals, camelCase ($senderName); `${name:-default}` covers an empty value.
+# A secret is `raw = "..."` or `command = "..."`.
 
 # ---- IMAP: an idle connection (RFC 2177) ---------------------------------------
 
@@ -113,7 +113,7 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 imap.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
 imap.hook.on-message-added.notify.body = "$subject"
 imap.hook.on-message-added.cmd = 'echo "$id arrived" >> ~/.local/state/carillon.log'
-#imap.hook.on-message-removed.notify.summary = "Mail ${subject:with no subject} deleted"
+#imap.hook.on-message-removed.notify.summary = "Mail $id deleted from ${mailbox:-the inbox}"
 #imap.hook.on-message-removed.cmd = 'echo "$id left" >> ~/.local/state/carillon.log'
 imap.hook.on-flag-added.flags = ["Seen"]
 imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
@@ -239,6 +239,15 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #caldav.hook.on-task-changed.cmd = "true"
 #caldav.hook.on-task-removed.cmd = "true"
 
+# The alarms of its events and tasks fire when the wall clock reaches them,
+# their bodies read only when this hook is set. Beyond `$id` and `$calendar` it
+# reads `$summary`, `$kind` (event or task), `$trigger` and `$at` (the start or
+# due time, RFC 3339), `$uid`, `$etag`, `$recurrenceId`, `$alarm`, `$alarmUid`
+# and `$action` (display or audio). An alarm reached more than 15 minutes late
+# is dropped, and one due while carillon was not running never fires.
+#caldav.hook.on-alarm-trigger.notify.summary = "$summary"
+#caldav.hook.on-alarm-trigger.notify.body = "${kind} at $at"
+
 
 # ---- CardDAV: the same poll over an addressbook --------------------------------
 
@@ -338,3 +347,20 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 # A contact leaving the group arrives as a removal, as a deleted one does.
 #gpeople.hook.on-card-added.notify.summary = "New contact in $addressbook"
 #gpeople.hook.on-card-removed.cmd = "true"
+
+
+# ---- pimdir: a change feed poll over a local calendar --------------------------
+
+# A pimdir store another tool keeps in sync, read and never written. Only its
+# alarms fire, through the one hook it has. Requires the `pimdir` cargo feature.
+
+# The directory holding the store. Required.
+#pimdir.root = "~/.local/share/pimdir"
+
+# The calendar this account watches, by its collection id. Required.
+#pimdir.calendar = "personal"
+
+#pimdir.watch.poll.interval = 30
+
+#pimdir.hook.on-alarm-trigger.notify.summary = "$summary"
+#pimdir.hook.on-alarm-trigger.cmd = 'echo "$uid fired at $trigger" >> ~/.local/state/carillon.log'

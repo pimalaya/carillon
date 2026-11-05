@@ -26,7 +26,7 @@ use std::{
 
 #[cfg(feature = "imap")]
 use anyhow::anyhow;
-#[cfg(network)]
+#[cfg(any(network, feature = "pimdir"))]
 use anyhow::bail;
 use anyhow::{Context, Result};
 #[cfg(feature = "imap")]
@@ -46,7 +46,7 @@ use log::warn;
 use pimalaya_config::secret::{Secret, SecretResolver};
 #[cfg(network)]
 use pimalaya_config::toml::opt_shell_expanded_path;
-use pimalaya_config::{command, toml::TomlConfig};
+use pimalaya_config::{command, notify::NotificationTemplate, toml::TomlConfig};
 #[cfg(network)]
 use pimalaya_stream::{
     proxy::{Proxy, ProxyAuth},
@@ -244,6 +244,9 @@ pub struct AccountConfig {
     #[cfg(feature = "gpeople")]
     #[serde(default)]
     pub gpeople: Option<GpeopleConfig>,
+    #[cfg(feature = "pimdir")]
+    #[serde(default)]
+    pub pimdir: Option<PimdirConfig>,
 }
 
 impl AccountConfig {
@@ -391,6 +394,11 @@ impl AccountConfig {
         #[cfg(feature = "gpeople")]
         if let Some(gpeople) = &self.gpeople {
             gpeople.hook.validate()?;
+        }
+
+        #[cfg(feature = "pimdir")]
+        if let Some(pimdir) = &self.pimdir {
+            pimdir.hook.validate()?;
         }
 
         Ok(())
@@ -596,6 +604,26 @@ pub struct MaildirConfig {
     /// The hooks this backend fires.
     #[serde(default, alias = "hooks")]
     pub hook: MaildirHookConfig,
+}
+
+/// pimdir configuration: one calendar collection of a local pimdir store,
+/// read and never written, its alarms fired.
+#[cfg(feature = "pimdir")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct PimdirConfig {
+    /// The calendar this account watches, by the collection id a
+    /// listing of the store gives.
+    pub calendar: String,
+    /// The directory holding the store, which its owner keeps in sync.
+    #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_path")]
+    pub root: PathBuf,
+    /// How this account learns about a change. Unset polls.
+    #[serde(default)]
+    pub watch: Option<PimdirWatchConfig>,
+    /// The hooks this backend fires.
+    #[serde(default, alias = "hooks")]
+    pub hook: PimdirHookConfig,
 }
 
 /// Proxy configuration.
@@ -955,6 +983,29 @@ impl MaildirConfig {
     }
 }
 
+#[cfg(feature = "pimdir")]
+impl PimdirConfig {
+    /// What pimdir calls the collection it watches, a calendar.
+    pub const COLLECTION: &'static str = "calendar";
+
+    /// The collection this backend watches, under its own name.
+    pub fn collection(&self) -> HookCollection<'_> {
+        HookCollection {
+            name: Self::COLLECTION,
+            value: &self.calendar,
+        }
+    }
+
+    /// The interval between two reads of the change cursor.
+    pub fn interval(&self) -> Option<Duration> {
+        let Some(PimdirWatchConfig::Poll(poll)) = &self.watch else {
+            return None;
+        };
+
+        poll.interval()
+    }
+}
+
 #[cfg(feature = "dav")]
 impl CaldavConfig {
     /// What CalDAV calls the collection it watches.
@@ -1049,6 +1100,15 @@ pub struct MaildirHookConfig {
     pub on_flag_removed: Option<FlagHook>,
 }
 
+/// Hooks a pimdir watch fires.
+#[cfg(feature = "pimdir")]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct PimdirHookConfig {
+    /// Fires when an alarm of a VEVENT or a VTODO reaches its trigger.
+    pub on_alarm_trigger: Option<ItemHook>,
+}
+
 /// Hooks a CalDAV watch fires, one set per component a calendar holds.
 #[cfg(feature = "dav")]
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1066,6 +1126,8 @@ pub struct CaldavHookConfig {
     pub on_task_removed: Option<ItemHook>,
     /// Fires when a VTODO is edited where it stands.
     pub on_task_changed: Option<ItemHook>,
+    /// Fires when an alarm of a VEVENT or a VTODO reaches its trigger.
+    pub on_alarm_trigger: Option<ItemHook>,
 }
 
 /// Hooks a CardDAV watch fires.
@@ -1434,6 +1496,23 @@ impl MaildirHookConfig {
     }
 }
 
+#[cfg(feature = "pimdir")]
+impl PimdirHookConfig {
+    /// Refuses a table without its one hook, which would watch for
+    /// nothing, and a notification naming what an alarm cannot fill.
+    pub fn validate(&self) -> Result<()> {
+        let Some(hook) = &self.on_alarm_trigger else {
+            bail!("pimdir.hook needs `on-alarm-trigger`, the one hook a pimdir watch fires");
+        };
+
+        hook::validate(
+            hook.notify.as_ref(),
+            Vocabulary::alarm(PimdirConfig::COLLECTION),
+            "pimdir.hook.on-alarm-trigger",
+        )
+    }
+}
+
 #[cfg(feature = "dav")]
 impl CaldavHookConfig {
     /// Refuses a notification naming what its event cannot fill.
@@ -1453,6 +1532,16 @@ impl CaldavHookConfig {
                 &format!("caldav.hook.{name}"),
             )?;
         }
+
+        let notify = self
+            .on_alarm_trigger
+            .as_ref()
+            .and_then(|hook| hook.notify.as_ref());
+        hook::validate(
+            notify,
+            Vocabulary::alarm(CaldavConfig::COLLECTION),
+            "caldav.hook.on-alarm-trigger",
+        )?;
 
         Ok(())
     }
@@ -1481,14 +1570,27 @@ impl CarddavHookConfig {
 
 /// Hook that fires for item-level events: added, removed, changed.
 ///
-/// Summary and body template on `$name` / `${name}`, with `$id` and the
-/// collection always available. The envelope names (`$subject`, `$sender`,
+/// Summary and body template on `$name`, `${name}` and `${name:-default}`,
+/// with `$id` and the collection always available. The envelope names (`$subject`, `$sender`,
 /// …) belong to an arrival on IMAP or JMAP, which read one.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ItemHook {
-    pub notify: Option<NotifyConfig>,
+    pub notify: Option<NotificationTemplate>,
     pub cmd: Option<HookCmd>,
+}
+
+#[cfg(feature = "wizard")]
+impl ItemHook {
+    /// A hook showing a notification, empty in a build that cannot show
+    /// one, so a generated configuration always writes back.
+    pub fn notifying(summary: &str, body: &str) -> Self {
+        let notify = cfg!(feature = "notify")
+            .then(|| NotificationTemplate::new(summary, body).ok())
+            .flatten();
+
+        Self { notify, cmd: None }
+    }
 }
 
 /// Hook that fires for flag-level events, once per flag that moved.
@@ -1499,20 +1601,10 @@ pub struct ItemHook {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct FlagHook {
-    pub notify: Option<NotifyConfig>,
+    pub notify: Option<NotificationTemplate>,
     pub cmd: Option<HookCmd>,
     #[serde(default)]
     pub flags: BTreeSet<String>,
-}
-
-/// Desktop notification payload: a one-line summary and an optional
-/// multi-line body.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct NotifyConfig {
-    pub summary: String,
-    #[serde(default)]
-    pub body: String,
 }
 
 /// Shell-command payload, deserialized by [`pimalaya_config::command`].
@@ -1714,6 +1806,15 @@ pub enum JmapWatchConfig {
 pub enum MaildirWatchConfig {
     /// Re-list the directory on an interval, the only way a filesystem
     /// with no notification channel leaves.
+    Poll(PollWatchConfig),
+}
+
+/// How a pimdir account learns about a change.
+#[cfg(feature = "pimdir")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum PimdirWatchConfig {
+    /// Read the store's change cursor on an interval.
     Poll(PollWatchConfig),
 }
 
@@ -2351,6 +2452,80 @@ mod tests {
             jmap.collection(card.domain()).map(|c| c.value)
         );
         assert!(jmap.hook.get(&card).is_none());
+    }
+
+    #[cfg(all(feature = "imap", not(feature = "notify")))]
+    #[test]
+    fn a_notification_is_refused_by_a_build_that_cannot_show_it() {
+        let document = document("imap.hook.on-message-added.notify.summary = \"$id\"\n");
+        let err = toml::from_str::<Config>(&document).expect_err("no notify feature");
+
+        assert!(err.to_string().contains("`notify` cargo feature"), "{err}");
+    }
+
+    #[cfg(all(feature = "dav", feature = "pimdir"))]
+    #[test]
+    fn an_alarm_hook_is_a_calendar_s() {
+        let read = |block: &str| -> Result<Config> {
+            let config: Config = toml::from_str(&format!("[accounts.perso]\n{block}"))?;
+            config.accounts["perso"].validate()?;
+            Ok(config)
+        };
+        let caldav = "caldav.server = \"https://dav.example.org\"\n\
+                      caldav.calendar = \"work\"\n";
+        let pimdir = "pimdir.root = \"/tmp/pimdir\"\n\
+                      pimdir.calendar = \"cal\"\n";
+
+        read(&format!(
+            "{caldav}caldav.hook.on-alarm-trigger.notify.summary = \"$summary at $at\"\n"
+        ))
+        .expect("a calendar fires its alarms");
+
+        let err = read(&format!(
+            "{caldav}caldav.hook.on-alarm-trigger.notify.summary = \"$subject\"\n"
+        ))
+        .expect_err("an alarm has no subject");
+        assert!(
+            format!("{err:#}").contains("caldav.hook.on-alarm-trigger"),
+            "{err:#}"
+        );
+
+        read(
+            "carddav.server = \"https://dav.example.org\"\n\
+             carddav.addressbook = \"default\"\n\
+             carddav.hook.on-alarm-trigger.cmd = \"true\"\n",
+        )
+        .expect_err("an addressbook holds no alarm");
+
+        read(&format!(
+            "{pimdir}pimdir.hook.on-alarm-trigger.cmd = \"true\"\n"
+        ))
+        .expect("a pimdir calendar fires its alarms");
+
+        let err = read(pimdir).expect_err("a pimdir account with nothing to fire");
+        assert!(format!("{err:#}").contains("on-alarm-trigger"), "{err:#}");
+    }
+
+    /// A template from before the camelCase variables and the shell's
+    /// default syntax is refused when read, naming what to rewrite.
+    #[cfg(all(feature = "jmap", feature = "notify"))]
+    #[test]
+    fn a_template_in_a_former_spelling_is_refused() {
+        for (template, named) in [
+            ("$sender_name", "`sender_name`"),
+            ("${subject:none}", "`${subject:none}`"),
+        ] {
+            let notify = format!("jmap.hook.on-message-added.notify.summary = \"{template}\"\n");
+            let err = format!(
+                "{:#}",
+                jmap(&format!("jmap.mailbox = \"INBOX\"\n{notify}")).expect_err(template)
+            );
+            assert!(err.contains(named), "{template}: {err}");
+        }
+
+        let notify =
+            "jmap.hook.on-message-added.notify.summary = \"$senderName ${subject:-none}\"\n";
+        jmap(&format!("jmap.mailbox = \"INBOX\"\n{notify}")).expect("the current spelling");
     }
 
     /// An account in the shape the vendor API tests vary, `block` being

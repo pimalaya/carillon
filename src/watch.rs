@@ -38,6 +38,14 @@ use crate::gmail;
 use crate::gpeople;
 #[cfg(feature = "msgraph")]
 use crate::msgraph;
+#[cfg(feature = "pimdir")]
+use crate::pimdir;
+#[cfg(alarm)]
+use crate::{
+    alarm::{self, AlarmShared},
+    config::ItemHook,
+    hook::HookCollection,
+};
 use crate::{
     backend::Backend,
     cli::load_config,
@@ -160,11 +168,20 @@ fn watch_account(
     shutdown: Arc<AtomicBool>,
 ) -> Result<()> {
     let mut backoff = INITIAL_BACKOFF;
+    #[cfg(alarm)]
+    let mut alarms: Option<AlarmRunner> = None;
 
     while !shutdown.load(Ordering::SeqCst) {
         let started = Instant::now();
 
-        let outcome = watch_session(account, &config, backend, &shutdown);
+        let outcome = watch_session(
+            account,
+            &config,
+            backend,
+            &shutdown,
+            #[cfg(alarm)]
+            &mut alarms,
+        );
 
         // NOTE: neither an asked-for ending nor a failure raced on the
         // way out is news, and nothing is reopened either way.
@@ -193,6 +210,11 @@ fn watch_account(
         }
     }
 
+    #[cfg(alarm)]
+    if let Some(alarms) = alarms {
+        alarms.join(account);
+    }
+
     Ok(())
 }
 
@@ -207,6 +229,7 @@ fn watch_session(
     config: &AccountConfig,
     backend: Backend,
     shutdown: &Arc<AtomicBool>,
+    #[cfg(alarm)] alarms: &mut Option<AlarmRunner>,
 ) -> Result<()> {
     #[cfg(feature = "imap")]
     if backend.allows_imap() {
@@ -357,12 +380,19 @@ fn watch_session(
                     hook::run(hook, &event, caldav_config.collection(), None);
                 }
             };
+            let shared = match &caldav_config.hook.on_alarm_trigger {
+                Some(hook) => Some(AlarmRunner::ensure(
+                    alarms, account, hook, collection, shutdown,
+                )?),
+                None => None,
+            };
             return dav::watch(
                 caldav_config.server(),
                 DavKind::Calendar(caldav_config.hook.domains()),
                 collection.value,
                 dav_interval(&caldav_config.watch),
                 shutdown,
+                shared,
                 &mut on_event,
             );
         }
@@ -391,6 +421,7 @@ fn watch_session(
                 collection.value,
                 dav_interval(&carddav_config.watch),
                 shutdown,
+                None,
                 &mut on_event,
             );
         }
@@ -519,11 +550,88 @@ fn watch_session(
         }
     }
 
+    #[cfg(feature = "pimdir")]
+    if backend.allows_pimdir() {
+        if let Some(pimdir_config) = &config.pimdir {
+            let collection = pimdir_config.collection();
+            let Some(hook) = &pimdir_config.hook.on_alarm_trigger else {
+                bail!("Account has no `pimdir.hook.on-alarm-trigger`, so nothing to watch for");
+            };
+
+            info!(
+                "[{account}] watching `{}` over pimdir, polling",
+                collection.value
+            );
+            let shared = AlarmRunner::ensure(alarms, account, hook, collection, shutdown)?;
+            return pimdir::watch(pimdir_config, shutdown, shared);
+        }
+
+        if backend == Backend::Pimdir {
+            bail!("Account has no `pimdir` config block");
+        }
+    }
+
     bail!(
         "Account has no usable backend block (expected one of `imap`, `jmap`, `maildir`, \
-         `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople`); use `-b/--backend` to pin \
-         a specific one"
+         `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople`, `pimdir`); use \
+         `-b/--backend` to pin a specific one"
     )
+}
+
+/// The thread firing an account's alarms, beside its watch.
+///
+/// It lives as long as the account, not the session: a session lost to
+/// a dropped connection leaves the alarms it read firing on time while
+/// the next one connects, and that one replaces them with what it reads.
+#[cfg(alarm)]
+struct AlarmRunner {
+    shared: Arc<AlarmShared>,
+    handle: thread::JoinHandle<()>,
+}
+
+#[cfg(alarm)]
+impl AlarmRunner {
+    /// The alarms of `runner`, starting its thread on the first session
+    /// to fire `hook` for the alarms of `collection`.
+    fn ensure<'a>(
+        runner: &'a mut Option<Self>,
+        account: &str,
+        hook: &ItemHook,
+        collection: HookCollection<'_>,
+        shutdown: &Arc<AtomicBool>,
+    ) -> Result<&'a AlarmShared> {
+        if let Some(runner) = runner {
+            return Ok(&runner.shared);
+        }
+
+        let shared = Arc::new(AlarmShared::new());
+        let hook = hook.clone();
+        let name = collection.name;
+        let value = collection.value.to_owned();
+        let thread_shared = shared.clone();
+        let thread_shutdown = shutdown.clone();
+
+        let handle = thread::Builder::new()
+            .name(format!("{account}-alarms"))
+            .spawn(move || {
+                alarm::run(&thread_shared, &thread_shutdown, |firing| {
+                    let collection = HookCollection {
+                        name,
+                        value: &value,
+                    };
+                    hook::run_alarm(&hook, collection, firing);
+                })
+            })?;
+
+        Ok(&runner.insert(Self { shared, handle }).shared)
+    }
+
+    /// Waits for the thread, which ends once a shutdown is requested.
+    fn join(self, account: &str) {
+        if self.handle.join().is_err() {
+            warn!("[{account}] alarm thread panicked");
+        }
+    }
 }
 
 /// The poll interval a DAV backend was configured with, WebDAV having

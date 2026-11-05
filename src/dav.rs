@@ -35,7 +35,10 @@ use io_http::{
 use io_webdav::{
     client::WebdavClientStd,
     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-    rfc4791::calendar::{SUPPORTED_CALENDAR_COMPONENT_SET, home_set::CaldavCalendarHomeSet},
+    rfc4791::{
+        calendar::{SUPPORTED_CALENDAR_COMPONENT_SET, home_set::CaldavCalendarHomeSet},
+        item::{CaldavItemEntry, join_path, list::CaldavItemList, multiget::CaldavItemMultiget},
+    },
     rfc4918::{
         DAV, GETETAG, WebdavAuth, WebdavMultistatus, WebdavProperty,
         coroutine::WebdavRedirectYield, follow_redirects::WebdavFollowRedirectsError,
@@ -58,6 +61,7 @@ use secrecy::ExposeSecret;
 use url::Url;
 
 use crate::{
+    alarm::{AlarmBook, AlarmShared},
     config::{DavAuthConfig, DavServer, ProxyConfig},
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,
@@ -163,19 +167,26 @@ pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<Webd
 }
 
 /// Watches the configured collection until `shutdown` is set, calling
-/// `on_event` for every change.
+/// `on_event` for every change, and keeping `alarms` current when given.
 ///
 /// The first enumeration is the baseline, so it reports nothing.
 /// Everything after is read against that picture. A round that fails is
 /// run once more on a fresh connection before the session is given up,
 /// the idle connection being one a server is free to close between two
 /// polls.
+///
+/// Bodies are read only for `alarms`: every member holding an alarm once
+/// the baseline is taken, so an edit landing in between is reported and
+/// read again rather than lost, then the members each round reports
+/// added or changed. A body that cannot be read ends the session, the
+/// next one reading every alarm again.
 pub fn watch(
     config: DavServer<'_>,
     kind: DavKind,
     collection: &str,
     interval: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
+    alarms: Option<&AlarmShared>,
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let mut client = open(config, &mut SecretResolver::new())?;
@@ -184,23 +195,175 @@ pub fn watch(
     let domains = Domains::resolve(&mut client, &collection, kind, shutdown)?;
     let mut watched = Watched::arm(&mut client, collection, domains, shutdown)?;
 
+    if let Some(alarms) = alarms {
+        alarms.replace(read_alarms(&mut client, &watched.collection, shutdown)?);
+    }
+
     while !shutdown.load(Ordering::SeqCst) {
         if !poll::sleep(interval, shutdown) {
             break;
         }
 
-        if let Err(err) = watched.round(&mut client, shutdown, &mut on_event) {
+        let mut moved = BTreeMap::new();
+        let mut report = |event: WatchEvent, summary: Option<ItemSummary>| {
+            if alarms.is_some() {
+                let removed = matches!(event, WatchEvent::ItemRemoved { .. });
+                moved.insert(event.id().to_owned(), removed);
+            }
+
+            on_event(event, summary);
+        };
+
+        if let Err(err) = watched.round(&mut client, shutdown, &mut report) {
             if shutdown.load(Ordering::SeqCst) {
                 break;
             }
 
             debug!("dav round failed, reconnecting: {err:#}");
             client = open(config, &mut SecretResolver::new())?;
-            watched.round(&mut client, shutdown, &mut on_event)?;
+            watched.round(&mut client, shutdown, &mut report)?;
+        }
+
+        if let Some(alarms) = alarms
+            && !moved.is_empty()
+        {
+            refresh_alarms(&mut client, &watched.collection, alarms, moved, shutdown)?;
         }
     }
 
     Ok(())
+}
+
+/// Reads every member holding an alarm, with its body, into a book.
+///
+/// The comp-filters of one `calendar-query` must all match (RFC 4791
+/// §9.7.1), so each component holding an alarm takes a query of its own.
+/// A server refusing the filter is asked for every member instead, the
+/// book keeping only those holding an alarm.
+fn read_alarms(
+    client: &mut WebdavClientStd,
+    collection: &str,
+    shutdown: &Arc<AtomicBool>,
+) -> Result<AlarmBook> {
+    let mut book = AlarmBook::new();
+
+    for component in ["VEVENT", "VTODO"] {
+        let filter = format!(
+            "<C:comp-filter name=\"{component}\"><C:comp-filter name=\"VALARM\"/></C:comp-filter>"
+        );
+
+        let entries = match query(client, collection, &filter, shutdown) {
+            Ok(entries) => entries,
+            Err(err) => {
+                debug!("dav server refused an alarm filter, reading every member: {err:#}");
+                book = AlarmBook::new();
+
+                for entry in query(client, collection, "", shutdown)? {
+                    let href = join_path(collection, &entry.id);
+                    book.read(&entry.id, &href, entry.etag.as_deref(), &entry.data);
+                }
+
+                break;
+            }
+        };
+
+        for entry in entries {
+            let href = join_path(collection, &entry.id);
+            book.read(&entry.id, &href, entry.etag.as_deref(), &entry.data);
+        }
+    }
+
+    debug!("read {} calendar members holding an alarm", book.len());
+
+    Ok(book)
+}
+
+/// Reads again the members a round reported added or changed, by href,
+/// and forgets the ones it reported removed.
+fn refresh_alarms(
+    client: &mut WebdavClientStd,
+    collection: &str,
+    alarms: &AlarmShared,
+    moved: BTreeMap<String, bool>,
+    shutdown: &Arc<AtomicBool>,
+) -> Result<()> {
+    let wanted: Vec<&str> = moved
+        .iter()
+        .filter(|(_, removed)| !**removed)
+        .map(|(href, _)| resource(href))
+        .collect();
+
+    let entries = match wanted.is_empty() {
+        true => Vec::new(),
+        false => multiget(client, collection, &wanted, shutdown)?,
+    };
+
+    alarms.update(|book| {
+        for (href, removed) in &moved {
+            let name = resource(href);
+            let entry = entries.iter().find(|entry| entry.id == name);
+
+            match entry {
+                Some(entry) if !removed => {
+                    book.read(name, href, entry.etag.as_deref(), &entry.data)
+                }
+                _ => book.forget(name),
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// The resource name an href ends with, which a member is keyed by
+/// whichever report named it.
+fn resource(href: &str) -> &str {
+    href.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(href)
+}
+
+/// Runs one `calendar-query` report for the members `filter` matches,
+/// with their bodies (RFC 4791 §7.8).
+fn query(
+    client: &mut WebdavClientStd,
+    collection: &str,
+    filter: &str,
+    shutdown: &Arc<AtomicBool>,
+) -> Result<Vec<CaldavItemEntry>> {
+    let mut coroutine = CaldavItemList::new(
+        &client.base_url,
+        client.auth(),
+        &client.user_agent,
+        collection,
+        filter,
+    );
+
+    Ok(pump(client, &mut coroutine, shutdown)?
+        .into_iter()
+        .collect())
+}
+
+/// Runs one `calendar-multiget` report for the members named, with their
+/// bodies (RFC 4791 §7.9).
+fn multiget(
+    client: &mut WebdavClientStd,
+    collection: &str,
+    names: &[&str],
+    shutdown: &Arc<AtomicBool>,
+) -> Result<Vec<CaldavItemEntry>> {
+    let mut coroutine = CaldavItemMultiget::new(
+        &client.base_url,
+        client.auth(),
+        &client.user_agent,
+        collection,
+        names,
+    );
+
+    Ok(pump(client, &mut coroutine, shutdown)?
+        .into_iter()
+        .collect())
 }
 
 /// The collection the watch holds a picture of, and how it reads it.

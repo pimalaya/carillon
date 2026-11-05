@@ -1,7 +1,8 @@
 //! # Carillon
 //!
-//! A CLI watching PIM accounts and firing local hooks on every change.
-//! One account is one thread; nothing is stored between runs.
+//! A CLI watching PIM accounts and firing local hooks on every change and
+//! every alarm. One account is one thread, its alarms another; nothing is
+//! stored between runs.
 //!
 //! ## Layout
 //!
@@ -25,9 +26,9 @@
 //! actually be watched with. What is done with the account, a file to
 //! create, a block to append or a document on stdout, is configure's.
 //!
-//! The backends: imap, jmap, maildir, dav, msgraph, gmail, gcal and
-//! gpeople, each behind its cargo feature, learning about changes its own
-//! way and reporting them in the one vocabulary event defines. How a
+//! The backends: imap, jmap, maildir, dav, msgraph, gmail, gcal, gpeople
+//! and pimdir, each behind its cargo feature, learning about changes its
+//! own way and reporting them in the one vocabulary event defines. How a
 //! change is learned is the protocol crate's; what to do about it is
 //! here. poll holds the sleep every polled backend waits on, and picture
 //! what a REST change feed (a Graph delta link, a Google sync token) is
@@ -36,20 +37,29 @@
 //! The dav module serves the two configured DAV backends, CalDAV and
 //! CardDAV being one poll over collections that differ in what they hold.
 //!
+//! alarm fires the alarms of a calendar: CalDAV and pimdir read the bodies
+//! of their members into its book, and a thread per account, living
+//! across sessions, fires `on-alarm-trigger` when the wall clock reaches
+//! a trigger. pimdir reads a local store and reports no change, its one
+//! hook being the alarm's.
+//!
 //! The hooks live under their backend rather than on the account, since
 //! which events exist and which variables a template can use are both the
 //! backend's; what reaches hook is the one hook an event resolved to, so
 //! the runner stays one shape.
 
-// NOTE: a build enabling no backend still compiles the change vocabulary
-// and the hook runner that no backend then feeds. It watches nothing, and
-// gating every item of both on the four backend features would cost more
-// noise than the dead code it removes.
+// NOTE: a build enabling no backend reporting changes, none or pimdir
+// alone, still compiles the change vocabulary and the hook runner that no
+// backend then feeds. It watches no change, and gating every item of both
+// on the backend features would cost more noise than the dead code it
+// removes.
 #![cfg_attr(
     not(backend),
     allow(dead_code, unused_imports, unused_mut, unused_variables)
 )]
 
+#[cfg(alarm)]
+mod alarm;
 mod backend;
 mod check;
 mod cli;
@@ -75,7 +85,15 @@ mod maildir;
 mod msgraph;
 #[cfg(any(feature = "msgraph", feature = "gcal", feature = "gpeople"))]
 mod picture;
-#[cfg(any(feature = "jmap", feature = "maildir", feature = "dav", api))]
+#[cfg(feature = "pimdir")]
+mod pimdir;
+#[cfg(any(
+    feature = "jmap",
+    feature = "maildir",
+    feature = "dav",
+    feature = "pimdir",
+    api
+))]
 mod poll;
 mod watch;
 #[cfg(feature = "wizard")]

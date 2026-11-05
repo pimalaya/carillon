@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 
-use crate::config::{ItemHook, MaildirConfig, MaildirHookConfig, NotifyConfig};
+use crate::config::{ItemHook, MaildirConfig, MaildirHookConfig};
 
 /// Configures Maildir from a folder path, checking it is there.
 ///
@@ -36,13 +36,7 @@ pub fn configure(root: PathBuf) -> Result<MaildirConfig> {
 /// names the item rather than its envelope.
 fn hook() -> MaildirHookConfig {
     MaildirHookConfig {
-        on_message_added: Some(ItemHook {
-            notify: Some(NotifyConfig {
-                summary: String::from("New mail in $mailbox"),
-                body: String::from("$id"),
-            }),
-            cmd: None,
-        }),
+        on_message_added: Some(ItemHook::notifying("New mail in $mailbox", "$id")),
         ..Default::default()
     }
 }

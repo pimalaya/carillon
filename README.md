@@ -21,6 +21,7 @@ CLI to watch PIM collection changes, written in Rust
 
 - Mail backend support: **IMAP** <sup>[rfc2177](https://www.rfc-editor.org/rfc/rfc2177)</sup>, **JMAP** <sup>[rfc8621](https://www.rfc-editor.org/rfc/rfc8621)</sup>, **Maildir** <sup>[specs](https://cr.yp.to/proto/maildir.html)</sup>
 - Calendars and contacts backend support: **CalDAV**, **CardDAV** <sup>[rfc6578](https://www.rfc-editor.org/rfc/rfc6578)</sup>, **JMAP** <sup>[rfc9610](https://www.rfc-editor.org/rfc/rfc9610), [calendars](https://datatracker.ietf.org/doc/draft-ietf-jmap-calendars/)</sup>
+- Alarms of events and tasks <sup>[rfc5545](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6)</sup>, fired from a **CalDAV** calendar or a local **pimdir** store, no sync needed for the former
 - Vendor API support: **Microsoft Graph** (mail, contacts, calendar), **Gmail**, **Google Calendar**, **Google People**
 - **Watch** support: IMAP idle, JMAP event stream, collection poll everywhere else
 - **Hook** support: desktop notification, shell command, or both, on every change
@@ -114,7 +115,7 @@ Run `carillon` with no command to launch the wizard, `carillon configure` to run
 
 The watch method is never asked: an account takes the best one its backend supports. The result is saved, appended to the configuration already there, or printed for you to place by hand.
 
-An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople`) carrying the collection it watches (one per domain over JMAP and Microsoft Graph, sharing one connection), how it watches it (`watch`) and what it fires (`hook`). Declaring several is allowed, `-b/--backend` then selecting one.
+An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople`, `pimdir`) carrying the collection it watches (one per domain over JMAP and Microsoft Graph, sharing one connection), how it watches it (`watch`) and what it fires (`hook`). Declaring several is allowed, `-b/--backend` then selecting one.
 
 ## Usage
 

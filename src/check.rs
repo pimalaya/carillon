@@ -29,6 +29,8 @@ use crate::gmail;
 use crate::gpeople;
 #[cfg(feature = "msgraph")]
 use crate::msgraph;
+#[cfg(feature = "pimdir")]
+use crate::pimdir;
 use crate::{backend::Backend, cli::load_config};
 #[cfg(feature = "dav")]
 use crate::{
@@ -152,6 +154,14 @@ impl CheckCommand {
         {
             let result = gpeople::probe(&gpeople_config, &mut resolver);
             report.backends.push(BackendCheck::from("gpeople", result));
+        }
+
+        #[cfg(feature = "pimdir")]
+        if backend.allows_pimdir()
+            && let Some(pimdir_config) = account_config.pimdir.clone()
+        {
+            let result = pimdir::probe(&pimdir_config);
+            report.backends.push(BackendCheck::from("pimdir", result));
         }
 
         if report.backends.is_empty() {

@@ -318,7 +318,7 @@ mod tests {
     fn imap_account() -> crate::config::AccountConfig {
         use pimalaya_config::{command::CommandConfig, secret::Secret};
 
-        use crate::config::{ImapConfig, ItemHook, NotifyConfig, SaslConfig, SaslPlainConfig};
+        use crate::config::{ImapConfig, ItemHook, SaslConfig, SaslPlainConfig};
 
         let passwd = CommandConfig::Argv {
             program: String::from("pass"),
@@ -346,13 +346,10 @@ mod tests {
             id: Default::default(),
             watch: None,
             hook: crate::config::ImapHookConfig {
-                on_message_added: Some(ItemHook {
-                    notify: Some(NotifyConfig {
-                        summary: String::from("New mail in $mailbox from $sender"),
-                        body: String::from("$subject"),
-                    }),
-                    cmd: None,
-                }),
+                on_message_added: Some(ItemHook::notifying(
+                    "New mail in $mailbox from $sender",
+                    "$subject",
+                )),
                 ..Default::default()
             },
         });

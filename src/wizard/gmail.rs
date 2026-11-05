@@ -10,7 +10,7 @@ use pimalaya_cli::spinner::Spinner;
 use pimalaya_config::secret::SecretResolver;
 
 use crate::{
-    config::{BearerAuthConfig, GmailConfig, GmailHookConfig, ItemHook, NotifyConfig},
+    config::{BearerAuthConfig, GmailConfig, GmailHookConfig, ItemHook},
     gmail,
     wizard::secret,
 };
@@ -50,13 +50,10 @@ fn config(auth: BearerAuthConfig) -> GmailConfig {
         auth,
         watch: None,
         hook: GmailHookConfig {
-            on_message_added: Some(ItemHook {
-                notify: Some(NotifyConfig {
-                    summary: String::from("New mail in $mailbox from $sender"),
-                    body: String::from("$subject"),
-                }),
-                cmd: None,
-            }),
+            on_message_added: Some(ItemHook::notifying(
+                "New mail in $mailbox from $sender",
+                "$subject",
+            )),
             ..Default::default()
         },
     }

@@ -7,8 +7,9 @@
 //! being named after the domain each backend holds; what arrives here is
 //! the hook that answer resolved to, so one runner serves them all.
 //!
-//! Summaries and bodies are [`subst`] templates (`$name` / `${name}`),
-//! and the same variables are exported as environment variables on the
+//! Summaries and bodies are pimalaya-config notification templates, in
+//! the shell's syntax (`$name`, `${name}`, `${name:-default}`), and the
+//! same camelCase variables are exported as environment variables on the
 //! spawned command, so both shapes template against one vocabulary.
 //!
 //! A failing hook is logged and never propagated, since a broken script
@@ -16,13 +17,18 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
+#[cfg(alarm)]
+use jiff::{Timestamp, tz::TimeZone};
 use log::{trace, warn};
-use notify_rust::Notification;
-use subst::VariableMap;
+use pimalaya_config::notify::NotificationTemplate;
 
+#[cfg(all(alarm, feature = "notify"))]
+use crate::alarm::AlarmAction;
+#[cfg(alarm)]
+use crate::alarm::AlarmFiring;
 use crate::{
-    config::{FlagHook, Hook, HookCmd, ItemHook, NotifyConfig},
+    config::{FlagHook, Hook, HookCmd, ItemHook},
     event::{ItemSummary, WatchEvent},
 };
 
@@ -40,12 +46,29 @@ const ENVELOPE_VARS: &[&str] = &[
     "subject",
     "date",
     "sender",
-    "sender_name",
-    "sender_address",
+    "senderName",
+    "senderAddress",
     "recipient",
-    "recipient_name",
-    "recipient_address",
+    "recipientName",
+    "recipientAddress",
 ];
+/// What an alarm hook adds: the firing, and the item holding it.
+const ALARM_VARS: &[&str] = &[
+    "etag",
+    "uid",
+    "kind",
+    "summary",
+    "recurrenceId",
+    "alarm",
+    "alarmUid",
+    "action",
+    "trigger",
+    "at",
+];
+/// The sound an `AUDIO` alarm asks the notification for, from the
+/// freedesktop sound naming specification.
+#[cfg(all(alarm, feature = "notify"))]
+const ALARM_SOUND: &str = "alarm-clock-elapsed";
 
 /// The collection a watch is on: what its backend calls it, and which one
 /// it is.
@@ -53,6 +76,7 @@ const ENVELOPE_VARS: &[&str] = &[
 /// The name travels with the value because it is the backend's word, not
 /// carillon's: mail watches a `mailbox`, CalDAV a `calendar`, CardDAV an
 /// `addressbook`.
+#[derive(Clone, Copy)]
 pub struct HookCollection<'a> {
     /// The word the backend names its collection with.
     pub name: &'static str,
@@ -74,6 +98,8 @@ pub struct Vocabulary {
     envelope: bool,
     /// Whether this hook is about one flag.
     flag: bool,
+    /// Whether this hook is about one alarm firing.
+    alarm: bool,
 }
 
 impl Vocabulary {
@@ -84,6 +110,7 @@ impl Vocabulary {
             collection,
             envelope: false,
             flag: false,
+            alarm: false,
         }
     }
 
@@ -93,6 +120,7 @@ impl Vocabulary {
             collection,
             envelope: true,
             flag: false,
+            alarm: false,
         }
     }
 
@@ -102,6 +130,18 @@ impl Vocabulary {
             collection,
             envelope: false,
             flag: true,
+            alarm: false,
+        }
+    }
+
+    /// An alarm hook.
+    #[cfg(alarm)]
+    pub const fn alarm(collection: &'static str) -> Self {
+        Self {
+            collection,
+            envelope: false,
+            flag: false,
+            alarm: true,
         }
     }
 
@@ -109,11 +149,13 @@ impl Vocabulary {
     fn names(&self) -> impl Iterator<Item = &'static str> {
         let envelope: &[&str] = if self.envelope { ENVELOPE_VARS } else { &[] };
         let flag = self.flag.then_some(FLAG_VAR);
+        let alarm: &[&str] = if self.alarm { ALARM_VARS } else { &[] };
 
         [ID_VAR, COLLECTION_VAR, self.collection]
             .into_iter()
             .chain(envelope.iter().copied())
             .chain(flag)
+            .chain(alarm.iter().copied())
     }
 
     /// The names, rendered the way a template writes them, for an
@@ -126,31 +168,23 @@ impl Vocabulary {
     }
 }
 
-impl<'a> VariableMap<'a> for Vocabulary {
-    type Value = &'static str;
-
-    fn get(&'a self, key: &str) -> Option<Self::Value> {
-        self.names().find(|name| *name == key)
-    }
-}
-
-/// Refuses a notification naming anything its hook cannot fill.
-///
-/// The check is the expansion itself, run against the vocabulary alone,
-/// so it refuses exactly what a firing would and lets `${name:default}`
-/// through: a default is how a template does without the value.
-pub fn validate(notify: Option<&NotifyConfig>, vocabulary: Vocabulary, hook: &str) -> Result<()> {
+/// Refuses a notification naming anything its hook cannot fill, a
+/// default or not: a template's default stands in for an empty value,
+/// never for a name the hook does not have.
+pub fn validate(
+    notify: Option<&NotificationTemplate>,
+    vocabulary: Vocabulary,
+    hook: &str,
+) -> Result<()> {
     let Some(notify) = notify else {
         return Ok(());
     };
 
-    for (part, template) in [("summary", &notify.summary), ("body", &notify.body)] {
-        if let Err(err) = subst::substitute(template, &vocabulary) {
-            bail!(
-                "{hook}.notify.{part}: {err}. This hook can use {}",
-                vocabulary.rendered()
-            );
-        }
+    if let Err(err) = notify.check(|name| vocabulary.names().any(|known| known == name)) {
+        bail!(
+            "{hook}.notify: {err}. This hook can use {}",
+            vocabulary.rendered()
+        );
     }
 
     Ok(())
@@ -229,13 +263,13 @@ fn item_vars(
 
     insert_party(
         &mut vars,
-        ("sender", "sender_name", "sender_address"),
+        ("sender", "senderName", "senderAddress"),
         summary.from_name.as_deref(),
         summary.from_addr.as_deref(),
     );
     insert_party(
         &mut vars,
-        ("recipient", "recipient_name", "recipient_address"),
+        ("recipient", "recipientName", "recipientAddress"),
         summary.to_name.as_deref(),
         summary.to_addr.as_deref(),
     );
@@ -279,14 +313,75 @@ fn insert_party(
     vars.insert(combined_key, combined);
 }
 
+/// Fires `on-alarm-trigger` for one firing of an alarm of `collection`.
+///
+/// Times reach the hook as RFC 3339 in the system's zone, and an `AUDIO`
+/// alarm's notification asks for the freedesktop alarm sound.
+#[cfg(alarm)]
+pub fn run_alarm(hook: &ItemHook, collection: HookCollection<'_>, firing: &AlarmFiring) {
+    let zone = TimeZone::system();
+    let mut vars = seeded(Vocabulary::alarm(collection.name));
+
+    vars.insert(ID_VAR, firing.id.clone());
+    vars.insert(COLLECTION_VAR, collection.value.to_string());
+    vars.insert(collection.name, collection.value.to_string());
+    vars.insert("etag", firing.etag.clone().unwrap_or_default());
+    vars.insert("uid", firing.uid.clone());
+    vars.insert("kind", firing.kind.as_str().to_string());
+    vars.insert("summary", firing.summary.clone().unwrap_or_default());
+    vars.insert(
+        "recurrenceId",
+        firing.occurrence.clone().unwrap_or_default(),
+    );
+    vars.insert("alarm", firing.alarm.to_string());
+    vars.insert("alarmUid", firing.alarm_uid.clone().unwrap_or_default());
+    vars.insert("action", firing.action.as_str().to_string());
+    vars.insert("trigger", rfc3339(firing.trigger, &zone));
+    vars.insert(
+        "at",
+        firing.at.map(|at| rfc3339(at, &zone)).unwrap_or_default(),
+    );
+
+    #[cfg(feature = "notify")]
+    let sound = (firing.action == AlarmAction::Audio).then_some(ALARM_SOUND);
+    #[cfg(not(feature = "notify"))]
+    let sound = None;
+
+    fire_with(hook.notify.as_ref(), hook.cmd.as_ref(), &vars, sound);
+}
+
+/// An instant as RFC 3339 with the offset `zone` has then, empty when it
+/// is out of range.
+#[cfg(alarm)]
+fn rfc3339(instant: i64, zone: &TimeZone) -> String {
+    match Timestamp::from_second(instant) {
+        Ok(at) => at
+            .to_zoned(zone.clone())
+            .strftime("%Y-%m-%dT%H:%M:%S%:z")
+            .to_string(),
+        Err(_) => String::new(),
+    }
+}
+
 /// Runs the two reactions a hook can carry, logging either failure.
 fn fire(
-    notify: Option<&NotifyConfig>,
+    notify: Option<&NotificationTemplate>,
     cmd: Option<&HookCmd>,
     vars: &BTreeMap<&'static str, String>,
 ) {
+    fire_with(notify, cmd, vars, None);
+}
+
+/// Runs the two reactions a hook can carry, the notification asking for
+/// `sound` when one is given, logging either failure.
+fn fire_with(
+    notify: Option<&NotificationTemplate>,
+    cmd: Option<&HookCmd>,
+    vars: &BTreeMap<&'static str, String>,
+    sound: Option<&'static str>,
+) {
     if let Some(notify) = notify
-        && let Err(err) = fire_notification(notify, vars)
+        && let Err(err) = fire_notification(notify, vars, sound)
     {
         warn!("notify hook failed: {err:#}");
     }
@@ -298,19 +393,26 @@ fn fire(
     }
 }
 
-/// Expands the templates and shows the desktop notification.
-fn fire_notification(config: &NotifyConfig, vars: &BTreeMap<&'static str, String>) -> Result<()> {
-    let summary = subst::substitute(&config.summary, vars).context("cannot expand summary")?;
-    let body = subst::substitute(&config.body, vars).context("cannot expand body")?;
+/// Expands the template and shows the desktop notification.
+fn fire_notification(
+    template: &NotificationTemplate,
+    vars: &BTreeMap<&'static str, String>,
+    sound: Option<&'static str>,
+) -> Result<()> {
+    #[cfg_attr(not(feature = "notify"), allow(unused_mut))]
+    let mut notification = template.render(|name| vars.get(name).cloned())?;
 
-    let mut notification = Notification::new();
-    notification.summary(&summary);
-
-    if !body.is_empty() {
-        notification.body(&body);
+    #[cfg(feature = "notify")]
+    if let Some(sound) = sound {
+        notification.sound_name(sound);
     }
 
-    notification.show()?;
+    #[cfg(not(feature = "notify"))]
+    let _ = sound;
+
+    if let Err(err) = notification.show() {
+        bail!("Cannot show notification: {err}");
+    }
 
     Ok(())
 }
@@ -346,20 +448,10 @@ fn matches_filter(hook: &FlagHook, flag: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::{event::ItemSummary, hook::*};
+    use crate::hook::*;
 
-    fn mailbox() -> HookCollection<'static> {
-        HookCollection {
-            name: "mailbox",
-            value: "INBOX",
-        }
-    }
-
-    fn notified(body: &str) -> NotifyConfig {
-        NotifyConfig {
-            summary: String::from("something happened"),
-            body: String::from(body),
-        }
+    fn notified(body: &str) -> NotificationTemplate {
+        NotificationTemplate::new("something happened", body).expect("build the template")
     }
 
     /// The regression this validation exists for: a removal whose body
@@ -375,8 +467,8 @@ mod tests {
         .expect_err("an envelope name is refused");
         let err = format!("{err:#}");
 
-        assert!(err.contains("on-message-removed.notify.body"), "got {err}");
-        assert!(err.contains("$subject"), "got {err}");
+        assert!(err.contains("on-message-removed.notify"), "got {err}");
+        assert!(err.contains("`subject`"), "got {err}");
         assert!(err.contains("$id, $collection, $mailbox"), "got {err}");
     }
 
@@ -407,34 +499,60 @@ mod tests {
         .expect_err("an item hook has no flag");
     }
 
-    /// A default is how a template says it can do without the value,
-    /// so it is not a claim that the variable exists.
+    /// A default stands in for an empty value, never for a name the
+    /// hook does not have, so a misspelt name is still caught.
     #[test]
-    fn a_default_stands_in_for_any_name() {
-        let notify = notified("${subject:no subject}");
+    fn a_default_does_not_excuse_an_unknown_name() {
+        let notify = notified("${subject:-no subject}");
         validate(
             Some(&notify),
             Vocabulary::item("addressbook"),
             "carddav.hook.on-card-removed",
         )
-        .expect("a default is enough");
+        .expect_err("a card removal has no subject");
+
+        let notify = notified("${subject:-no subject}");
+        validate(
+            Some(&notify),
+            Vocabulary::resolved("mailbox"),
+            "imap.hook.on-message-added",
+        )
+        .expect("an arrival has a subject");
     }
 
     /// The other half: a name the hook may use, absent from this one
-    /// item, leaves a gap rather than taking the notification down.
+    /// item, leaves a gap or its default rather than taking the
+    /// notification down.
+    #[cfg(feature = "notify")]
     #[test]
-    fn an_absent_variable_expands_to_nothing() {
+    fn an_absent_variable_expands_to_nothing_or_its_default() {
+        use crate::event::ItemSummary;
+
+        let mailbox = || HookCollection {
+            name: "mailbox",
+            value: "INBOX",
+        };
+        let template = NotificationTemplate::new("$subject from $sender", "${senderName:-?}")
+            .expect("build the template");
+
         let vars = item_vars("42", mailbox(), None);
-        let expanded = subst::substitute("$subject from $sender", &vars).expect("expands");
-        assert_eq!(" from ", expanded);
+        let notification = template
+            .render(|name| vars.get(name).cloned())
+            .expect("render");
+        assert_eq!(" from ", notification.summary);
+        assert_eq!("?", notification.body);
 
         let summary = ItemSummary {
+            from_name: Some(String::from("Alice")),
             from_addr: Some(String::from("alice@example.org")),
             ..Default::default()
         };
         let vars = item_vars("42", mailbox(), Some(&summary));
-        let expanded = subst::substitute("$subject from $sender", &vars).expect("expands");
-        assert_eq!(" from alice@example.org", expanded);
+        let notification = template
+            .render(|name| vars.get(name).cloned())
+            .expect("render");
+        assert_eq!(" from Alice <alice@example.org>", notification.summary);
+        assert_eq!("Alice", notification.body);
     }
 
     /// One hook runner reads every domain: `$collection` is the value
@@ -459,5 +577,83 @@ mod tests {
             "gpeople.hook.on-card-added",
         )
         .expect("every hook has its collection");
+    }
+
+    #[cfg(alarm)]
+    #[test]
+    fn an_alarm_time_reads_in_rfc_3339_with_its_offset() {
+        let zone = TimeZone::get("Europe/Paris").expect("a bundled zone");
+        let instant = "2026-11-05T07:45:00Z"
+            .parse::<Timestamp>()
+            .unwrap()
+            .as_second();
+
+        assert_eq!("2026-11-05T08:45:00+01:00", rfc3339(instant, &zone));
+    }
+
+    #[cfg(alarm)]
+    #[test]
+    fn an_alarm_hook_templates_against_its_firing() {
+        let alarm = Vocabulary::alarm("calendar");
+        let hook = "caldav.hook.on-alarm-trigger";
+
+        validate(
+            Some(&notified("$summary at $at ($kind, $action)")),
+            alarm,
+            hook,
+        )
+        .expect("a firing has a summary, a time, a kind and an action");
+        validate(Some(&notified("$subject")), alarm, hook).expect_err("an alarm has no subject");
+        validate(
+            Some(&notified("$summary")),
+            Vocabulary::item("calendar"),
+            "caldav.hook.on-event-added",
+        )
+        .expect_err("an event addition has no summary");
+    }
+
+    #[cfg(all(alarm, unix))]
+    #[test]
+    fn an_alarm_command_reads_the_firing_in_its_environment() {
+        use crate::alarm::{AlarmAction, AlarmKind};
+
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("fired");
+        let line = format!("printf '%s %s' \"$uid\" \"$trigger\" > '{}'", out.display());
+        let hook = ItemHook {
+            notify: None,
+            cmd: Some(HookCmd(pimalaya_config::command::shell(&line))),
+        };
+
+        let trigger = "2026-11-05T07:45:00Z"
+            .parse::<Timestamp>()
+            .unwrap()
+            .as_second();
+        let firing = AlarmFiring {
+            id: String::from("/cal/work/standup.ics"),
+            etag: None,
+            uid: String::from("standup"),
+            kind: AlarmKind::Event,
+            summary: None,
+            alarm: 0,
+            alarm_uid: None,
+            over: None,
+            occurrence: None,
+            repeat: 0,
+            action: AlarmAction::Display,
+            trigger,
+            at: None,
+        };
+        let collection = HookCollection {
+            name: "calendar",
+            value: "work",
+        };
+
+        run_alarm(&hook, collection, &firing);
+
+        let fired = std::fs::read_to_string(&out).expect("the command ran");
+        let (uid, at) = fired.split_once(' ').expect("two words");
+        assert_eq!("standup", uid);
+        assert_eq!(trigger, at.parse::<Timestamp>().unwrap().as_second());
     }
 }

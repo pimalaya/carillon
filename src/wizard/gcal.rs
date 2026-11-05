@@ -10,7 +10,7 @@ use pimalaya_cli::{prompt, spinner::Spinner};
 use pimalaya_config::secret::SecretResolver;
 
 use crate::{
-    config::{BearerAuthConfig, GcalConfig, GcalHookConfig, ItemHook, NotifyConfig},
+    config::{BearerAuthConfig, GcalConfig, GcalHookConfig, ItemHook},
     gcal,
     wizard::secret,
 };
@@ -69,13 +69,7 @@ fn config(auth: BearerAuthConfig) -> GcalConfig {
         auth,
         watch: None,
         hook: GcalHookConfig {
-            on_event_added: Some(ItemHook {
-                notify: Some(NotifyConfig {
-                    summary: String::from("New event in $calendar"),
-                    body: String::from("$id"),
-                }),
-                cmd: None,
-            }),
+            on_event_added: Some(ItemHook::notifying("New event in $calendar", "$id")),
             ..Default::default()
         },
     }

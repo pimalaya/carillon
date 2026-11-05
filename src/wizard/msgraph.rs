@@ -10,7 +10,7 @@ use pimalaya_cli::spinner::Spinner;
 use pimalaya_config::secret::SecretResolver;
 
 use crate::{
-    config::{BearerAuthConfig, DomainsHookConfig, ItemHook, MsgraphConfig, NotifyConfig},
+    config::{BearerAuthConfig, DomainsHookConfig, ItemHook, MsgraphConfig},
     msgraph,
     wizard::secret,
 };
@@ -53,13 +53,10 @@ fn config(auth: BearerAuthConfig) -> MsgraphConfig {
         auth,
         watch: None,
         hook: DomainsHookConfig {
-            on_message_added: Some(ItemHook {
-                notify: Some(NotifyConfig {
-                    summary: String::from("New mail in $mailbox from $sender"),
-                    body: String::from("$subject"),
-                }),
-                cmd: None,
-            }),
+            on_message_added: Some(ItemHook::notifying(
+                "New mail in $mailbox from $sender",
+                "$subject",
+            )),
             ..Default::default()
         },
     }

@@ -14,14 +14,26 @@
   openssl,
   pkg-config,
   rustPlatform,
+  sqlite,
   stdenv,
 }:
 
 let
   nativeTls = builtins.elem "native-tls" buildFeatures;
-  # notify-rust is not behind a cargo feature here: a watch that cannot notify
-  # is not the tool, so the system dbus is linked in every build.
-  systemDbus = !stdenv.hostPlatform.isWindows;
+
+  # A feature is on when asked for by name, or when the defaults are kept,
+  # `notify` and `pimdir` being among them.
+  enabled = feature: !buildNoDefaultFeatures || builtins.elem feature buildFeatures;
+
+  # `vendored` is added on windows, where dbus and SQLite are built from
+  # source; elsewhere it is asked for by name or left out.
+  vendored = stdenv.hostPlatform.isWindows || builtins.elem "vendored" buildFeatures;
+
+  # Desktop notifications go through the system dbus.
+  systemDbus = enabled "notify" && !vendored;
+
+  # The pimdir store links SQLite.
+  systemSqlite = enabled "pimdir" && !vendored;
 
   # dbus calls libgcc outline atomics that the static aarch64 link cannot
   # resolve (__aarch64_ldset4_sync & co), so inline them instead.
@@ -53,9 +65,13 @@ rustPlatform.buildRustPackage (finalAttrs: {
   };
 
   env = {
-    # pkg-config hands the linker libdbus but no rpath, leaving a binary that
-    # cannot find it: not in postInstall, which runs it, nor once installed.
-    NIX_LDFLAGS = lib.optionalString systemDbus ("-rpath " + lib.getLib dbus' + "/lib");
+    # pkg-config hands the linker libdbus and libsqlite3 but no rpath,
+    # leaving a binary that cannot find them: not in postInstall, which runs
+    # it, nor once installed.
+    NIX_LDFLAGS = lib.concatStringsSep " " (
+      lib.optional systemDbus ("-rpath " + lib.getLib dbus' + "/lib")
+      ++ lib.optional systemSqlite ("-rpath " + lib.getLib sqlite + "/lib")
+    );
 
     # openssl should not be provided by vendors, not even on windows
     OPENSSL_NO_VENDOR = 1;
@@ -68,12 +84,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   buildInputs =
     lib.optional nativeTls openssl
-    # dbus is provided by vendors on windows
-    ++ lib.optional systemDbus dbus';
+    ++ lib.optional systemDbus dbus'
+    ++ lib.optional systemSqlite sqlite;
 
   buildFeatures =
     buildFeatures
-    # dbus is provided by vendors on windows
+    # dbus and SQLite are provided by vendors on windows
     ++ lib.optional stdenv.hostPlatform.isWindows "vendored";
 
   postInstall =

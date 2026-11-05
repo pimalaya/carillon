@@ -21,7 +21,7 @@ use clap::Parser;
 pub enum Backend {
     /// First configured block wins (priority: IMAP, JMAP, Maildir,
     /// CalDAV, CardDAV, Microsoft Graph, Gmail, Google Calendar, Google
-    /// People).
+    /// People, pimdir).
     #[default]
     Auto,
     /// Force IMAP; bail when the account has no `imap` block.
@@ -42,6 +42,8 @@ pub enum Backend {
     Gcal,
     /// Force Google People; bail when the account has no `gpeople` block.
     Gpeople,
+    /// Force pimdir; bail when the account has no `pimdir` block.
+    Pimdir,
 }
 
 #[allow(unused)]
@@ -90,6 +92,11 @@ impl Backend {
     pub fn allows_gpeople(self) -> bool {
         matches!(self, Self::Auto | Self::Gpeople)
     }
+
+    /// Whether a `pimdir` block may be used.
+    pub fn allows_pimdir(self) -> bool {
+        matches!(self, Self::Auto | Self::Pimdir)
+    }
 }
 
 impl FromStr for Backend {
@@ -107,6 +114,7 @@ impl FromStr for Backend {
             "gmail" => Ok(Self::Gmail),
             "gcal" => Ok(Self::Gcal),
             "gpeople" => Ok(Self::Gpeople),
+            "pimdir" => Ok(Self::Pimdir),
             backend => bail!("Invalid backend {backend}"),
         }
     }
@@ -125,6 +133,7 @@ impl fmt::Display for Backend {
             Self::Gmail => write!(f, "gmail"),
             Self::Gcal => write!(f, "gcal"),
             Self::Gpeople => write!(f, "gpeople"),
+            Self::Pimdir => write!(f, "pimdir"),
         }
     }
 }

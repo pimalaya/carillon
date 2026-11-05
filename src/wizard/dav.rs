@@ -23,7 +23,7 @@ use url::Url;
 use crate::{
     config::{
         CaldavConfig, CaldavHookConfig, CarddavConfig, CarddavHookConfig, DavAuthConfig, ItemHook,
-        NotifyConfig, TlsConfig,
+        TlsConfig,
     },
     dav,
     wizard::{
@@ -318,13 +318,7 @@ fn carddav_hook() -> CarddavHookConfig {
 /// A notification naming the item it fired for, which is all a DAV poll
 /// knows: it reads etags, never the event or the card itself.
 fn notify(summary: &str) -> ItemHook {
-    ItemHook {
-        notify: Some(NotifyConfig {
-            summary: summary.to_string(),
-            body: String::from("$id"),
-        }),
-        cmd: None,
-    }
+    ItemHook::notifying(summary, "$id")
 }
 
 #[cfg(test)]

@@ -11,8 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Added the `wizard` cargo feature, on by default, gating the interactive configuration: the `configure` command and the offer a first run makes. A build without it drops the prompts and the dependencies only they use, and a missing configuration points at the documented sample instead.
 - Added `$collection` to every hook, templates and command environment alike: the collection as the account configured it, whatever the backend calls it, so one command serves every domain.
 - Added `msgraph.hook.on-message-changed`, fired when a draft is edited in place (its `changeKey` moving while no flag does).
+- Added the `notify` cargo feature, on by default, gating desktop notifications. A build without it refuses a `notify` table, naming the feature, and needs no D-Bus.
+- Added `caldav.hook.on-alarm-trigger`, fired when an alarm of an event or a task of the watched calendar reaches its trigger ([pimalaya/calendula#29](https://github.com/pimalaya/calendula/discussions/29)).
+
+  Alarms are resolved over the next 48 hours and kept current as the calendar changes, the bodies read only when this hook is set. The hook reads `$summary`, `$kind`, `$trigger`, `$at`, `$uid`, `$etag`, `$recurrenceId`, `$alarm`, `$alarmUid` and `$action`. Nothing is stored: an alarm due while carillon was not running never fires, and one reached more than 15 minutes late (a machine asleep) is dropped with a log line. Cancelled events, completed tasks, acknowledged alarms and `EMAIL` alarms never fire.
+
+- Added the `pimdir` backend, on by default, firing the alarms of one calendar of a local pimdir store another tool keeps in sync: `pimdir.root`, `pimdir.calendar`, `pimdir.watch.poll.interval` and `pimdir.hook.on-alarm-trigger`. The store is read and never written.
 
 ### Changed
+
+- **BREAKING**: Changed hook notifications to pimalaya-config's templates, in the shell's syntax shared with hook commands.
+
+  `${name:default}` becomes `${name:-default}`, and the envelope variables become camelCase: `$sender_name`, `$sender_address`, `$recipient_name` and `$recipient_address` become `$senderName`, `$senderAddress`, `$recipientName` and `$recipientAddress`, in notifications and in the environment of commands alike. A notification in the former spelling is refused when the configuration is read, naming what to rewrite. A default no longer excuses a variable the hook does not have.
 
 - Bumped crypto-bigint to 0.7.10, ctutils to 0.4.6, rustls-webpki to 0.103.16 and webpki-root-certs to 1.0.11, fixing RUSTSEC-2026-0382, RUSTSEC-2026-0383, RUSTSEC-2026-0385 and RUSTSEC-2026-0387.
 - Changed `caldav.calendar` and `carddav.addressbook` named by one path segment to be looked up under the calendar or addressbook home set the server's principal names, which is the id a listing of the account gives. Absolute paths and other relative paths read as before.

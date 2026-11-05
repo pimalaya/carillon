@@ -15,8 +15,7 @@ use pimalaya_config::secret::SecretResolver;
 
 use crate::{
     config::{
-        DomainsHookConfig, ItemHook, JmapAuthConfig, JmapConfig, JmapWatchConfig, NotifyConfig,
-        PollWatchConfig,
+        DomainsHookConfig, ItemHook, JmapAuthConfig, JmapConfig, JmapWatchConfig, PollWatchConfig,
     },
     jmap,
     wizard::{
@@ -143,13 +142,10 @@ fn config(server: String, auth: JmapAuthConfig) -> JmapConfig {
 /// makes, so the notification may name it.
 fn hook() -> DomainsHookConfig {
     DomainsHookConfig {
-        on_message_added: Some(ItemHook {
-            notify: Some(NotifyConfig {
-                summary: String::from("New mail in $mailbox from $sender"),
-                body: String::from("$subject"),
-            }),
-            cmd: None,
-        }),
+        on_message_added: Some(ItemHook::notifying(
+            "New mail in $mailbox from $sender",
+            "$subject",
+        )),
         ..Default::default()
     }
 }

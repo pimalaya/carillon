@@ -11,7 +11,7 @@ use pimalaya_cli::spinner::Spinner;
 use pimalaya_config::secret::SecretResolver;
 
 use crate::{
-    config::{BearerAuthConfig, GpeopleConfig, GpeopleHookConfig, ItemHook, NotifyConfig},
+    config::{BearerAuthConfig, GpeopleConfig, GpeopleHookConfig, ItemHook},
     gpeople,
     wizard::secret,
 };
@@ -50,13 +50,7 @@ fn config(auth: BearerAuthConfig) -> GpeopleConfig {
         auth,
         watch: None,
         hook: GpeopleHookConfig {
-            on_card_added: Some(ItemHook {
-                notify: Some(NotifyConfig {
-                    summary: String::from("New contact in $addressbook"),
-                    body: String::from("$id"),
-                }),
-                cmd: None,
-            }),
+            on_card_added: Some(ItemHook::notifying("New contact in $addressbook", "$id")),
             ..Default::default()
         },
     }

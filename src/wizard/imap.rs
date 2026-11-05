@@ -24,7 +24,7 @@ use pimalaya_config::secret::SecretResolver;
 
 use crate::{
     config::{
-        ImapConfig, ImapHookConfig, ImapWatchConfig, ItemHook, NotifyConfig, PollWatchConfig,
+        ImapConfig, ImapHookConfig, ImapWatchConfig, ItemHook, PollWatchConfig,
         SaslAnonymousConfig, SaslConfig, SaslLoginConfig, SaslOauthbearerConfig, SaslPlainConfig,
         SaslScramSha256Config, SaslXoauth2Config,
     },
@@ -307,13 +307,10 @@ fn config(endpoint: &TcpEndpoint, sasl: Option<SaslConfig>) -> ImapConfig {
 /// IMAP resolves an arrival's envelope, so the notification may name it.
 fn hook() -> ImapHookConfig {
     ImapHookConfig {
-        on_message_added: Some(ItemHook {
-            notify: Some(NotifyConfig {
-                summary: String::from("New mail in $mailbox from $sender"),
-                body: String::from("$subject"),
-            }),
-            cmd: None,
-        }),
+        on_message_added: Some(ItemHook::notifying(
+            "New mail in $mailbox from $sender",
+            "$subject",
+        )),
         ..Default::default()
     }
 }
