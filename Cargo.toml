@@ -19,13 +19,13 @@ rustls-ring = ["pimalaya-stream/rustls-ring", "io-http?/rustls-ring", "io-pim-di
 imap = ["dep:io-imap", "io-imap/client"]
 jmap = ["dep:base64", "dep:io-jmap", "io-jmap/client"]
 maildir = ["dep:io-maildir", "io-maildir/client", "io-maildir/parser"]
-dav = ["dep:ical-rs", "dep:io-http", "dep:io-webdav", "dep:jiff", "io-webdav/client"]
+dav = ["dep:ceichas", "dep:ical-rs", "dep:io-http", "dep:io-webdav", "dep:jiff", "io-webdav/client"]
 msgraph = ["dep:io-msgraph", "io-msgraph/client"]
 gmail = ["dep:io-gmail", "io-gmail/client"]
 gcal = ["dep:io-gcal", "io-gcal/client"]
 gpeople = ["dep:io-gpeople", "io-gpeople/client"]
 notify = ["pimalaya-config/notify"]
-pimdir = ["dep:ical-rs", "dep:io-pimdir", "dep:jiff", "io-pimdir/client"]
+pimdir = ["dep:ceichas", "dep:ical-rs", "dep:io-pimdir", "dep:jiff", "io-pimdir/client"]
 vendored = ["pimalaya-stream/vendored", "io-http?/vendored", "io-pimdir?/vendored", "pimalaya-config/vendored"]
 wizard = ["dep:io-pim-discovery", "pimalaya-cli/prompt", "pimalaya-cli/wizard", "pimalaya-cli/imap", "pimalaya-cli/jmap"]
 
@@ -46,6 +46,7 @@ pimalaya-cli = { version = "0.3", default-features = false, features = ["build"]
 [dependencies]
 anyhow = "1"
 base64 = { version = "0.23", optional = true }
+ceichas = { version = "0.1", optional = true }
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 ctrlc = { version = "3", features = ["termination"] }
 io-http = { version = "0.6", default-features = false, optional = true }
@@ -74,4 +75,5 @@ shellexpand = "3.1"
 url = { version = "2.2", features = ["serde"] }
 
 [patch.crates-io]
+ceichas = { git = "https://github.com/pimalaya/ceichas", rev = "661be05e8dba827ee9c9ce80825bdaee7fe51ce4" }
 pimalaya-config = { git = "https://github.com/pimalaya/config", rev = "09f5060339cc1e98d9c8b304b7ce41c87cf57f22" }

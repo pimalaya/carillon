@@ -217,6 +217,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64",
+ "ceichas",
  "clap",
  "ctrlc",
  "ical-rs",
@@ -258,6 +259,15 @@ dependencies = [
  "jobserver",
  "libc",
  "shlex",
+]
+
+[[package]]
+name = "ceichas"
+version = "0.1.0"
+source = "git+https://github.com/pimalaya/ceichas?rev=661be05e8dba827ee9c9ce80825bdaee7fe51ce4#661be05e8dba827ee9c9ce80825bdaee7fe51ce4"
+dependencies = [
+ "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

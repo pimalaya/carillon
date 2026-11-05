@@ -263,6 +263,7 @@ fn is_calendar(kind: &str) -> bool {
 mod tests {
     use std::path::Path;
 
+    use ceichas::timer::CeichasTimer;
     use io_pimdir::{
         client::{PimdirStore, producer::PimdirProducer, reader::PimdirReader},
         codec::PimdirAction,
@@ -378,7 +379,8 @@ mod tests {
         add(dir.path(), "mail", &event("quoted", "090000"));
 
         let reader = PimdirReader::open(dir.path()).unwrap();
-        let alarms = AlarmShared::new();
+        let timer = CeichasTimer::new(Default::default()).unwrap();
+        let alarms = AlarmShared::new(timer.waker());
         let cursor = load(&reader, CAL, &alarms).unwrap();
         let id = seq(dir.path(), "standup").to_string();
 

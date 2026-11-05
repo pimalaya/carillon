@@ -1,7 +1,7 @@
 ---
 cairn: change
 id: alarm-wait-on-ceichas
-status: active
+status: landed
 created: 2026-11-05
 ---
 

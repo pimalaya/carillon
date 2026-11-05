@@ -23,7 +23,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(alarm)]
+use std::sync::{Mutex, PoisonError};
+
 use anyhow::{Result, bail};
+#[cfg(alarm)]
+use ceichas::{timer::CeichasTimer, waker::CeichasWaker};
 use clap::Parser;
 use log::{debug, error, info, warn};
 use pimalaya_cli::printer::Printer;
@@ -101,18 +106,47 @@ impl WatchCommand {
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_for_ctrlc = shutdown.clone();
+        #[cfg(alarm)]
+        let wakers = AlarmWakers::default();
+        #[cfg(alarm)]
+        let wakers_for_ctrlc = wakers.clone();
+
         ctrlc::set_handler(move || {
             println!("received Ctrl+C, shutting down the watcher…");
             shutdown_for_ctrlc.store(true, Ordering::SeqCst);
+
+            // NOTE: rung after the flag is set, so a woken alarm thread
+            // reads it and stops.
+            #[cfg(alarm)]
+            for waker in wakers_for_ctrlc
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+            {
+                if let Err(err) = waker.wake() {
+                    warn!("cannot wake an alarm thread: {err}");
+                }
+            }
         })?;
 
         let mut handles = Vec::with_capacity(selected.len());
 
         for (name, account) in selected {
             let shutdown = shutdown.clone();
+            #[cfg(alarm)]
+            let wakers = wakers.clone();
 
             let handle = thread::Builder::new().name(name.clone()).spawn(move || {
-                if let Err(err) = watch_account(&name, account, backend, shutdown) {
+                let outcome = watch_account(
+                    &name,
+                    account,
+                    backend,
+                    shutdown,
+                    #[cfg(alarm)]
+                    wakers,
+                );
+
+                if let Err(err) = outcome {
                     error!("[{name}] watch stopped: {err:#}");
                 }
             })?;
@@ -166,10 +200,11 @@ fn watch_account(
     config: AccountConfig,
     backend: Backend,
     shutdown: Arc<AtomicBool>,
+    #[cfg(alarm)] wakers: AlarmWakers,
 ) -> Result<()> {
     let mut backoff = INITIAL_BACKOFF;
     #[cfg(alarm)]
-    let mut alarms: Option<AlarmRunner> = None;
+    let mut alarms = AlarmRunner::new(wakers);
 
     while !shutdown.load(Ordering::SeqCst) {
         let started = Instant::now();
@@ -211,9 +246,7 @@ fn watch_account(
     }
 
     #[cfg(alarm)]
-    if let Some(alarms) = alarms {
-        alarms.join(account);
-    }
+    alarms.join(account);
 
     Ok(())
 }
@@ -229,7 +262,7 @@ fn watch_session(
     config: &AccountConfig,
     backend: Backend,
     shutdown: &Arc<AtomicBool>,
-    #[cfg(alarm)] alarms: &mut Option<AlarmRunner>,
+    #[cfg(alarm)] alarms: &mut AlarmRunner,
 ) -> Result<()> {
     #[cfg(feature = "imap")]
     if backend.allows_imap() {
@@ -381,9 +414,7 @@ fn watch_session(
                 }
             };
             let shared = match &caldav_config.hook.on_alarm_trigger {
-                Some(hook) => Some(AlarmRunner::ensure(
-                    alarms, account, hook, collection, shutdown,
-                )?),
+                Some(hook) => Some(alarms.ensure(account, hook, collection, shutdown)?),
                 None => None,
             };
             return dav::watch(
@@ -562,7 +593,7 @@ fn watch_session(
                 "[{account}] watching `{}` over pimdir, polling",
                 collection.value
             );
-            let shared = AlarmRunner::ensure(alarms, account, hook, collection, shutdown)?;
+            let shared = alarms.ensure(account, hook, collection, shutdown)?;
             return pimdir::watch(pimdir_config, shutdown, shared);
         }
 
@@ -585,26 +616,53 @@ fn watch_session(
 /// the next one connects, and that one replaces them with what it reads.
 #[cfg(alarm)]
 struct AlarmRunner {
-    shared: Arc<AlarmShared>,
-    handle: thread::JoinHandle<()>,
+    /// Where the thread's waker is left for a shutdown to ring.
+    wakers: AlarmWakers,
+    started: Option<(Arc<AlarmShared>, thread::JoinHandle<()>)>,
 }
+
+/// The waker of every alarm thread, which a shutdown rings once its flag
+/// is set: a thread blocks until its next firing, which may be hours
+/// away, and would otherwise not notice.
+#[cfg(alarm)]
+type AlarmWakers = Arc<Mutex<Vec<CeichasWaker>>>;
 
 #[cfg(alarm)]
 impl AlarmRunner {
-    /// The alarms of `runner`, starting its thread on the first session
-    /// to fire `hook` for the alarms of `collection`.
-    fn ensure<'a>(
-        runner: &'a mut Option<Self>,
+    /// No thread yet, its waker to be left in `wakers`.
+    fn new(wakers: AlarmWakers) -> Self {
+        Self {
+            wakers,
+            started: None,
+        }
+    }
+
+    /// The alarms of this account, starting its thread on the first
+    /// session to fire `hook` for the alarms of `collection`.
+    fn ensure(
+        &mut self,
         account: &str,
         hook: &ItemHook,
         collection: HookCollection<'_>,
         shutdown: &Arc<AtomicBool>,
-    ) -> Result<&'a AlarmShared> {
-        if let Some(runner) = runner {
-            return Ok(&runner.shared);
+    ) -> Result<&AlarmShared> {
+        if let Some(started) = self.started.take() {
+            let (shared, _) = self.started.insert(started);
+            return Ok(shared);
         }
 
-        let shared = Arc::new(AlarmShared::new());
+        let timer = CeichasTimer::new(Default::default())?;
+        debug!("[{account}] alarms wait on {:?}", timer.backend());
+
+        // NOTE: left before the thread first reads the flag, so a
+        // shutdown racing the start either stops it before its first
+        // wait or rings this waker.
+        self.wakers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(timer.waker());
+
+        let shared = Arc::new(AlarmShared::new(timer.waker()));
         let hook = hook.clone();
         let name = collection.name;
         let value = collection.value.to_owned();
@@ -614,7 +672,7 @@ impl AlarmRunner {
         let handle = thread::Builder::new()
             .name(format!("{account}-alarms"))
             .spawn(move || {
-                alarm::run(&thread_shared, &thread_shutdown, |firing| {
+                alarm::run(&thread_shared, timer, &thread_shutdown, |firing| {
                     let collection = HookCollection {
                         name,
                         value: &value,
@@ -623,12 +681,15 @@ impl AlarmRunner {
                 })
             })?;
 
-        Ok(&runner.insert(Self { shared, handle }).shared)
+        let (shared, _) = self.started.insert((shared, handle));
+        Ok(shared)
     }
 
     /// Waits for the thread, which ends once a shutdown is requested.
     fn join(self, account: &str) {
-        if self.handle.join().is_err() {
+        if let Some((_, handle)) = self.started
+            && handle.join().is_err()
+        {
             warn!("[{account}] alarm thread panicked");
         }
     }

@@ -22,6 +22,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use ceichas::{
+    timer::{CeichasTimer, CeichasWait},
+    waker::CeichasWaker,
+};
 use ical::{
     alarm::IcalAlarms,
     component::{IcalComponent, IcalComponentKind, IcalComponentName},
@@ -38,9 +42,9 @@ use log::{debug, info, trace, warn};
 const HORIZON: i64 = 48 * 3_600;
 /// How late a firing may be reached and still fire.
 const GRACE: i64 = 15 * 60;
-/// How long a wait sleeps at a time, so a shutdown, a moved firing and a
-/// changed wall clock are all noticed promptly.
-const STEP: Duration = Duration::from_millis(200);
+/// How long the alarm thread waits before trying again a timer that
+/// failed, rather than spinning on it.
+const RETRY: Duration = Duration::from_secs(1);
 /// A day, in seconds.
 const DAY: i64 = 86_400;
 /// How many years past the current one the bundled zones are exact to.
@@ -544,16 +548,17 @@ impl AlarmQueue {
 /// The alarms an account's watch and its alarm thread share.
 pub struct AlarmShared {
     book: Mutex<AlarmBook>,
-    /// Set when the firings may have moved, taken by the alarm thread.
-    moved: AtomicBool,
+    /// Ends the alarm thread's wait, its firings having moved.
+    waker: CeichasWaker,
 }
 
 impl AlarmShared {
-    /// Nothing held yet.
-    pub fn new() -> Self {
+    /// Nothing held yet, `waker` ending the wait of the alarm thread's
+    /// timer.
+    pub fn new(waker: CeichasWaker) -> Self {
         Self {
             book: Mutex::new(AlarmBook::new()),
-            moved: AtomicBool::new(false),
+            waker,
         }
     }
 
@@ -561,13 +566,20 @@ impl AlarmShared {
     /// again does, and wakes the alarm thread.
     pub fn replace(&self, book: AlarmBook) {
         *self.book.lock().unwrap_or_else(PoisonError::into_inner) = book;
-        self.moved.store(true, Ordering::SeqCst);
+        self.wake();
     }
 
     /// Changes the alarms held, and wakes the alarm thread.
     pub fn update(&self, change: impl FnOnce(&mut AlarmBook)) {
         change(&mut self.book.lock().unwrap_or_else(PoisonError::into_inner));
-        self.moved.store(true, Ordering::SeqCst);
+        self.wake();
+    }
+
+    /// Ends the alarm thread's wait, so it reads its firings again.
+    fn wake(&self) {
+        if let Err(err) = self.waker.wake() {
+            warn!("cannot wake the alarm thread: {err}");
+        }
     }
 
     /// The item and the trigger of every firing over `[from, until)`.
@@ -582,18 +594,19 @@ impl AlarmShared {
     }
 }
 
-/// How a wait ended.
-#[derive(Debug, Eq, PartialEq)]
-enum AlarmWait {
-    /// The wall clock reached the time waited for.
-    Reached,
-    /// The firings moved, or a shutdown was requested.
-    Woken,
-}
-
 /// Fires the alarms `shared` holds until `shutdown` is set, calling
 /// `fire` for every firing due.
-pub fn run(shared: &AlarmShared, shutdown: &AtomicBool, mut fire: impl FnMut(&AlarmFiring)) {
+///
+/// `timer` waits on the wall clock (ceichas), so a suspend counts and a
+/// clock change is followed; its waker, the one `shared` holds, ends the
+/// wait when the firings move, and the caller wakes it once `shutdown` is
+/// set.
+pub fn run(
+    shared: &AlarmShared,
+    mut timer: CeichasTimer,
+    shutdown: &AtomicBool,
+    mut fire: impl FnMut(&AlarmFiring),
+) {
     let mut queue = AlarmQueue::new(now());
     let mut moved = true;
 
@@ -619,28 +632,15 @@ pub fn run(shared: &AlarmShared, shutdown: &AtomicBool, mut fire: impl FnMut(&Al
         }
 
         let deadline = UNIX_EPOCH + Duration::from_secs(pass.wake.max(0) as u64);
-        moved = wait_until(deadline, &shared.moved, shutdown) == AlarmWait::Woken;
-    }
-}
-
-/// Waits until the wall clock reaches `deadline`, or until `woken` or
-/// `shutdown` is set, `woken` being taken.
-///
-/// The wall clock is read at every step, a duration slept being counted
-/// on a clock that stops while the machine sleeps: a suspend or a clock
-/// change delays the end of the wait by one step at most.
-// NOTE: shaped as ceichas's `CeichasTimer::wait_until`, which replaces it
-// once released (carillon change alarm-hooks).
-fn wait_until(deadline: SystemTime, woken: &AtomicBool, shutdown: &AtomicBool) -> AlarmWait {
-    loop {
-        if shutdown.load(Ordering::SeqCst) || woken.swap(false, Ordering::SeqCst) {
-            return AlarmWait::Woken;
-        }
-
-        match deadline.duration_since(SystemTime::now()) {
-            Ok(left) if !left.is_zero() => thread::sleep(left.min(STEP)),
-            _ => return AlarmWait::Reached,
-        }
+        moved = match timer.wait_until(deadline) {
+            Ok(CeichasWait::Reached) => false,
+            Ok(CeichasWait::Woken) => true,
+            Err(err) => {
+                warn!("cannot wait for the next alarm, retrying: {err}");
+                thread::sleep(RETRY);
+                true
+            }
+        };
     }
 }
 
@@ -687,7 +687,7 @@ fn civil(id: IcalRecurDateTime) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::atomic::AtomicBool, time::SystemTime};
+    use std::time::SystemTime;
 
     use jiff::Timestamp;
 
@@ -896,15 +896,15 @@ mod tests {
     }
 
     #[test]
-    fn a_wait_ends_on_its_time_or_on_a_wake_sent_before() {
-        let woken = AtomicBool::new(true);
-        let shutdown = AtomicBool::new(false);
+    fn a_change_ends_the_alarm_thread_s_wait() {
+        let mut timer = CeichasTimer::new(Default::default()).expect("a timer");
+        let shared = AlarmShared::new(timer.waker());
         let later = SystemTime::now() + Duration::from_secs(3_600);
 
-        assert_eq!(AlarmWait::Woken, wait_until(later, &woken, &shutdown));
-        assert_eq!(
-            AlarmWait::Reached,
-            wait_until(SystemTime::now(), &woken, &shutdown)
-        );
+        shared.update(|book| book.forget("nothing"));
+        assert_eq!(CeichasWait::Woken, timer.wait_until(later).expect("a wait"));
+
+        shared.replace(AlarmBook::new());
+        assert_eq!(CeichasWait::Woken, timer.wait_until(later).expect("a wait"));
     }
 }
