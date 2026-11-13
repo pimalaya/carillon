@@ -65,12 +65,22 @@ The method SHALL be configured under its backend (`imap.watch`, `jmap.watch`, `m
 - **THEN** it is refused, naming the line and the methods that backend has, and no watch is started
 
 ### Requirement: The daemon owns the connection lifecycle
-The daemon SHALL own reconnection: a session that ends, for any reason other than a requested shutdown, SHALL be reopened after a capped exponential backoff, and a session that stayed up long enough to look healthy SHALL reset that backoff. Credentials SHALL be resolved per attempt rather than held, so a rotated secret is picked up by the next reconnect and residency stays minimal.
+The daemon SHALL own reconnection: a session that ends, for any reason other than a requested shutdown, SHALL be reopened after a capped exponential backoff, and a session that stayed up long enough to look healthy SHALL reset that backoff. Credentials SHALL be resolved per attempt rather than held, so a rotated secret is picked up by the next reconnect and residency stays minimal. A session reopened after its connection was lost SHALL report what moved meanwhile where its backend can tell: IMAP SHALL resume from the UIDs and flags the lost watch knew, and Gmail from the history cursor the lost session had reached, both held in memory for as long as the account is watched. An IMAP session that ended on a refusal rather than a lost connection, a mailbox recreated under the same name among them, SHALL take a new baseline, as every session of the other backends does.
 
 #### Scenario: The connection drops
 - **GIVEN** a running watch
 - **WHEN** the session ends because the connection dropped
 - **THEN** the daemon waits its backoff, resolves the credential again, and reopens the watch
+
+#### Scenario: A message arrives during an outage
+- **GIVEN** an IMAP watch whose connection was lost
+- **WHEN** a message arrives before the session is reopened
+- **THEN** the reopened session fires `on-message-added` for it
+
+#### Scenario: A mailbox recreated during an outage
+- **GIVEN** an IMAP watch whose connection was lost, and whose mailbox was deleted and created again meanwhile
+- **WHEN** the session is reopened and the server names another UIDVALIDITY
+- **THEN** that session ends, and the next one takes a new baseline
 
 ### Requirement: One change vocabulary across backends
 Every backend SHALL report changes in one vocabulary: an item added, an item removed, an item changed, a flag added, a flag removed, each carrying the domain of what it is about. Flags SHALL be reported under one set of names whatever the backend spells them as, so that a filter written once (`flags = ["Seen"]`) fires against IMAP `\Seen`, JMAP `$seen` and the Maildir `S` letter alike. A backend SHALL report only the events its protocol can express, which is a property of the protocol rather than a gap: mail is immutable, so nothing mail reports an edit but a Microsoft Graph draft, edited where it stands, and then only where no flag moved in the same edit, its `changeKey` moving with either, and a WebDAV poll reads etags, so the flags of an item are unknown to it rather than empty, and it reports none. Unknown and empty are distinct, as they are in a pimdir store. The vocabulary SHALL stay one across the backends even though the hooks configuring it are per backend and per domain, so that one hook runner serves all of them.
@@ -249,7 +259,7 @@ Each backend SHALL take the collection it watches, required, under the name its 
 - **THEN** it is refused, since a card is configured and templated as `$addressbook`
 
 ### Requirement: A watch survives the change it reports
-A watch SHALL keep working across the changes it reports. A connection a backend's own protocol closes as part of reporting SHALL be reopened before the next request rather than written into, and a round that fails SHALL be retried once on a fresh connection before the session is given up. A round SHALL advance no state it did not complete, so running it twice reports nothing twice.
+A watch SHALL keep working across the changes it reports. A connection a backend's own protocol closes as part of reporting SHALL be reopened before the next request rather than written into, and a round that fails SHALL be retried once on a fresh connection before the session is given up. A round SHALL advance no state it did not complete, so running it twice reports nothing twice. A JMAP event stream SHALL be reopened with the id of the last event read (RFC 8620 §7.3), so a server keeping its events pushes what moved between two streams.
 
 #### Scenario: A JMAP event stream that closes after its state change
 - **GIVEN** a JMAP account watching over the event stream, which the server closes after reporting one state change
@@ -363,7 +373,7 @@ The JMAP backend SHALL watch mail, contacts and calendar events, each under the 
 
 
 ### Requirement: Microsoft Graph and Google accounts are watched through their own APIs
-carillon SHALL offer four bearer-authenticated backends, each polled, none offering another method. `msgraph` SHALL watch mail, contacts and calendar events under `msgraph.mailbox`, `msgraph.addressbook` and `msgraph.calendar`, at least one given, sharing one token and one connection; `contacts` SHALL name the default contact folder, and a folder or calendar SHALL be found by id wherever it sits, or by name. `gmail` SHALL watch a label under `gmail.mailbox`, `gcal` a calendar under `gcal.calendar`, by id or name, and `gpeople` a contact group under `gpeople.addressbook`, `contacts` naming every contact the account owns rather than a group. Each SHALL fire the hooks of the domains it holds and declare no other, flags being reported under the shared names (`Seen`, `Flagged`). An expired change feed SHALL NOT report what the gap hides as removals: where the collection can be listed again it SHALL be, and only what differs from the known picture reported; Gmail, whose history cannot be listed again, SHALL resume from the current cursor. The wizard SHALL offer these APIs first for a Google or Microsoft address, beside the IMAP and DAV services discovered for it, the token collected through the shared picker.
+carillon SHALL offer four bearer-authenticated backends, each polled, none offering another method. `msgraph` SHALL watch mail, contacts and calendar events under `msgraph.mailbox`, `msgraph.addressbook` and `msgraph.calendar`, at least one given, sharing one token and one connection; `contacts` SHALL name the default contact folder, and a folder or calendar SHALL be found by id wherever it sits, or by name. `gmail` SHALL watch a label under `gmail.mailbox`, `gcal` a calendar under `gcal.calendar`, by id or name, and `gpeople` a contact group under `gpeople.addressbook`, `contacts` naming every contact the account owns rather than a group. Each SHALL fire the hooks of the domains it holds and declare no other, flags being reported under the shared names (`Seen`, `Flagged`). An expired change feed SHALL NOT report what the gap hides as removals: where the collection can be listed again it SHALL be, and only what differs from the known picture reported; Gmail, whose history cannot be listed again, SHALL resume from the current cursor, as it SHALL from a history whose listing does not end. The wizard SHALL offer these APIs first for a Google or Microsoft address, beside the IMAP and DAV services discovered for it, the token collected through the shared picker.
 
 #### Scenario: A follow-up flag in Outlook
 - **GIVEN** an account watching `msgraph.mailbox = "Inbox"` with `msgraph.hook.on-flag-added.flags = ["Flagged"]`

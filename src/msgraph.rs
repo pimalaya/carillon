@@ -458,7 +458,8 @@ fn contact_row(row: MsgraphContactDelta) -> Row {
 /// Folds a message into what an arrival hook templates on.
 fn summarize(message: &MsgraphMessage) -> ItemSummary {
     let from = message.from.as_ref().map(|from| &from.email_address);
-    let to = message.to_recipients.first().map(|to| &to.email_address);
+    let to = message.to_recipients.as_option();
+    let to = to.and_then(|to| to.first()).map(|to| &to.email_address);
 
     ItemSummary {
         from_name: from.and_then(|from| from.name.clone()),

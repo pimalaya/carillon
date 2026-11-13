@@ -30,6 +30,8 @@ use anyhow::{Result, bail};
 #[cfg(alarm)]
 use ceichas::{timer::CeichasTimer, waker::CeichasWaker};
 use clap::Parser;
+#[cfg(feature = "imap")]
+use io_imap::watch::ImapMailboxWatchState;
 use log::{debug, error, info, warn};
 use pimalaya_cli::printer::Printer;
 
@@ -205,6 +207,8 @@ fn watch_account(
     let mut backoff = INITIAL_BACKOFF;
     #[cfg(alarm)]
     let mut alarms = AlarmRunner::new(wakers);
+    #[cfg(any(feature = "imap", feature = "gmail"))]
+    let mut resume = Resume::default();
 
     while !shutdown.load(Ordering::SeqCst) {
         let started = Instant::now();
@@ -216,6 +220,8 @@ fn watch_account(
             &shutdown,
             #[cfg(alarm)]
             &mut alarms,
+            #[cfg(any(feature = "imap", feature = "gmail"))]
+            &mut resume,
         );
 
         // NOTE: neither an asked-for ending nor a failure raced on the
@@ -263,6 +269,7 @@ fn watch_session(
     backend: Backend,
     shutdown: &Arc<AtomicBool>,
     #[cfg(alarm)] alarms: &mut AlarmRunner,
+    #[cfg(any(feature = "imap", feature = "gmail"))] resume: &mut Resume,
 ) -> Result<()> {
     #[cfg(feature = "imap")]
     if backend.allows_imap() {
@@ -290,6 +297,7 @@ fn watch_session(
                         imap_config,
                         collection.value,
                         poll.interval(),
+                        &mut resume.imap,
                         shutdown,
                         &mut on_event,
                     )
@@ -308,6 +316,7 @@ fn watch_session(
                         imap_config,
                         collection.value,
                         idle.timeout(),
+                        &mut resume.imap,
                         shutdown,
                         &mut on_event,
                     )
@@ -517,6 +526,7 @@ fn watch_session(
                 gmail_config,
                 ApiWatchConfig::interval(&gmail_config.watch),
                 resolve,
+                &mut resume.gmail,
                 shutdown,
                 &mut on_event,
             );
@@ -607,6 +617,19 @@ fn watch_session(
          `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople`, `pimdir`); use \
          `-b/--backend` to pin a specific one"
     )
+}
+
+/// What a session leaves for the next one of its account to resume
+/// from, so a lost connection hides nothing that moved meanwhile.
+#[cfg(any(feature = "imap", feature = "gmail"))]
+#[derive(Default)]
+struct Resume {
+    /// What the IMAP watch knew of its mailbox.
+    #[cfg(feature = "imap")]
+    imap: Option<ImapMailboxWatchState>,
+    /// How far the Gmail history was read.
+    #[cfg(feature = "gmail")]
+    gmail: Option<String>,
 }
 
 /// The thread firing an account's alarms, beside its watch.

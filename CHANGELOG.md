@@ -29,9 +29,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Changed `gpeople.addressbook = "contacts"` to watch every contact the account owns, and `msgraph.addressbook = "contacts"` to name the default contact folder first; a Graph contact folder or calendar is also found by id beyond the first listing page, nested contact folders included.
 
-- Bumped io-gmail to 0.5, io-gpeople to 0.5, io-gcal to 0.2 and io-msgraph to 0.6, the versions Neverest builds with. Nothing changes in what a watch reports.
-- Bumped io-webdav to 0.7, and io-http to 0.6 under the DAV watch, the versions Neverest builds with. A multistatus is parsed 3.4 to 9 times faster; nothing changes in what a watch reports.
-- Bumped io-gcal to 0.3, io-gmail to 0.6, io-gpeople to 0.6, io-imap to 0.8, io-jmap to 0.7, io-msgraph to 0.7, io-pimdir to 0.9, io-pim-discovery to 0.11 and pimalaya-cli to 0.3, their latest releases, which carry the fixes carillon pinned unreleased revisions of io-http, io-imap, io-msgraph, io-pimdir and pimalaya-cli for. `json-schema` now also describes `completion`, `manual` and `json-schema`.
+- Bumped io-gcal to 0.4, io-gmail to 0.7, io-gpeople to 0.7, io-http to 0.7, io-imap to 0.9, io-jmap to 0.8, io-maildir to 0.4, io-msgraph to 0.8, io-pim-discovery to 0.12, io-sasl to 0.2 and io-webdav to 0.8, their releases of 2026-11-13, and io-pimdir to 0.9 and pimalaya-cli to 0.3.
+
+  A WebDAV multistatus is parsed 3.4 to 9 times faster, and an answer that is not one whole multistatus fails the round instead of reading as a shorter listing. `json-schema` now also describes `completion`, `manual` and `json-schema`.
+
+- Changed an IMAP watch reopened after a lost connection to resume from what the lost one knew.
+
+  What moved in the mailbox during the outage is reported, where the reopened watch used to take a new baseline. A mailbox recreated meanwhile still takes one.
+
+- Changed a Gmail watch reopened after a lost session to read its history from the cursor the lost one had reached.
+
+- Changed the JMAP event stream to be reopened with the id of the last event read.
+
+  A server keeping its events pushes what moved between two streams.
+
 - Changed piped `--json` output to print one value per line, each schema of `json-schema` to carry an `$id` naming the contract version (`v0.2`), and added `carillon-error`, the schema of the JSON failure object (pimalaya-cli `55b6693`).
 
 ### Fixed
@@ -40,6 +51,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fixed a DAV server with no `sync-collection` being unwatchable: the collection is listed on every poll instead.
 - Fixed a rejected DAV sync token hiding what moved meanwhile: the collection is read again against what the watch knew.
 - Fixed a calendar holding events and tasks skipping every member whose content type names no component.
+- Fixed `imap.sasl.scram-sha-256` failing as an unsupported mechanism: io-imap is built with its `scram` feature.
+- Fixed an IMAP arrival resolving to the data of another message when the server adds a FETCH of its own to the answer.
+- Fixed a Gmail history listing that does not end holding the watch: it stops on a repeated page token or past 1000 pages, and the watch resumes from now.
 - Fixed a hostile or broken server reaching the watch through its protocol libraries, now released. io-http (e181530, in 0.6) caps response heads at 64 KiB and bodies at 256 MiB, fails on a body cut short instead of spinning forever, and no longer panics on a huge chunk size. io-imap (b1ab38e, in 0.8) no longer panics on a greeting carrying a literal, scans FETCH lines incrementally under a cap, and keeps passwords and SASL responses out of trace logs. io-webdav (0.7) parses a multistatus in linear time and caps its nesting at 64, where a deep one overflowed the stack.
 
 ## [0.2.0] - 2026-10-02

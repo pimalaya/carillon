@@ -36,7 +36,7 @@ use io_jmap::{
         changes::JmapChangesOutput,
         event_source::{
             JmapCloseAfter, JmapStateChange,
-            subscribe::{JmapEventSource, JmapEventSourceYield},
+            subscribe::{JmapEventSource, JmapEventSourceOptions, JmapEventSourceYield},
         },
     },
     rfc8621::{
@@ -176,9 +176,19 @@ pub fn watch_push(
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let (mut client, mut watched) = arm(config)?;
+    let mut last_event_id = None;
 
     while !shutdown.load(Ordering::SeqCst) {
-        if !subscribe(&mut client, config, &watched, ping, shutdown)? {
+        let news = subscribe(
+            &mut client,
+            config,
+            &watched,
+            ping,
+            &mut last_event_id,
+            shutdown,
+        )?;
+
+        if !news {
             continue;
         }
 
@@ -583,17 +593,24 @@ fn summarize(email: &JmapEmail) -> ItemSummary {
 /// not every server ends it after a state event when asked to. A read
 /// that times out is the wakeup this loop arms to look at the shutdown
 /// flag.
+///
+/// `last_event_id` is the id of the last event read, sent back so the
+/// server pushes what moved between two subscriptions (RFC 8620 §7.3).
 fn subscribe(
     client: &mut JmapClientStd,
     config: &JmapConfig,
     watched: &[Watched],
     ping: u64,
+    last_event_id: &mut Option<String>,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<bool> {
     let session = client
         .session()
         .ok_or_else(|| anyhow!("The JMAP session was not read"))?;
     let types: Vec<&str> = watched.iter().map(Watched::type_name).collect();
+    let opts = JmapEventSourceOptions {
+        last_event_id: last_event_id.clone(),
+    };
     let mut coroutine = JmapEventSource::new(
         session,
         &client.http_auth,
@@ -601,6 +618,7 @@ fn subscribe(
         ping,
         JmapCloseAfter::No,
         shutdown.clone(),
+        opts,
     )?;
 
     // NOTE: the subscription holds a connection of its own and leaves
@@ -611,10 +629,14 @@ fn subscribe(
 
     loop {
         match coroutine.resume(arg.take().as_deref()) {
-            JmapCoroutineState::Yielded(JmapEventSourceYield::Frame(frame)) => {
-                trace!("jmap state change: {frame:?}");
+            JmapCoroutineState::Yielded(JmapEventSourceYield::Frame { change, id }) => {
+                trace!("jmap state change: {change:?}");
 
-                if watched.iter().any(|watched| watched.moved(&frame)) {
+                if let Some(id) = id.filter(|id| !id.is_empty()) {
+                    *last_event_id = Some(id);
+                }
+
+                if watched.iter().any(|watched| watched.moved(&change)) {
                     return Ok(true);
                 }
             }

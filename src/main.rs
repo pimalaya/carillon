@@ -15,7 +15,9 @@
 //! watch carries the runtime: it selects the accounts, spawns one thread
 //! each, and each thread opens the session its backend calls for,
 //! forwards what it reports to the hooks, and reopens it after a capped
-//! backoff, resolving the credential again on every attempt.
+//! backoff, resolving the credential again on every attempt. What a lost
+//! IMAP or Gmail session knew is handed to the next one, which reports
+//! what moved meanwhile.
 //!
 //! The wizard: one prompt takes an email address, io-pim-discovery turns
 //! it into the services reachable from it, and the module of the chosen

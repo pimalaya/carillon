@@ -7,11 +7,12 @@
 //! message, is an arrival; deleted, or the label taken off, a removal.
 //! `UNREAD` and `STARRED` are the shared `Seen` (inverted) and `Flagged`.
 //!
-//! io-gmail ships a poll coroutine of its own, which keeps its cursor
-//! private: a connection lost mid-poll could only be recovered by a new
-//! baseline, losing what moved in between. The rounds here run the same
-//! requests on the client, so a lost connection is reopened and the
-//! round run again from the same cursor.
+//! io-gmail ships a poll coroutine of its own, which reads every arrival
+//! and groups what a tick saw by kind. The rounds here run the same
+//! requests on the client: an envelope is read only when a hook wants
+//! it, the events keep the order of the history, and a lost connection
+//! is reopened and the round run again from the same cursor. The cursor
+//! outlives a lost session, the next one reading what moved meanwhile.
 
 use std::{
     sync::{
@@ -21,9 +22,10 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Error, Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use io_gmail::v1::{
     client::{GmailClientStd, GmailClientStdConnectOptions, GmailClientStdError},
+    history_poll::GMAIL_HISTORY_POLL_MAX_PAGES,
     rest::{
         history::{
             GmailHistory,
@@ -81,21 +83,30 @@ pub fn probe(config: &GmailConfig, resolver: &mut SecretResolver) -> Result<()> 
 
 /// Watches the configured label by polling its history, until `shutdown`
 /// is set.
+///
+/// `cursor` is how far the previous watch of the account read, which
+/// this one reads from at once, and where it leaves its own.
 pub fn watch(
     config: &GmailConfig,
     interval: Option<Duration>,
     resolve: bool,
+    cursor: &mut Option<String>,
     shutdown: &Arc<AtomicBool>,
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let interval = interval.unwrap_or(POLL_INTERVAL);
     let mut client = open(config, &mut SecretResolver::new())?;
-    let mut watched = Watched::arm(&mut client, &config.mailbox)?;
+    let mut watched = Watched::arm(&mut client, &config.mailbox, cursor.as_deref())?;
+    let mut wait = cursor.is_none();
+
+    *cursor = Some(watched.history.clone());
 
     while !shutdown.load(Ordering::SeqCst) {
-        if !poll::sleep(interval, shutdown) {
+        if wait && !poll::sleep(interval, shutdown) {
             break;
         }
+
+        wait = true;
 
         // NOTE: the connection sat idle the whole interval, which a
         // server is free to close, and the token may have expired
@@ -106,6 +117,8 @@ pub fn watch(
             client = open(config, &mut SecretResolver::new())?;
             watched.round(&mut client, resolve, &mut on_event)?;
         }
+
+        *cursor = Some(watched.history.clone());
     }
 
     Ok(())
@@ -120,10 +133,14 @@ struct Watched {
 }
 
 impl Watched {
-    /// Resolves the label and reads the cursor changes are read from.
-    fn arm(client: &mut GmailClientStd, name: &str) -> Result<Self> {
+    /// Resolves the label and takes the cursor changes are read from:
+    /// `cursor` when a previous watch left one, the current one otherwise.
+    fn arm(client: &mut GmailClientStd, name: &str, cursor: Option<&str>) -> Result<Self> {
         let label = resolve_label(client, name)?;
-        let history = current_history(client)?;
+        let history = match cursor {
+            Some(cursor) => String::from(cursor),
+            None => current_history(client)?,
+        };
 
         debug!("watching gmail label `{name}` from history {history}");
 
@@ -141,17 +158,11 @@ impl Watched {
         resolve: bool,
         on_event: &mut impl FnMut(WatchEvent, Option<ItemSummary>),
     ) -> Result<()> {
-        let (records, next) = match self.history(client) {
-            Ok(read) => read,
-            // NOTE: a cursor older than Gmail keeps (about a week) is
-            // answered 404, and nothing can say what moved in between:
-            // the watch resumes from now rather than guessing.
-            Err(err) if is_expired(&err) => {
-                warn!("gmail history expired, resuming from now");
-                self.history = current_history(client)?;
-                return Ok(());
-            }
-            Err(err) => return Err(err),
+        // NOTE: nothing can say what moved since a cursor that cannot be
+        // read from: the watch resumes from now rather than guessing.
+        let Some((records, next)) = self.history(client)? else {
+            self.history = current_history(client)?;
+            return Ok(());
         };
 
         trace!("gmail history records: {}", records.len());
@@ -177,12 +188,13 @@ impl Watched {
     }
 
     /// Reads every history page since the cursor, with the cursor the
-    /// next round reads from.
-    fn history(&self, client: &mut GmailClientStd) -> Result<(Vec<GmailHistory>, String)> {
+    /// next round reads from, or nothing when the cursor cannot be read
+    /// from: expired, or listing without an end.
+    fn history(&self, client: &mut GmailClientStd) -> Result<Option<(Vec<GmailHistory>, String)>> {
         let mut records = Vec::new();
         let mut page_token: Option<String> = None;
 
-        loop {
+        for _ in 0..GMAIL_HISTORY_POLL_MAX_PAGES {
             let params = GmailHistoryListParams {
                 start_history_id: &self.history,
                 label_id: Some(&self.label),
@@ -190,21 +202,32 @@ impl Watched {
                 ..Default::default()
             };
             let list = GmailHistoryList::new(&client.auth, &client.user_id, &params)?;
-            let page = client
-                .run(list)
-                .context("cannot read the gmail history")?
-                .response;
+            let page = match client.run(list) {
+                Ok(out) => out.response,
+                // NOTE: a cursor older than Gmail keeps (about a week).
+                Err(GmailClientStdError::Send(err)) if err.is_history_expired() => {
+                    warn!("gmail history expired, resuming from now");
+                    return Ok(None);
+                }
+                Err(err) => return Err(err).context("cannot read the gmail history"),
+            };
 
             records.extend(page.history);
 
             match page.next_page_token {
-                Some(token) => page_token = Some(token),
+                Some(token) if page_token.as_ref() != Some(&token) => page_token = Some(token),
+                Some(_) => break,
                 None => {
-                    let next = page.history_id.unwrap_or_else(|| self.history.clone());
-                    return Ok((records, next));
+                    let next = page.history_id.filter(|id| !id.is_empty());
+                    let next = next.unwrap_or_else(|| self.history.clone());
+                    return Ok(Some((records, next)));
                 }
             }
         }
+
+        warn!("gmail history lists without an end, resuming from now");
+
+        Ok(None)
     }
 
     /// Reads history records as the events they stand for.
@@ -344,30 +367,129 @@ fn current_history(client: &mut GmailClientStd) -> Result<String> {
         .context("cannot read the gmail profile")?
         .response
         .history_id
+        .filter(|id| !id.is_empty())
         .ok_or_else(|| anyhow!("Gmail returned no history cursor"))
-}
-
-/// Whether a failure is Gmail refusing a cursor too old (HTTP 404).
-fn is_expired(err: &Error) -> bool {
-    err.chain().any(|cause| {
-        matches!(
-            cause.downcast_ref::<GmailClientStdError>(),
-            Some(GmailClientStdError::Send(send)) if send.status() == Some(404)
-        )
-    })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::VecDeque,
+        io::{self, Cursor, Read, Write},
+        mem,
+    };
+
     use io_gmail::v1::rest::history::{GmailHistoryLabel, GmailHistoryMessage};
 
     use crate::gmail::*;
+
+    /// A stream answering each request with the next of its bodies, and
+    /// keeping the request lines it was sent.
+    #[derive(Default)]
+    struct Scripted {
+        bodies: VecDeque<&'static str>,
+        answer: Cursor<Vec<u8>>,
+        request: Vec<u8>,
+        seen: Vec<String>,
+    }
+
+    impl Write for Scripted {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.request.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Read for Scripted {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if !self.request.is_empty() {
+                let request = mem::take(&mut self.request);
+                let request = String::from_utf8_lossy(&request);
+                let line = request.lines().next().unwrap_or_default();
+                self.seen.push(line.to_string());
+
+                let body = self.bodies.pop_front().unwrap_or_default();
+                let length = body.len();
+                let answer = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n{body}"
+                );
+                self.answer = Cursor::new(answer.into_bytes());
+            }
+
+            self.answer.read(buf)
+        }
+    }
+
+    fn client(bodies: &[&'static str]) -> GmailClientStd {
+        let stream = Scripted {
+            bodies: bodies.iter().copied().collect(),
+            ..Default::default()
+        };
+
+        GmailClientStd::new(stream, "token", Default::default())
+    }
+
+    fn seen(client: &mut GmailClientStd) -> Vec<String> {
+        let stream = client.stream.as_any_mut().downcast_mut::<Scripted>();
+        stream.unwrap().seen.clone()
+    }
 
     fn watched() -> Watched {
         Watched {
             label: String::from("Label_7"),
             history: String::from("1"),
         }
+    }
+
+    #[test]
+    fn a_watch_left_a_cursor_reads_what_moved_since() {
+        let mut client = client(&[
+            r#"{"labels":[{"id":"Label_7","name":"Work"}]}"#,
+            r#"{"history":[{"id":"43","messagesAdded":[{"message":{"id":"A","threadId":"A","labelIds":["Label_7"]}}]}],"historyId":"44"}"#,
+        ]);
+
+        let mut watched = Watched::arm(&mut client, "work", Some("42")).unwrap();
+        let mut events = Vec::new();
+        watched
+            .round(&mut client, false, &mut |event, _| events.push(event))
+            .unwrap();
+
+        assert_eq!(
+            vec![WatchEvent::ItemAdded {
+                domain: WatchDomain::Message,
+                id: String::from("A"),
+            }],
+            events
+        );
+        assert_eq!("44", watched.history);
+
+        let seen = seen(&mut client);
+        assert_eq!(2, seen.len(), "{seen:?}");
+        assert!(seen[1].contains("startHistoryId=42"), "{seen:?}");
+    }
+
+    #[test]
+    fn a_history_listing_without_an_end_resumes_from_now() {
+        let page = r#"{"history":[],"nextPageToken":"P","historyId":"50"}"#;
+        let profile = r#"{"emailAddress":"alice@example.org","historyId":"60"}"#;
+        let mut client = client(&[page, page, profile]);
+
+        let mut watched = watched();
+        let mut events = Vec::new();
+        watched
+            .round(&mut client, false, &mut |event, _| events.push(event))
+            .unwrap();
+
+        assert!(events.is_empty(), "got {events:?}");
+        assert_eq!("60", watched.history);
+
+        let seen = seen(&mut client);
+        assert_eq!(3, seen.len(), "{seen:?}");
+        assert!(seen[2].contains("/profile"), "{seen:?}");
     }
 
     fn message(id: &str, labels: &[&str]) -> GmailMessage {

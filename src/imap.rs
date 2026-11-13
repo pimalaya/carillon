@@ -6,7 +6,8 @@
 //! The watch is io-imap's `ImapMailboxWatch`, which holds IDLE and reports
 //! UID-keyed deltas, named by the server under QRESYNC and diffed locally
 //! without it. This module only translates them, so carillon owns no
-//! watcher.
+//! watcher. What a watch knew when its connection was lost is handed to
+//! the next one, which reports what moved meanwhile.
 //!
 //! A delta names a UID, never a subject, so [`Resolver`] reads the
 //! envelope on a second connection.
@@ -27,13 +28,13 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use io_imap::{
     client::{
-        ImapClientStd, ImapClientStdConnectOptions, ImapMailboxWatchStream,
+        ImapClientError, ImapClientStd, ImapClientStdConnectOptions, ImapMailboxWatchStream,
         ImapMailboxWatchStreamOptions, default_port,
     },
     coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
     rfc3501::{
         examine::ImapMailboxExamine,
-        fetch::{ImapMessageFetch, ImapMessageFetchOptions},
+        fetch::{ImapMessageFetchFirst, ImapMessageFetchOptions},
     },
     session::{ImapSessionOpenOptions, default_alpn},
     types::{
@@ -43,9 +44,8 @@ use io_imap::{
         flag::Flag,
         mailbox::Mailbox,
         response::Capability,
-        sequence::SequenceSet,
     },
-    watch::ImapMailboxWatchEvent,
+    watch::{ImapMailboxWatchEvent, ImapMailboxWatchState},
 };
 use io_sasl::mechanism::Sasl;
 use log::{debug, trace};
@@ -109,6 +109,7 @@ pub fn open(
             starttls: config.starttls,
             auto_id: resolve_auto_id_params(&config.id)?,
             sasl_ir: config.sasl_ir,
+            ..Default::default()
         },
     };
 
@@ -123,14 +124,20 @@ pub fn open(
 ///
 /// io-imap runs the watch on its own thread and hands events over a
 /// channel, so this loop stays free to notice a shutdown between them.
+///
+/// `resume` holds what the previous watch of the account knew, taken to
+/// resume from and left for the next one when the connection is lost.
 pub fn watch_idle(
     config: &ImapConfig,
     collection: &str,
     timeout: Option<Duration>,
+    resume: &mut Option<ImapMailboxWatchState>,
     shutdown: &Arc<AtomicBool>,
     on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
-    watch(config, collection, timeout, None, shutdown, on_event)
+    watch(
+        config, collection, timeout, None, resume, shutdown, on_event,
+    )
 }
 
 /// Watches `collection` the same way, re-reading on an interval instead
@@ -143,12 +150,15 @@ pub fn watch_poll(
     config: &ImapConfig,
     collection: &str,
     interval: Option<Duration>,
+    resume: &mut Option<ImapMailboxWatchState>,
     shutdown: &Arc<AtomicBool>,
     on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
-    let interval = interval.unwrap_or(POLL_INTERVAL);
+    let interval = Some(interval.unwrap_or(POLL_INTERVAL));
 
-    watch(config, collection, None, Some(interval), shutdown, on_event)
+    watch(
+        config, collection, None, interval, resume, shutdown, on_event,
+    )
 }
 
 /// Opens the session, drains its watch stream, and closes it either way.
@@ -157,13 +167,20 @@ fn watch(
     collection: &str,
     idle_timeout: Option<Duration>,
     poll: Option<Duration>,
+    resume: &mut Option<ImapMailboxWatchState>,
     shutdown: &Arc<AtomicBool>,
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let (client, capability) = open(config, &mut SecretResolver::new())?;
     let watched = Mailbox::try_from(collection.to_string())
         .map_err(|err| anyhow!("Invalid mailbox name `{collection}`: {err}"))?;
+
+    if resume.is_some() {
+        debug!("resuming the imap watch from what the last one knew");
+    }
+
     let opts = ImapMailboxWatchStreamOptions {
+        resume_from: resume.take(),
         shutdown_poll: READ_TIMEOUT,
         idle_timeout,
         poll,
@@ -171,11 +188,24 @@ fn watch(
     let stream = client.watch_mailbox(watched, &capability, opts)?;
 
     let result = drain(&stream, shutdown, &mut on_event);
-    // NOTE: close winds the worker down cleanly, whether the exit is a
+    // NOTE: this winds the worker down cleanly, whether the exit is a
     // shutdown or a failed connection.
-    let closed = stream.close();
+    let state = stream.into_state();
 
-    result.or_else(|err| closed.map_err(Into::into).and(Err(err)))
+    match result {
+        Ok(()) => *resume = state?,
+        // NOTE: a refusal takes a new baseline: a mailbox recreated
+        // meanwhile would refuse the state of the old one forever.
+        Err(err) => {
+            if err.is_connection_lost() {
+                *resume = state.ok().flatten();
+            }
+
+            return Err(err).context("imap watch failed");
+        }
+    }
+
+    Ok(())
 }
 
 /// Drains the watch stream into `on_event` until shutdown or failure.
@@ -183,7 +213,7 @@ fn drain(
     stream: &ImapMailboxWatchStream,
     shutdown: &Arc<AtomicBool>,
     on_event: &mut impl FnMut(WatchEvent, Option<ItemSummary>),
-) -> Result<()> {
+) -> Result<(), ImapClientError> {
     while !shutdown.load(Ordering::SeqCst) {
         match stream.recv_timeout(POLL_TICK) {
             Ok(Ok(event)) => {
@@ -191,7 +221,7 @@ fn drain(
                     on_event(event, None);
                 }
             }
-            Ok(Err(err)) => return Err(err).context("imap watch failed"),
+            Ok(Err(err)) => return Err(err),
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
         }
@@ -303,23 +333,15 @@ impl<'a> Resolver<'a> {
         let examine = ImapMailboxExamine::new(mailbox, Default::default());
         pump(client, examine, shutdown)?;
 
-        let sequence = SequenceSet::from(parsed..=parsed);
         let items =
             MacroOrMessageDataItemNames::MessageDataItemNames(vec![MessageDataItemName::Envelope]);
         let opts = ImapMessageFetchOptions {
             uid: true,
             modifiers: Vec::new(),
         };
-        let fetched = pump(
-            client,
-            ImapMessageFetch::new(sequence, items, opts),
-            shutdown,
-        )?;
-
-        let items = fetched
-            .into_values()
-            .next()
-            .ok_or_else(|| anyhow!("No envelope returned for UID `{uid}`"))?;
+        // NOTE: leaves out the FETCH of any other message a server adds.
+        let fetch = ImapMessageFetchFirst::new(parsed, items, opts);
+        let items = pump(client, fetch, shutdown)?;
 
         Ok(summarize(items.into_inner()))
     }
@@ -434,5 +456,130 @@ pub fn parse_server(server: &str) -> Result<Url> {
             Ok(Url::parse(&format!("imaps://{server}"))?)
         }
         Err(err) => Err(err.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::{BufRead, BufReader},
+        net::{TcpListener, TcpStream},
+        thread,
+    };
+
+    use toml::from_str;
+
+    use crate::imap::*;
+
+    /// Starts a server with no QRESYNC taking one connection per entry
+    /// of `sessions`, a UIDVALIDITY and the UIDs it lists. Each answers
+    /// one read of the mailbox, then closes on the next.
+    fn serve(sessions: Vec<(u32, Vec<u32>)>) -> ImapConfig {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        thread::spawn(move || {
+            for (uid_validity, uids) in sessions {
+                let Ok((stream, _)) = listener.accept() else {
+                    return;
+                };
+
+                session(stream, uid_validity, &uids);
+            }
+        });
+
+        from_str(&format!(
+            "mailbox = \"INBOX\"\nserver = \"imap://{addr}\"\n"
+        ))
+        .unwrap()
+    }
+
+    fn session(mut stream: TcpStream, uid_validity: u32, uids: &[u32]) {
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut examined = false;
+
+        stream
+            .write_all(b"* PREAUTH [CAPABILITY IMAP4rev1] ready\r\n")
+            .unwrap();
+
+        loop {
+            let mut line = String::new();
+
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
+
+            let mut words = line.split_whitespace();
+            let tag = words.next().unwrap_or_default();
+
+            let data = match words.next().unwrap_or_default() {
+                "EXAMINE" if examined => return,
+                "EXAMINE" => {
+                    examined = true;
+                    let exists = uids.len();
+                    format!("* {exists} EXISTS\r\n* OK [UIDVALIDITY {uid_validity}] valid\r\n")
+                }
+                "UID" => uids
+                    .iter()
+                    .enumerate()
+                    .map(|(seq, uid)| format!("* {} FETCH (UID {uid} FLAGS ())\r\n", seq + 1))
+                    .collect(),
+                _ => String::new(),
+            };
+
+            let answer = format!("{data}{tag} OK done\r\n");
+            stream.write_all(answer.as_bytes()).unwrap();
+        }
+    }
+
+    fn poll(
+        config: &ImapConfig,
+        resume: &mut Option<ImapMailboxWatchState>,
+    ) -> (Result<()>, Vec<WatchEvent>) {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut events = Vec::new();
+        let interval = Some(Duration::from_millis(10));
+
+        let result = watch_poll(config, "INBOX", interval, resume, &shutdown, |event, _| {
+            events.push(event);
+            shutdown.store(true, Ordering::SeqCst);
+        });
+
+        (result, events)
+    }
+
+    #[test]
+    fn a_watch_reopened_after_a_lost_connection_reports_what_moved_meanwhile() {
+        let config = serve(vec![(1, vec![1]), (1, vec![1, 2])]);
+        let mut resume = None;
+
+        let (lost, events) = poll(&config, &mut resume);
+        assert!(lost.is_err());
+        assert!(events.is_empty(), "got {events:?}");
+        assert!(resume.is_some());
+
+        let (_, events) = poll(&config, &mut resume);
+        assert_eq!(
+            vec![WatchEvent::ItemAdded {
+                domain: WatchDomain::Message,
+                id: String::from("2"),
+            }],
+            events
+        );
+    }
+
+    #[test]
+    fn a_mailbox_recreated_meanwhile_takes_a_new_baseline() {
+        let config = serve(vec![(1, vec![1]), (2, vec![1, 2])]);
+        let mut resume = None;
+
+        let (lost, _) = poll(&config, &mut resume);
+        assert!(lost.is_err());
+        assert!(resume.is_some());
+
+        let (refused, events) = poll(&config, &mut resume);
+        assert!(refused.is_err());
+        assert!(events.is_empty(), "got {events:?}");
+        assert!(resume.is_none());
     }
 }

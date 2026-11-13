@@ -33,7 +33,7 @@ use io_jmap::{
     rfc8620::request::JmapRequest,
 };
 use pimalaya_stream::proxy::Proxy;
-use serde_json::{Value, json};
+use serde_json::{Value, from_str, json};
 use url::Url;
 
 use crate::common::*;
@@ -109,6 +109,8 @@ impl Jmap {
         let response = self.client.send_raw(request).expect("send the call");
         let (name, response, _) = response.method_responses.into_iter().next().unwrap();
         assert_eq!(method, name, "{method} failed: {response}");
+
+        let response: Value = from_str(response.get()).expect("decode the response");
 
         for refused in ["notCreated", "notUpdated", "notDestroyed"] {
             let refused = &response[refused];
