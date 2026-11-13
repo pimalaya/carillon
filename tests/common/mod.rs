@@ -251,9 +251,9 @@ fn default_token_uri() -> String {
     String::from("https://oauth2.googleapis.com/token")
 }
 
-/// A Google access token for `scope`, traded for a JWT the service account
+/// A Google access token for `scopes`, traded for a JWT the service account
 /// signs on behalf of the delegated subject (RFC 7523 section 2.1).
-pub fn google_token(scope: &str) -> String {
+pub fn google_token(scopes: &[&str]) -> String {
     let key = match env::var("GOOGLE_SERVICE_ACCOUNT_KEY") {
         Ok(key) if !key.is_empty() => key,
         _ => {
@@ -277,7 +277,10 @@ pub fn google_token(scope: &str) -> String {
     let claims = Oauth20JwtBearerClaims {
         iss: key.client_email.as_str().into(),
         sub: Some(subject.into()),
-        scope: [Cow::from(scope.to_owned())].into_iter().collect(),
+        scope: scopes
+            .iter()
+            .map(|scope| Cow::from((*scope).to_owned()))
+            .collect(),
         ..Default::default()
     };
     let assertion = client

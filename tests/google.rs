@@ -5,7 +5,7 @@
 //! every hook a change to it should fire (see tests/common). Every
 //! resource a run creates is named `carillon-live-<millis>` and deleted
 //! however the run ends. Run with a service account key holding
-//! domain-wide delegation for the three scopes below:
+//! domain-wide delegation for the scopes below:
 //!
 //! ```sh
 //! GOOGLE_SERVICE_ACCOUNT_KEY_FILE=key.json \
@@ -52,11 +52,19 @@ use pimalaya_stream::{proxy::Proxy, tls::Tls};
 use crate::common::*;
 
 #[cfg(feature = "gmail")]
-const GMAIL_SCOPE: &str = "https://mail.google.com/";
+const GMAIL_SCOPES: &[&str] = &["https://mail.google.com/"];
+/// The events and the calendar list the gcal source reads, plus the
+/// throwaway calendars the test creates and deletes. The delegation
+/// refuses the full `calendar` scope, and one refused scope fails the
+/// whole token request.
 #[cfg(feature = "gcal")]
-const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar";
+const CALENDAR_SCOPES: &[&str] = &[
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+    "https://www.googleapis.com/auth/calendar.calendars",
+];
 #[cfg(feature = "gpeople")]
-const CONTACTS_SCOPE: &str = "https://www.googleapis.com/auth/contacts";
+const CONTACTS_SCOPES: &[&str] = &["https://www.googleapis.com/auth/contacts"];
 
 /// A message filed under the watched label arrives with its envelope, its
 /// labels are reported as the shared flags, and losing the label leaves.
@@ -64,7 +72,7 @@ const CONTACTS_SCOPE: &str = "https://www.googleapis.com/auth/contacts";
 #[ignore = "live: needs a Google service account key"]
 #[cfg(feature = "gmail")]
 fn a_gmail_label_fires_its_hooks() {
-    let token = google_token(GMAIL_SCOPE);
+    let token = google_token(GMAIL_SCOPES);
     let connect = || {
         GmailClientStd::connect(&token, GmailClientStdConnectOptions::default())
             .expect("connect to Gmail")
@@ -164,7 +172,7 @@ fn a_gmail_label_fires_its_hooks() {
 #[ignore = "live: needs a Google service account key"]
 #[cfg(feature = "gcal")]
 fn a_google_calendar_fires_its_hooks() {
-    let token = google_token(CALENDAR_SCOPE);
+    let token = google_token(CALENDAR_SCOPES);
     let connect = || {
         GcalClientStd::connect(&token, GcalClientStdConnectOptions::default())
             .expect("connect to Calendar")
@@ -247,7 +255,7 @@ fn a_google_calendar_fires_its_hooks() {
 #[ignore = "live: needs a Google service account key"]
 #[cfg(feature = "gpeople")]
 fn a_google_contact_group_fires_its_hooks() {
-    let token = google_token(CONTACTS_SCOPE);
+    let token = google_token(CONTACTS_SCOPES);
     let connect = || {
         let options = GpeopleClientStdConnectOptions {
             tls: Tls::default(),
