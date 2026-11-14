@@ -112,7 +112,7 @@ impl WatchCommand {
         let wakers_for_ctrlc = wakers.clone();
 
         ctrlc::set_handler(move || {
-            println!("received Ctrl+C, shutting down the watcher…");
+            eprintln!("received Ctrl+C, shutting down the watcher…");
             shutdown_for_ctrlc.store(true, Ordering::SeqCst);
 
             // NOTE: rung after the flag is set, so a woken alarm thread

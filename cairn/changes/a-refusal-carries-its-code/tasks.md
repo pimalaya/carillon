@@ -17,14 +17,14 @@ change: a-refusal-carries-its-code
 
 ## Phase 1, the exit contract (commit `feat!: a refused command line exits 2, a failed check exits 3`)
 
-- [ ] src/main.rs: `pimalaya_cli::clap::parse::<Cli>()`, `ErrorReport::<ErrorCode>::eval_coded`.
-- [ ] src/error.rs (new): `ErrorCode` with the whole vocabulary of the proposal (declared in every build, `allow(dead_code)` gated as neverest gates it), `error::code` reading `code_of` alone until Phase 2 adds the readers.
-- [ ] src/check.rs:235-242: `{backend, ok, code, error}`; :171 returns `PartialOutcome::default()` after printing when a row failed; the text output (:262-272) unchanged.
-- [ ] src/watch.rs:117: the Ctrl+C notice off stdout.
-- [ ] src/json_schema.rs: `carillon-error` and `carillon-check` follow; the registry test passes.
-- [ ] tests/exit.rs (new): exit 2 with `usage-invalid`, exit 2 without `--json` on stderr only, `check` exit 3 with a failed Maildir row.
-- [ ] Spec: Phase 1's part of delta.md folded.
-- [ ] Phase checks pass.
+- [x] src/main.rs: `pimalaya_cli::clap::parse::<Cli>()`, `ErrorReport::<ErrorCode>::eval_coded`.
+- [x] src/error.rs (new): `ErrorCode` with the whole vocabulary of the proposal (declared in every build, `allow(dead_code)` gated as neverest gates it; unconditional in Phase 1, where no reader constructs a code, for Phase 2 to gate), `error::code` reading `code_of` alone until Phase 2 adds the readers.
+- [x] src/check.rs:235-242: `{backend, ok, code, error}`; :171 returns `PartialOutcome::default()` after printing when a row failed; the text output (:262-272) unchanged.
+- [x] src/watch.rs:117: the Ctrl+C notice off stdout.
+- [x] src/json_schema.rs: `carillon-error` and `carillon-check` follow; the registry test passes.
+- [x] tests/exit.rs (new): exit 2 with `usage-invalid`, exit 2 without `--json` on stderr only, `check` exit 3 with a failed Maildir row.
+- [x] Spec: Phase 1's part of delta.md folded (the stable code requirement without its table, its protocol reading, its DAV 403 and watch warning sentences and its store scenario, left for Phase 2).
+- [x] Phase checks pass.
 
 ## Phase 2, the codes (commit `feat: code a server's refusal and a store's`)
 

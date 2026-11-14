@@ -148,12 +148,12 @@ A hook SHALL be a desktop notification, a shell command, or both. Its templates 
 - **THEN** the failure is logged and the watch keeps running
 
 ### Requirement: The account can be checked before it is watched
-`carillon check` SHALL open each backend the account declares and report per backend whether it worked, so a credential or connectivity error surfaces before a watch is started rather than in the middle of one. It SHALL resolve the whole account through one secret resolver, so a credential command named by two of its backends is spawned once rather than once per backend, and a `pass` or `gpg` entry unlocks its store once. The resolver SHALL live no longer than the account it was built for.
+`carillon check` SHALL open each backend the account declares and report per backend whether it worked, so a credential or connectivity error surfaces before a watch is started rather than in the middle of one. Each row SHALL be the backend check row every pimalaya binary prints, `{backend, ok, code, error}`, `code` `null` when the backend passed or its failure carries none. When any backend failed, the command SHALL still print the report and exit 3, pimalaya-cli's partial outcome. It SHALL resolve the whole account through one secret resolver, so a credential command named by two of its backends is spawned once rather than once per backend, and a `pass` or `gpg` entry unlocks its store once. The resolver SHALL live no longer than the account it was built for.
 
 #### Scenario: A wrong password
 - **GIVEN** an account whose IMAP password is wrong
 - **WHEN** `carillon check` runs
-- **THEN** the imap backend is reported as failed with the server's reason, and the process exits non-zero
+- **THEN** the imap backend is reported as failed with the server's reason, and the process exits 3
 
 #### Scenario: One credential named by two backends
 - **GIVEN** an account whose `caldav` and `carddav` tables read the same `pass` entry
@@ -318,7 +318,7 @@ Every command handing data to the printer SHALL return a named `*Output` type de
 - **THEN** one file per command is written there, the directory being created if it is not already
 
 ### Requirement: The JSON contract is described and versioned
-`carillon json-schema` SHALL describe, under the key `carillon-error`, the failure object every command prints under `--json`. Every generated schema SHALL carry an `$id` naming the contract version, which is the minor version while Carillon is below 1.0 (`v0.2`) and the major version after. Every registered payload SHALL be a JSON object, checked by a test. Piped `--json` output SHALL print one value per line.
+`carillon json-schema` SHALL describe, under the key `carillon-error`, the failure object every command prints under `--json`, its `code` typed by the code vocabulary and pimalaya-cli's `usage-invalid`. Every generated schema SHALL carry an `$id` naming the contract version, which is the minor version while Carillon is below 1.0 (`v0.2`) and the major version after. Every registered payload SHALL be a JSON object, checked by a test. Piped `--json` output SHALL print one value per line, and nothing else SHALL reach stdout, a watch's shutdown notice included.
 
 #### Scenario: A caller reads a failure against its schema
 - **GIVEN** `carillon json-schema carillon-error`
@@ -481,3 +481,13 @@ Running `carillon` with no command SHALL print the help and exit 0, with a confi
 - **GIVEN** no configuration file
 - **WHEN** `carillon watch` runs
 - **THEN** it exits 1 naming the path it looked at and config.sample.toml, and writes nothing
+
+### Requirement: A refused command line exits 2
+The command line SHALL be parsed through pimalaya-cli's `clap::parse`: help and version print as clap prints them, and a command line the grammar refuses (an unknown flag or command, a missing argument, a bad value) SHALL exit 2 before any configuration is read. With a `--json` word before any `--`, it SHALL print on stdout the failure object coded `usage-invalid`, its `error` clap's message without its `error: ` prefix nor styles, `sources` empty and `backtrace` null, and nothing on stderr; otherwise clap's rendering on stderr and nothing on stdout. Exit 1 stays the failure object and 3 a printed result that is not a full success, a `check` with a failed backend.
+
+#### Scenario: An unknown flag under JSON
+- **WHEN** `carillon --json watch --nope` runs
+- **THEN** it prints one failure object coded `usage-invalid`, its `error` naming `--nope`, on stdout and exits 2
+
+### Requirement: A failure carries a stable code
+A failure a caller is expected to act on SHALL carry a stable code, printed under `--json` as a `code` string beside `error`, `sources` and `backtrace`, and in a `check` row beside `backend`, `ok` and `error`. The code SHALL be found anywhere in the error chain. A failure with no code SHALL print `"code": null`; the text output SHALL stay unchanged. Codes are kebab-case and never renamed; `error` stays free wording. Every code SHALL be declared in every build: `usage-invalid`, raised by pimalaya-cli when the command line does not match the grammar (nothing ran), and carillon's `permission-denied`, `quota-exceeded`, `rate-limited`, `store-version`, `store-uncreated`, `store-foreign`, `store-corrupt`, `store-not-current`, `store-hash-algo`, `store-exposed` and `sync-version`.

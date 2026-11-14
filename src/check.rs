@@ -12,7 +12,7 @@ use std::{fmt, path::PathBuf};
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use pimalaya_cli::printer::Printer;
+use pimalaya_cli::{error::PartialOutcome, printer::Printer};
 #[cfg(network)]
 use pimalaya_config::secret::SecretResolver;
 use pimalaya_config::toml::TomlConfig;
@@ -31,7 +31,11 @@ use crate::gpeople;
 use crate::msgraph;
 #[cfg(feature = "pimdir")]
 use crate::pimdir;
-use crate::{backend::Backend, config::Config};
+use crate::{
+    backend::Backend,
+    config::Config,
+    error::{self, ErrorCode},
+};
 #[cfg(feature = "dav")]
 use crate::{
     config::DavServer,
@@ -47,6 +51,7 @@ use crate::{config::JmapConfig, jmap};
 /// Every backend `--backend` allows on the account, `-a` naming it or the
 /// default one, is opened the way a watch would, so a bad credential or
 /// an unreachable server is reported here rather than at the first change.
+/// When one failed, the command exits 3 once the report is printed.
 #[derive(Debug, Parser)]
 pub struct CheckCommand;
 
@@ -164,7 +169,15 @@ impl CheckCommand {
             bail!("No backend matching `{backend}` is configured for this account");
         }
 
-        printer.out(report)
+        let failed = report.backends.iter().any(|check| !check.ok);
+        printer.out(report)?;
+
+        // A failed backend exits 3 under its report, with no failure object.
+        if failed {
+            return Err(PartialOutcome::default().into());
+        }
+
+        Ok(())
     }
 }
 
@@ -233,6 +246,9 @@ pub struct BackendCheck {
     pub backend: &'static str,
     /// Whether it opened.
     pub ok: bool,
+    /// The stable code of the failure, `null` when it opened or the failure
+    /// carries none.
+    pub code: Option<ErrorCode>,
     /// Why it did not, rendered with its causes.
     pub error: Option<String>,
 }
@@ -244,11 +260,13 @@ impl BackendCheck {
             Ok(()) => Self {
                 backend,
                 ok: true,
+                code: None,
                 error: None,
             },
             Err(err) => Self {
                 backend,
                 ok: false,
+                code: error::code(&err),
                 error: Some(format!("{err:#}")),
             },
         }

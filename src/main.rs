@@ -10,7 +10,8 @@
 //! help, cli declares the parser, config parses the TOML accounts and
 //! fails naming the file and the documented sample when there is none,
 //! watch and check are the two commands, hook fires the notification and
-//! the command, json_schema names the schema of what each command prints.
+//! the command, json_schema names the schema of what each command prints,
+//! error the stable codes a failure carries.
 //! No configuration is ever written: an account is written by hand from
 //! config.sample.toml, which a person at a terminal missing one is
 //! welcomed to by pimalaya-cli's welcome, a script or a JSON caller
@@ -63,6 +64,7 @@ mod cli;
 mod config;
 #[cfg(feature = "dav")]
 mod dav;
+mod error;
 mod event;
 #[cfg(feature = "gcal")]
 mod gcal;
@@ -97,9 +99,9 @@ mod watch;
 use std::{path::PathBuf, process};
 
 use anyhow::Result;
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
 use pimalaya_cli::{
-    clap::args::LogFlags,
+    clap::{args::LogFlags, parse},
     error::{EXIT_FAILURE, ErrorReport},
     log::Logger,
     printer::StdoutPrinter,
@@ -110,10 +112,11 @@ use pimalaya_config::toml::ConfigMissingError;
 use crate::{
     backend::Backend,
     cli::{Cli, Command},
+    error::ErrorCode,
 };
 
 fn main() {
-    let cli = Cli::parse();
+    let cli = parse::<Cli>();
     let mut printer = StdoutPrinter::new(&cli.json);
     let config_paths = &cli.config.paths;
     let account_name = cli.account.name.as_deref();
@@ -139,7 +142,7 @@ fn main() {
         process::exit(EXIT_FAILURE);
     }
 
-    ErrorReport::eval(&mut printer, result);
+    ErrorReport::<ErrorCode>::eval_coded(&mut printer, result.map_err(error::with_code));
 }
 
 /// Runs the parsed command, or meets a bare `carillon` with the help,
