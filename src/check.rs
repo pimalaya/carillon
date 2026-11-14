@@ -31,7 +31,7 @@ use crate::gpeople;
 use crate::msgraph;
 #[cfg(feature = "pimdir")]
 use crate::pimdir;
-use crate::{backend::Backend, cli::load_config};
+use crate::{backend::Backend, config::Config};
 #[cfg(feature = "dav")]
 use crate::{
     config::DavServer,
@@ -59,7 +59,7 @@ impl CheckCommand {
         account_name: Option<&str>,
         backend: Backend,
     ) -> Result<()> {
-        let mut config = load_config(printer, config_paths)?;
+        let mut config = Config::load(config_paths)?;
 
         let (name, account_config) = config.take_account(account_name)?.ok_or_else(|| {
             anyhow!(

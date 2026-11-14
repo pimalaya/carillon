@@ -16,12 +16,12 @@ change: the-family-line
 
 ## Phase 1, the wizard leaves (commit `feat!: drop the wizard, write the configuration from the sample`)
 
-- [ ] Delete src/wizard/ and `mod wizard` (src/main.rs:2-3); the `configure` command and its `wizard` alias (src/cli.rs:89-92); the `wizard` feature (Cargo.toml:30) and the `io-pim-discovery` dependency (Cargo.toml:62); `config::render` (src/config.rs:259+) and its `toml::to_string` (:272); `carillon-configure` (src/json_schema.rs:24-25).
-- [ ] The first-run offer (src/cli.rs:116-130, :168-225) goes: a bare `carillon` prints the help; a command finding no configuration fails naming the path and config.sample.toml; the handling moves to src/main.rs.
-- [ ] README (:41, :46, :114, :125), the src/main.rs header (:22-29) and CONTRIBUTING.md (:36) follow.
-- [ ] Tests: a command with no configuration exits 1 naming the path and the sample (a new tests/first_run.rs on the built binary, as comodoro/tests/first_run.rs); the json-schema registry test (src/json_schema.rs:45-56) passes without `carillon-configure`.
-- [ ] Spec: REMOVED and ADDED of delta.md folded.
-- [ ] Phase checks pass.
+- [x] Delete src/wizard/ and `mod wizard` (src/main.rs:2-3); the `configure` command and its `wizard` alias (src/cli.rs:89-92); the `wizard` feature (Cargo.toml:30) and the `io-pim-discovery` dependency (Cargo.toml:62); `config::render` (src/config.rs:259+) and its `toml::to_string` (:272); `carillon-configure` (src/json_schema.rs:24-25).
+- [x] The first-run offer (src/cli.rs:116-130, :168-225) goes: a bare `carillon` prints the help; a command finding no configuration fails naming the path and config.sample.toml; the handling moves to src/main.rs.
+- [x] README (:41, :46, :114, :125), the src/main.rs header (:22-29) and CONTRIBUTING.md (:36) follow.
+- [x] Tests: a command with no configuration exits 1 naming the path and the sample (a new tests/first_run.rs on the built binary, as comodoro/tests/first_run.rs); the json-schema registry test (src/json_schema.rs:45-56) passes without `carillon-configure`.
+- [x] Spec: REMOVED and ADDED of delta.md folded.
+- [x] Phase checks pass.
 
 ## Phase 2, the libraries (commit `build: move to pimalaya-cli 0.4, pimalaya-config 0.4, pimalaya-stream 0.4 and io-pimdir 0.12`)
 

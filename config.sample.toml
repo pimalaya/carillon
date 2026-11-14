@@ -10,9 +10,7 @@
 # `:`-delimited list: the first one is the base and the rest are deep-merged on
 # top of it.
 #
-# `carillon configure` generates an account from your email address, testing the
-# connection before writing it here. Everything it does not cover is written by
-# hand, which is what this file documents: copy it, keep one backend and the
+# Carillon writes no configuration: copy this file, keep one backend and the
 # hooks you want, then delete the rest.
 # ================================================================================
 

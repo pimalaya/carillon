@@ -272,39 +272,6 @@ A watch SHALL keep working across the changes it reports. A connection a backend
 - **THEN** it reconnects and runs again, and the session is given up only if that also fails
 
 
-### Requirement: A first account is generated, never hand-written from scratch
-The daemon SHALL offer to generate an account when it finds no configuration, and SHALL expose the same generator as `carillon configure`. The offer SHALL introduce carillon, name the configuration file that is missing, and point at the documented sample for everything the generator does not cover. It SHALL be raised only where nothing can happen without a configuration: a bare invocation, and a command that needs an account. A non-interactive caller (no terminal, or JSON output) SHALL never be prompted, and SHALL fail naming the file and the command that would create it.
-
-The generator SHALL take one input, an email address, a bare domain, a `scheme://` server URL or a local folder path, and derive everything else. It SHALL discover the services reachable from that input and offer one entry per service, then prompt the authentication method the chosen service accepts, and collect the credential through the shared picker so a secret is read from a keyring or a token broker rather than stored in the file. The method SHALL be offered on the server's own word wherever the protocol has one to read, discovery reporting whether a provider takes a password or a token and never which mechanism carries it; what the server does not answer SHALL fall back to what discovery reported, so an unreachable probe narrows nothing rather than emptying the menu. A method the configuration cannot express SHALL NOT be offered. It SHALL NOT prompt for the watch method: the account SHALL take the best method its backend has, and SHALL write one only when the server cannot serve it. It SHALL test the connection before anything is written, and a failed test SHALL stop the wizard rather than yield an account that cannot connect.
-
-The generated account SHALL be saved to the configuration file, appended to the one already there, or printed on stdout, at the user's choice; a redirected stdout or JSON output SHALL print it and touch no file. An appended account SHALL leave every comment and hand-written line of the existing file untouched, SHALL take a name no other account holds, and SHALL claim the default only when no other account does.
-
-#### Scenario: A newcomer with an email address
-- **GIVEN** no configuration file, and a provider publishing its settings
-- **WHEN** `carillon` runs with no command and the offer is accepted
-- **THEN** the address is discovered, one service is chosen, its credential is prompted, the connection is tested, and an account watching that service is written where the loader reads it
-
-#### Scenario: A calendar server
-- **GIVEN** a CalDAV service chosen from discovery
-- **WHEN** the credential is accepted
-- **THEN** the calendars of that account are listed from the home-set, the chosen one becomes `caldav.calendar`, and the account fires hooks only for the components that calendar advertises
-
-#### Scenario: A provider whose policy is wider than its server
-- **GIVEN** a Gmail address, whose discovered policy names a password and an OAuth grant, on an IMAP server advertising PLAIN, XOAUTH2, OAUTHBEARER and LOGIN
-- **WHEN** the mechanism is prompted
-- **THEN** the menu holds what the server advertised, and SCRAM-SHA-256, which Gmail does not implement, is not in it
-
-#### Scenario: A server whose IDLE is not advertised
-- **GIVEN** an IMAP server that does not advertise IDLE
-- **WHEN** the connection is tested
-- **THEN** the generated account carries an explicit `imap.watch.poll.interval`, and nothing was asked about it
-
-#### Scenario: Nothing is discovered
-- **GIVEN** an input no mechanism resolves
-- **WHEN** the search comes back empty
-- **THEN** the wizard stops and points at the documented sample, rather than prompting for a hand-entered configuration
-
-
 ### Requirement: The TLS handshake is configured under its backend
 Every backend speaking TLS SHALL carry a `tls` table and an `alpn` key of its own, and the runtime TLS handle SHALL be built through one conversion taking that list, so a connection cannot be opened without saying what it negotiates. `alpn` SHALL be a list of ALPN identifiers: unset SHALL take the default the backend's client crate owns (`["imap"]` over IMAP, `["http/1.1"]` over JMAP and WebDAV), an empty list SHALL skip ALPN negotiation, and a non-empty list SHALL replace the default. Only rustls SHALL read it, native-tls having no ALPN. Every path in a `tls` table SHALL be expanded when the file is read, so a leading tilde or a shell variable names the same thing there as everywhere else.
 
@@ -316,7 +283,7 @@ Every backend speaking TLS SHALL carry a `tls` table and an `alpn` key of its ow
 #### Scenario: A configuration naming no ALPN
 - **GIVEN** an account carrying no `alpn` key
 - **WHEN** it is watched
-- **THEN** the backend offers the default its client crate owns, unchanged from before the key existed, and nothing is written back into a generated document
+- **THEN** the backend offers the default its client crate owns, unchanged from before the key existed
 
 #### Scenario: A certificate under the home directory
 - **GIVEN** `imap.tls.cert = "~/certs/example.pem"`
@@ -334,7 +301,7 @@ An account SHALL accept a `proxy` table, and every backend opening a socket (`im
 #### Scenario: A configuration naming no proxy
 - **GIVEN** an account carrying no `proxy` key anywhere
 - **WHEN** it is watched with `all_proxy` unset and `https_proxy` unset
-- **THEN** it connects directly, and nothing is written back into a generated document
+- **THEN** it connects directly
 
 
 ### Requirement: Every printed output has a published schema
@@ -373,7 +340,7 @@ The JMAP backend SHALL watch mail, contacts and calendar events, each under the 
 
 
 ### Requirement: Microsoft Graph and Google accounts are watched through their own APIs
-carillon SHALL offer four bearer-authenticated backends, each polled, none offering another method. `msgraph` SHALL watch mail, contacts and calendar events under `msgraph.mailbox`, `msgraph.addressbook` and `msgraph.calendar`, at least one given, sharing one token and one connection; `contacts` SHALL name the default contact folder, and a folder or calendar SHALL be found by id wherever it sits, or by name. `gmail` SHALL watch a label under `gmail.mailbox`, `gcal` a calendar under `gcal.calendar`, by id or name, and `gpeople` a contact group under `gpeople.addressbook`, `contacts` naming every contact the account owns rather than a group. Each SHALL fire the hooks of the domains it holds and declare no other, flags being reported under the shared names (`Seen`, `Flagged`). An expired change feed SHALL NOT report what the gap hides as removals: where the collection can be listed again it SHALL be, and only what differs from the known picture reported; Gmail, whose history cannot be listed again, SHALL resume from the current cursor, as it SHALL from a history whose listing does not end. The wizard SHALL offer these APIs first for a Google or Microsoft address, beside the IMAP and DAV services discovered for it, the token collected through the shared picker.
+carillon SHALL offer four bearer-authenticated backends, each polled, none offering another method. `msgraph` SHALL watch mail, contacts and calendar events under `msgraph.mailbox`, `msgraph.addressbook` and `msgraph.calendar`, at least one given, sharing one token and one connection; `contacts` SHALL name the default contact folder, and a folder or calendar SHALL be found by id wherever it sits, or by name. `gmail` SHALL watch a label under `gmail.mailbox`, `gcal` a calendar under `gcal.calendar`, by id or name, and `gpeople` a contact group under `gpeople.addressbook`, `contacts` naming every contact the account owns rather than a group. Each SHALL fire the hooks of the domains it holds and declare no other, flags being reported under the shared names (`Seen`, `Flagged`). An expired change feed SHALL NOT report what the gap hides as removals: where the collection can be listed again it SHALL be, and only what differs from the known picture reported; Gmail, whose history cannot be listed again, SHALL resume from the current cursor, as it SHALL from a history whose listing does not end.
 
 #### Scenario: A follow-up flag in Outlook
 - **GIVEN** an account watching `msgraph.mailbox = "Inbox"` with `msgraph.hook.on-flag-added.flags = ["Flagged"]`
@@ -400,13 +367,8 @@ carillon SHALL offer four bearer-authenticated backends, each polled, none offer
 - **WHEN** a contact belonging to no group is added
 - **THEN** `gpeople.hook.on-card-added` fires
 
-#### Scenario: A Google address in the wizard
-- **GIVEN** a `gmail.com` address typed into the wizard
-- **WHEN** discovery completes
-- **THEN** the Gmail, Google Calendar and Google People APIs are listed first, the Gmail API being the default
-
 ### Requirement: Notifications are shown when the build can show them
-A `notify` cargo feature, on by default, SHALL decide whether hooks can show notifications. A build without it SHALL refuse a configuration carrying a `notify` table, naming the feature, and its wizard SHALL generate hooks without one.
+A `notify` cargo feature, on by default, SHALL decide whether hooks can show notifications. A build without it SHALL refuse a configuration carrying a `notify` table, naming the feature.
 
 #### Scenario: A headless build
 - **GIVEN** a build without the `notify` feature
@@ -511,3 +473,11 @@ The `pimdir` backend SHALL watch one collection of one pimdir store, given by `p
 - **GIVEN** a pimdir watch holding an event whose alarm fires at 08:45
 - **WHEN** the store's owner applies an update moving the event an hour later, and the watch polls
 - **THEN** the alarm fires at 09:45, and not at 08:45
+
+### Requirement: A first run points at the sample
+Running `carillon` with no command SHALL print the help and exit 0, with a configuration or without one: carillon writes no configuration, and an account is written by hand against the documented sample, config.sample.toml. A command that finds no configuration SHALL fail, exit 1, naming the path it looked at (the first `-c` path when given, else the default one) and the sample; a person at a terminal SHALL meet pimalaya-cli's welcome above that failure, a script or a `--json` caller the failure alone. A configuration that fails to parse SHALL be an error rather than read as absent.
+
+#### Scenario: A newcomer
+- **GIVEN** no configuration file
+- **WHEN** `carillon watch` runs
+- **THEN** it exits 1 naming the path it looked at and config.sample.toml, and writes nothing

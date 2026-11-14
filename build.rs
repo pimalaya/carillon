@@ -2,8 +2,7 @@ use std::env;
 
 use pimalaya_cli::build::{features_env, git_envs, target_envs};
 
-/// The backends opening a socket, which share the TLS, proxy and
-/// discovery machinery.
+/// The backends opening a socket, which share the TLS and proxy machinery.
 const NETWORK: &[&str] = &["IMAP", "JMAP", "DAV", "MSGRAPH", "GMAIL", "GCAL", "GPEOPLE"];
 /// The vendor REST APIs, bearer-only and polled.
 const API: &[&str] = &["MSGRAPH", "GMAIL", "GCAL", "GPEOPLE"];

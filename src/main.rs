@@ -6,11 +6,13 @@
 //!
 //! ## Layout
 //!
-//! The frontend: main dispatches, cli declares the parser and meets the
-//! invocations that find no configuration, config parses the TOML
-//! accounts and renders a generated one back, watch, check and configure
-//! are the three commands, hook fires the notification and the command,
-//! json_schema names the schema of what each command prints.
+//! The frontend: main dispatches and meets a bare invocation with the
+//! help, cli declares the parser, config parses the TOML accounts and
+//! fails naming the file and the documented sample when there is none,
+//! watch and check are the two commands, hook fires the notification and
+//! the command, json_schema names the schema of what each command prints.
+//! No configuration is ever written: an account is written by hand from
+//! config.sample.toml.
 //!
 //! watch carries the runtime: it selects the accounts, spawns one thread
 //! each, and each thread opens the session its backend calls for,
@@ -18,15 +20,6 @@
 //! backoff, resolving the credential again on every attempt. What a lost
 //! IMAP or Gmail session knew is handed to the next one, which reports
 //! what moved meanwhile.
-//!
-//! The wizard: one prompt takes an email address, io-pim-discovery turns
-//! it into the services reachable from it, and the module of the chosen
-//! backend prompts its credential and opens the connection.
-//!
-//! That connection is both the test and what the account is completed
-//! from: the collection a DAV server holds, and the method its server can
-//! actually be watched with. What is done with the account, a file to
-//! create, a block to append or a document on stdout, is configure's.
 //!
 //! The backends: imap, jmap, maildir, dav, msgraph, gmail, gcal, gpeople
 //! and pimdir, each behind its cargo feature, learning about changes its
@@ -98,11 +91,9 @@ mod pimdir;
 ))]
 mod poll;
 mod watch;
-#[cfg(feature = "wizard")]
-mod wizard;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use pimalaya_cli::{error::ErrorReport, log::Logger, printer::StdoutPrinter};
 
 use crate::cli::Cli;
@@ -114,7 +105,18 @@ fn main() {
     ErrorReport::eval(&mut printer, result);
 }
 
+/// Runs the parsed command, or meets a bare `carillon` with the help,
+/// with a configuration or without one.
 fn execute(printer: &mut StdoutPrinter, cli: Cli) -> Result<()> {
     Logger::try_init(&cli.log)?;
-    cli.execute(printer)
+
+    let Some(command) = cli.command else {
+        Cli::command().print_help()?;
+        return Ok(());
+    };
+
+    let config_paths = cli.config_paths.as_ref();
+    let account_name = cli.account.name.as_deref();
+
+    command.execute(printer, config_paths, account_name, cli.backend)
 }

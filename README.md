@@ -31,19 +31,10 @@ CLI to watch PIM collection changes, written in Rust
   - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature, enabled by default)
   - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
   - [Native TLS](https://crates.io/crates/native-tls) (requires `native-tls` feature)
-- **Discovery** support:
-  - PACC <sup>[specs](https://datatracker.ietf.org/doc/html/draft-ietf-mailmaint-pacc)</sup>
-  - Autoconfiguration (Thunderbird) <sup>[specs](https://wiki.mozilla.org/Thunderbird:Autoconfiguration)</sup>
-  - SRV DNS lookups <sup>[rfc6186](https://www.rfc-editor.org/rfc/rfc6186)</sup>
-  - DAV service discovery <sup>[rfc6764](https://www.rfc-editor.org/rfc/rfc6764)</sup>
-  - JMAP session <sup>[rfc8620](https://www.rfc-editor.org/rfc/rfc8620)</sup>
 - **Multi-account** watch: every configured account at once, each reconnecting on its own
-- **Interactive wizard**: `carillon configure` turns an email address into a tested account
 
 > [!TIP]
 > Carillon is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
->
-> The default `wizard` feature brings the interactive `configure`; leave it out of a scripted or embedded build that never prompts.
 
 ## Installation
 
@@ -111,19 +102,11 @@ The configuration is loaded from the first existing path among:
 
 Override the path with `carillon -c <PATH>` or `CARILLON_CONFIG=<PATH>`. Multiple paths can be passed at once, separated by `:`; the first is the base and the rest are deep-merged on top. The full field reference lives in [config.sample.toml](./config.sample.toml).
 
-Run `carillon` with no command to launch the wizard, `carillon configure` to run it again later. It discovers the services your provider publishes from your email address, offering the Microsoft Graph or Google APIs first for such an account, asks which one to watch and how to authenticate, then tests the connection.
-
-The watch method is never asked: an account takes the best one its backend supports. The result is saved, appended to the configuration already there, or printed for you to place by hand.
+Carillon never writes a configuration: copy [config.sample.toml](./config.sample.toml) to one of the paths above, keep one backend and the hooks you want, then delete the rest. A command finding no configuration fails naming the path it looked at and the sample; `carillon` with no command prints the help. Leave the watch method out unless you need one: an account takes the best one its backend supports. Then run `carillon check` to test the connection.
 
 An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople`, `pimdir`) carrying the collection it watches (one per domain over JMAP and Microsoft Graph, sharing one connection), how it watches it (`watch`) and what it fires (`hook`). Declaring several is allowed, `-b/--backend` then selecting one.
 
 ## Usage
-
-Generate an account:
-
-```sh
-carillon configure
-```
 
 Watch every configured account, until interrupted:
 

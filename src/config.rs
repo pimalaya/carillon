@@ -26,9 +26,7 @@ use std::{
 
 #[cfg(feature = "imap")]
 use anyhow::anyhow;
-#[cfg(any(network, feature = "pimdir"))]
-use anyhow::bail;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 #[cfg(feature = "imap")]
 use io_imap::types::{
     IntoStatic,
@@ -54,7 +52,7 @@ use pimalaya_stream::{
 };
 #[cfg(network)]
 use secrecy::SecretString;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 #[cfg(any(feature = "jmap", feature = "dav", api))]
 use crate::event::WatchDomain;
@@ -63,80 +61,12 @@ use crate::{
     hook::{self, HookCollection, Vocabulary},
 };
 
-/// The documented sample, pointed at wherever a configuration is missing
-/// and wherever the wizard stops short.
-#[cfg(feature = "wizard")]
-pub const CONFIG_SAMPLE_URL: &str =
+/// The documented sample, named by the error meeting no configuration.
+const CONFIG_SAMPLE_URL: &str =
     "https://github.com/pimalaya/carillon/blob/master/config.sample.toml";
 
-/// How to get a configuration, for the errors meeting none.
-#[cfg(feature = "wizard")]
-pub const NO_CONFIG_HINT: &str = "run `carillon configure` to generate one, or write it by hand: \
-     https://github.com/pimalaya/carillon/blob/master/config.sample.toml";
-
-/// How to get a configuration, for the errors meeting none.
-#[cfg(not(feature = "wizard"))]
-pub const NO_CONFIG_HINT: &str = "write one by hand: \
-     https://github.com/pimalaya/carillon/blob/master/config.sample.toml";
-
-/// The order a rendered account groups its keys in, most defining first.
-///
-/// A key outside this list still renders, after the listed ones, so a
-/// field added to [`AccountConfig`] can never go missing from a generated
-/// document because nobody updated this table.
-#[cfg(feature = "wizard")]
-const RENDER_ORDER: [&str; 11] = [
-    "default", "proxy", "imap", "jmap", "msgraph", "gmail", "maildir", "caldav", "gcal", "carddav",
-    "gpeople",
-];
-
-/// The keys a backend group leads with, in reading order: the collection
-/// it watches, the server, then the credential.
-///
-/// Everything else follows alphabetically, only adjusting what those
-/// three state.
-#[cfg(feature = "wizard")]
-const BACKEND_ORDER: [&str; 6] = [
-    "mailbox",
-    "calendar",
-    "addressbook",
-    "root",
-    "server",
-    "auth",
-];
-
-/// Whether a value is what its type defaults to, which keeps a generated
-/// document down to what was actually configured.
-fn is_default<T: Default + PartialEq>(value: &T) -> bool {
-    *value == T::default()
-}
-
-/// Ranks one dotted line inside its backend group, `imap.server = …`
-/// ranking on `server`.
-///
-/// The SASL table is the IMAP spelling of `auth`, so it ranks with it.
-#[cfg(feature = "wizard")]
-fn backend_rank(group: &str, line: &str) -> usize {
-    let Some(key) = line
-        .split_once(" = ")
-        .map(|(key, _)| key)
-        .and_then(|key| key.strip_prefix(group))
-        .and_then(|key| key.strip_prefix('.'))
-    else {
-        return BACKEND_ORDER.len();
-    };
-
-    let key = key.split('.').next().unwrap_or(key);
-    let key = if key == "sasl" { "auth" } else { key };
-
-    BACKEND_ORDER
-        .iter()
-        .position(|known| *known == key)
-        .unwrap_or(BACKEND_ORDER.len())
-}
-
 /// Root configuration: a map of named accounts.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
     pub accounts: HashMap<String, AccountConfig>,
@@ -163,14 +93,19 @@ impl TomlConfig for Config {
 }
 
 impl Config {
-    /// Loads the config from `config_paths`, [`None`] when none resolves.
+    /// Loads the config from `config_paths`.
     ///
-    /// A missing file is not an error here: what to do about it is the
-    /// caller's, and for an interactive one that is to offer the wizard
-    /// (see [`crate::cli::load_config`]).
-    pub fn load(config_paths: &[PathBuf]) -> Result<Option<Config>> {
+    /// No configuration fails naming the path looked at, the first `-c`
+    /// path or else the default one, and the documented sample: carillon
+    /// writes none, an account being written by hand.
+    pub fn load(config_paths: &[PathBuf]) -> Result<Config> {
         let Some(config) = Config::from_paths_or_default(config_paths)? else {
-            return Ok(None);
+            let path = Config::target_path(config_paths)?;
+            bail!(
+                "No configuration found at {}, write one by hand from the sample: \
+                 {CONFIG_SAMPLE_URL}",
+                path.display(),
+            );
         };
 
         #[cfg(network)]
@@ -186,7 +121,7 @@ impl Config {
                 .with_context(|| format!("Account `{name}` is misconfigured"))?;
         }
 
-        Ok(Some(config))
+        Ok(config)
     }
 
     /// Hands each account proxy down to its backends, so every connection
@@ -206,16 +141,16 @@ impl Config {
 /// `deny_unknown_fields` is deliberately omitted, so the account-level
 /// fields of himalaya CLI v2 and himalaya-tui coexist silently. The
 /// backend blocks are strict, so the tolerance stops at this level.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct AccountConfig {
     /// Use this account when `-a/--account` names none.
-    #[serde(default, skip_serializing_if = "is_default")]
+    #[serde(default)]
     pub default: bool,
     /// Proxy every network backend of this account goes through, unless
     /// its own block names one.
     #[cfg(network)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     #[cfg(feature = "imap")]
     #[serde(default)]
@@ -250,72 +185,6 @@ pub struct AccountConfig {
 }
 
 impl AccountConfig {
-    /// Renders this account as an `[accounts.<name>]` block, to be written
-    /// to a configuration file or appended to one.
-    ///
-    /// The serializer decides what is written, so a defaulted field is
-    /// omitted. What this adds is reading order: alphabetical dotted keys
-    /// bury `imap.server` under the credentials authenticating against it.
-    #[cfg(feature = "wizard")]
-    pub fn render(&self, name: &str) -> Result<String> {
-        // NOTE: borrowed rather than built into a `Config`, which would
-        // mean cloning the account to render it. The emitter only looks
-        // for an `accounts` table, so any shape carrying one will do.
-        #[derive(Serialize)]
-        struct AccountDocument<'a> {
-            accounts: HashMap<&'a str, &'a AccountConfig>,
-        }
-
-        let document = AccountDocument {
-            accounts: HashMap::from([(name, self)]),
-        };
-        let rendered = pimalaya_config::toml::to_string(&document)?;
-
-        // NOTE: the emitter writes the header itself, everything below it
-        // being one dotted key per line.
-        let (header, body) = match rendered.split_once('\n') {
-            Some((header, body)) => (header, body),
-            None => return Ok(rendered),
-        };
-
-        let mut groups: Vec<(String, Vec<&str>)> = Vec::new();
-
-        for line in body.lines().filter(|line| !line.trim().is_empty()) {
-            let key = line.split(['.', ' ']).next().unwrap_or(line).to_string();
-
-            match groups.iter_mut().find(|(name, _)| *name == key) {
-                Some((_, lines)) => lines.push(line),
-                None => groups.push((key, vec![line])),
-            }
-        }
-
-        groups.sort_by_key(|(key, _)| {
-            RENDER_ORDER
-                .iter()
-                .position(|known| known == key)
-                .unwrap_or(RENDER_ORDER.len())
-        });
-
-        let mut document = format!("{header}\n");
-
-        for (index, (key, mut lines)) in groups.into_iter().enumerate() {
-            if index > 0 {
-                document.push('\n');
-            }
-
-            // NOTE: a backend reads the way it is explained: what it
-            // watches, where, who it authenticates as, then the rest.
-            lines.sort_by_key(|line| backend_rank(&key, line));
-
-            for line in lines {
-                document.push_str(line);
-                document.push('\n');
-            }
-        }
-
-        Ok(document)
-    }
-
     /// Hands the account proxy to every network backend naming none of
     /// its own.
     #[cfg(network)]
@@ -406,7 +275,7 @@ impl AccountConfig {
 }
 
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ImapConfig {
     /// The one mailbox this account watches.
@@ -422,7 +291,7 @@ pub struct ImapConfig {
     pub server: String,
     #[serde(default)]
     pub tls: TlsConfig,
-    #[serde(default, skip_serializing_if = "is_default")]
+    #[serde(default)]
     pub starttls: bool,
     /// The ALPN identifiers offered during the TLS handshake.
     ///
@@ -430,11 +299,11 @@ pub struct ImapConfig {
     /// registers; `[]` skips ALPN negotiation, and a non-empty list
     /// replaces the default. Only rustls reads it, native-tls having no
     /// ALPN.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub alpn: Option<Vec<String>>,
     /// Proxy the connection goes through, falling back to the account one
     /// and then to the `all_proxy`/`https_proxy` environment variables.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     /// The SASL credentials, omitted to skip authentication entirely.
     pub sasl: Option<SaslConfig>,
@@ -458,11 +327,11 @@ pub struct ImapConfig {
 
 /// Per-account `imap.id.*` quirks.
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ImapIdConfig {
     /// Chains an `ID` round-trip after the tagged auth response.
-    #[serde(default, skip_serializing_if = "is_default")]
+    #[serde(default)]
     pub auto: bool,
     /// Parameters sent with the auto-ID command, empty sending `ID NIL`.
     ///
@@ -526,7 +395,7 @@ fn canned_imap_id_value(key: &str) -> Option<&'static str> {
 }
 
 #[cfg(feature = "jmap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct JmapConfig {
     /// The mailbox this account watches, matched by name and
@@ -534,15 +403,15 @@ pub struct JmapConfig {
     ///
     /// The three collections are each optional, at least one required:
     /// they share the session, the connection and the event stream.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub mailbox: Option<String>,
     /// The addressbook this account watches (RFC 9610), matched by name
     /// case-insensitively or by id.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub addressbook: Option<String>,
     /// The calendar this account watches (JMAP for Calendars), matched by
     /// name case-insensitively or by id.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub calendar: Option<String>,
     /// JMAP server address.
     ///
@@ -558,11 +427,11 @@ pub struct JmapConfig {
     /// HTTP/1.1; `[]` skips ALPN negotiation, and a non-empty list
     /// replaces the default. Only rustls reads it, native-tls having no
     /// ALPN.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub alpn: Option<Vec<String>>,
     /// Proxy the connection goes through, falling back to the account one
     /// and then to the `all_proxy`/`https_proxy` environment variables.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     /// Authentication: exactly one of `header`, `bearer`, `basic`.
     pub auth: JmapAuthConfig,
@@ -575,7 +444,7 @@ pub struct JmapConfig {
 }
 
 #[cfg(feature = "jmap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum JmapAuthConfig {
     Header(Secret),
@@ -590,7 +459,7 @@ pub enum JmapAuthConfig {
 }
 
 #[cfg(feature = "maildir")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct MaildirConfig {
     /// The mailbox this account watches, resolved under `root` through
@@ -609,7 +478,7 @@ pub struct MaildirConfig {
 /// pimdir configuration: one calendar collection of a local pimdir store,
 /// read and never written, its alarms fired.
 #[cfg(feature = "pimdir")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PimdirConfig {
     /// The calendar this account watches, by the collection id a
@@ -632,7 +501,7 @@ pub struct PimdirConfig {
 /// info authenticates too, but `username` and `password` keep the secret
 /// out of the URL.
 #[cfg(network)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ProxyConfig {
     /// The proxy URL.
@@ -683,7 +552,7 @@ impl ProxyConfig {
 }
 
 #[cfg(network)]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TlsConfig {
     /// The TLS implementation the connection is opened with, unset taking
@@ -698,7 +567,7 @@ pub struct TlsConfig {
 }
 
 #[cfg(network)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum TlsProviderConfig {
     Rustls,
@@ -706,14 +575,14 @@ pub enum TlsProviderConfig {
 }
 
 #[cfg(network)]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RustlsConfig {
     pub crypto: Option<RustlsCryptoConfig>,
 }
 
 #[cfg(network)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum RustlsCryptoConfig {
     Aws,
@@ -747,7 +616,7 @@ impl TlsConfig {
 }
 
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum SaslConfig {
     Anonymous(SaslAnonymousConfig),
@@ -760,14 +629,14 @@ pub enum SaslConfig {
 }
 
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslAnonymousConfig {
     pub message: Option<String>,
 }
 
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslLoginConfig {
     #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_string")]
@@ -776,7 +645,7 @@ pub struct SaslLoginConfig {
 }
 
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslPlainConfig {
     pub authzid: Option<String>,
@@ -788,7 +657,7 @@ pub struct SaslPlainConfig {
 }
 
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslOauthbearerConfig {
     #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_string")]
@@ -797,7 +666,7 @@ pub struct SaslOauthbearerConfig {
 }
 
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslXoauth2Config {
     #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_string")]
@@ -806,7 +675,7 @@ pub struct SaslXoauth2Config {
 }
 
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslScramSha256Config {
     #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_string")]
@@ -1042,7 +911,7 @@ impl CarddavConfig {
 
 /// Hooks an IMAP watch fires.
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ImapHookConfig {
     /// Fires when a message arrives in the watched mailbox.
@@ -1057,7 +926,7 @@ pub struct ImapHookConfig {
 
 /// Hooks a JMAP or a Microsoft Graph watch fires, one set per domain.
 #[cfg(any(feature = "jmap", feature = "msgraph"))]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DomainsHookConfig {
     /// Fires when a message arrives in the watched mailbox.
@@ -1087,7 +956,7 @@ pub struct DomainsHookConfig {
 
 /// Hooks a Maildir watch fires.
 #[cfg(feature = "maildir")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct MaildirHookConfig {
     /// Fires when a message file appears in the watched maildir.
@@ -1102,7 +971,7 @@ pub struct MaildirHookConfig {
 
 /// Hooks a pimdir watch fires.
 #[cfg(feature = "pimdir")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PimdirHookConfig {
     /// Fires when an alarm of a VEVENT or a VTODO reaches its trigger.
@@ -1111,7 +980,7 @@ pub struct PimdirHookConfig {
 
 /// Hooks a CalDAV watch fires, one set per component a calendar holds.
 #[cfg(feature = "dav")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CaldavHookConfig {
     /// Fires when a VEVENT appears in the watched calendar.
@@ -1132,7 +1001,7 @@ pub struct CaldavHookConfig {
 
 /// Hooks a CardDAV watch fires.
 #[cfg(feature = "dav")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CarddavHookConfig {
     /// Fires when a vCard appears in the watched addressbook.
@@ -1573,24 +1442,11 @@ impl CarddavHookConfig {
 /// Summary and body template on `$name`, `${name}` and `${name:-default}`,
 /// with `$id` and the collection always available. The envelope names (`$subject`, `$sender`,
 /// …) belong to an arrival on IMAP or JMAP, which read one.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ItemHook {
     pub notify: Option<NotificationTemplate>,
     pub cmd: Option<HookCmd>,
-}
-
-#[cfg(feature = "wizard")]
-impl ItemHook {
-    /// A hook showing a notification, empty in a build that cannot show
-    /// one, so a generated configuration always writes back.
-    pub fn notifying(summary: &str, body: &str) -> Self {
-        let notify = cfg!(feature = "notify")
-            .then(|| NotificationTemplate::new(summary, body).ok())
-            .flatten();
-
-        Self { notify, cmd: None }
-    }
 }
 
 /// Hook that fires for flag-level events, once per flag that moved.
@@ -1598,7 +1454,7 @@ impl ItemHook {
 /// `flags` narrows it to the flags it names, matched case-insensitively
 /// with or without an IMAP backslash or a keyword dollar. The flag a
 /// firing is about reaches the templates as `$flag`.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct FlagHook {
     pub notify: Option<NotificationTemplate>,
@@ -1612,7 +1468,7 @@ pub struct FlagHook {
 /// A TOML string goes through the platform shell (`/bin/sh -c <line>` on
 /// Unix, `cmd /C <line>` on Windows), a TOML list `[program, args…]` is
 /// spawned directly. Both shapes take the variables in their environment.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 pub struct HookCmd(#[serde(with = "command")] pub Command);
 
 impl Clone for HookCmd {
@@ -1635,7 +1491,7 @@ impl Clone for HookCmd {
 /// CalDAV configuration: one watched calendar, polled through RFC 6578
 /// `sync-collection`.
 #[cfg(feature = "dav")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CaldavConfig {
     /// The calendar this account watches, read as a path under `server`,
@@ -1652,14 +1508,14 @@ pub struct CaldavConfig {
     /// HTTP/1.1; `[]` skips ALPN negotiation, and a non-empty list
     /// replaces the default. Only rustls reads it, native-tls having no
     /// ALPN.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub alpn: Option<Vec<String>>,
     /// Proxy the connection goes through, falling back to the account one
     /// and then to the `all_proxy`/`https_proxy` environment variables.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     /// Authentication, none by default, for a calendar readable without.
-    #[serde(default, skip_serializing_if = "DavAuthConfig::is_none")]
+    #[serde(default)]
     pub auth: DavAuthConfig,
     /// How this account learns about a change. Unset polls.
     #[serde(default)]
@@ -1671,7 +1527,7 @@ pub struct CaldavConfig {
 
 /// CardDAV configuration: one watched addressbook, polled the same way.
 #[cfg(feature = "dav")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CarddavConfig {
     /// The addressbook this account watches, read as a path under
@@ -1688,14 +1544,14 @@ pub struct CarddavConfig {
     /// HTTP/1.1; `[]` skips ALPN negotiation, and a non-empty list
     /// replaces the default. Only rustls reads it, native-tls having no
     /// ALPN.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub alpn: Option<Vec<String>>,
     /// Proxy the connection goes through, falling back to the account one
     /// and then to the `all_proxy`/`https_proxy` environment variables.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     /// Authentication, none by default, for a book readable without.
-    #[serde(default, skip_serializing_if = "DavAuthConfig::is_none")]
+    #[serde(default)]
     pub auth: DavAuthConfig,
     /// How this account learns about a change. Unset polls.
     #[serde(default)]
@@ -1747,7 +1603,7 @@ impl CarddavConfig {
 
 /// The credential presented to the DAV server.
 #[cfg(feature = "dav")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DavAuthConfig {
     /// No `Authorization` header at all.
@@ -1763,22 +1619,13 @@ pub enum DavAuthConfig {
     Bearer { token: Secret },
 }
 
-#[cfg(feature = "dav")]
-impl DavAuthConfig {
-    /// Whether the server is reached with no `Authorization` header, which
-    /// is what a generated document leaves out.
-    pub fn is_none(&self) -> bool {
-        matches!(self, Self::None)
-    }
-}
-
 // NOTE: each backend declares only the methods it has, so asking IMAP to
 // push or Maildir to idle is refused when the config is read rather than
 // when the watch runs.
 
 /// How an IMAP account learns about a change.
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum ImapWatchConfig {
     /// Hold an IDLE connection and let the server speak first.
@@ -1790,7 +1637,7 @@ pub enum ImapWatchConfig {
 
 /// How a JMAP account learns about a change.
 #[cfg(feature = "jmap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum JmapWatchConfig {
     /// Hold an EventSource stream and let the server push.
@@ -1801,7 +1648,7 @@ pub enum JmapWatchConfig {
 
 /// How a Maildir account learns about a change.
 #[cfg(feature = "maildir")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum MaildirWatchConfig {
     /// Re-list the directory on an interval, the only way a filesystem
@@ -1811,7 +1658,7 @@ pub enum MaildirWatchConfig {
 
 /// How a pimdir account learns about a change.
 #[cfg(feature = "pimdir")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum PimdirWatchConfig {
     /// Read the store's change cursor on an interval.
@@ -1820,7 +1667,7 @@ pub enum PimdirWatchConfig {
 
 /// How a WebDAV account learns about a change.
 #[cfg(feature = "dav")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DavWatchConfig {
     /// Ask `sync-collection` on an interval, what WebDAV offers a client
@@ -1830,7 +1677,7 @@ pub enum DavWatchConfig {
 
 /// Options of the IDLE method.
 #[cfg(feature = "imap")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct IdleWatchConfig {
     /// Seconds an IDLE is held before it is re-issued, unset taking
@@ -1853,7 +1700,7 @@ impl IdleWatchConfig {
 
 /// Options of the push method.
 #[cfg(feature = "jmap")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PushWatchConfig {
     /// Seconds between the server's keep-alive pings, which are also what
@@ -1863,7 +1710,7 @@ pub struct PushWatchConfig {
 }
 
 /// Options of the poll method.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PollWatchConfig {
     /// Seconds between two rounds, unset taking what suits the backend: a
@@ -1902,34 +1749,34 @@ fn default_push_ping() -> u64 {
 /// Microsoft Graph configuration: a collection per domain, at least one,
 /// read through one token and one connection.
 #[cfg(feature = "msgraph")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct MsgraphConfig {
     /// The mail folder this account watches, matched by display name
     /// case-insensitively, by id or by well-known name (`inbox`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub mailbox: Option<String>,
     /// The contact folder this account watches, matched by display name
     /// case-insensitively or by id, `Contacts` naming the default one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub addressbook: Option<String>,
     /// The calendar this account watches, matched by name
     /// case-insensitively or by id.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub calendar: Option<String>,
     /// The mailbox owner, a user id or a principal name, unset meaning
     /// the token's own user.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub user_id: Option<String>,
     #[serde(default)]
     pub tls: TlsConfig,
     /// The ALPN identifiers offered during the TLS handshake, unset
     /// taking `["http/1.1"]`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub alpn: Option<Vec<String>>,
     /// Proxy the connection goes through, falling back to the account one
     /// and then to the `all_proxy`/`https_proxy` environment variables.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     /// Authentication: the bearer token.
     pub auth: BearerAuthConfig,
@@ -1968,24 +1815,24 @@ impl MsgraphConfig {
 
 /// Gmail configuration: one watched label.
 #[cfg(feature = "gmail")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GmailConfig {
     /// The label this account watches, by name (`INBOX`, `Work/Clients`)
     /// or by id.
     pub mailbox: String,
     /// The mailbox owner, unset meaning the token's own user.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub user_id: Option<String>,
     #[serde(default)]
     pub tls: TlsConfig,
     /// The ALPN identifiers offered during the TLS handshake, unset
     /// taking `["http/1.1"]`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub alpn: Option<Vec<String>>,
     /// Proxy the connection goes through, falling back to the account one
     /// and then to the `all_proxy`/`https_proxy` environment variables.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     /// Authentication: the bearer token.
     pub auth: BearerAuthConfig,
@@ -2010,7 +1857,7 @@ impl GmailConfig {
 
 /// Google Calendar configuration: one watched calendar.
 #[cfg(feature = "gcal")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GcalConfig {
     /// The calendar this account watches, by name case-insensitively or
@@ -2020,11 +1867,11 @@ pub struct GcalConfig {
     pub tls: TlsConfig,
     /// The ALPN identifiers offered during the TLS handshake, unset
     /// taking `["http/1.1"]`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub alpn: Option<Vec<String>>,
     /// Proxy the connection goes through, falling back to the account one
     /// and then to the `all_proxy`/`https_proxy` environment variables.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     /// Authentication: the bearer token.
     pub auth: BearerAuthConfig,
@@ -2049,7 +1896,7 @@ impl GcalConfig {
 
 /// Google People configuration: one watched contact group.
 #[cfg(feature = "gpeople")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GpeopleConfig {
     /// The contact group this account watches, by name case-insensitively
@@ -2060,11 +1907,11 @@ pub struct GpeopleConfig {
     pub tls: TlsConfig,
     /// The ALPN identifiers offered during the TLS handshake, unset
     /// taking `["http/1.1"]`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub alpn: Option<Vec<String>>,
     /// Proxy the connection goes through, falling back to the account one
     /// and then to the `all_proxy`/`https_proxy` environment variables.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     /// Authentication: the bearer token.
     pub auth: BearerAuthConfig,
@@ -2089,7 +1936,7 @@ impl GpeopleConfig {
 
 /// The credential a vendor API takes, a bearer token alone.
 #[cfg(api)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct BearerAuthConfig {
     /// The OAuth 2.0 access token, usually a broker command since it
@@ -2099,7 +1946,7 @@ pub struct BearerAuthConfig {
 
 /// How a vendor API account learns about a change.
 #[cfg(api)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum ApiWatchConfig {
     /// Read the change feed on an interval, what these APIs offer a
@@ -2121,7 +1968,7 @@ impl ApiWatchConfig {
 
 /// Hooks a Gmail watch fires.
 #[cfg(feature = "gmail")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GmailHookConfig {
     /// Fires when a message arrives in the watched label.
@@ -2186,7 +2033,7 @@ impl GmailHookConfig {
 /// Hooks a Google Calendar watch fires, events alone: the API has no
 /// task type.
 #[cfg(feature = "gcal")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GcalHookConfig {
     /// Fires when an event appears in the watched calendar.
@@ -2232,7 +2079,7 @@ impl GcalHookConfig {
 
 /// Hooks a Google People watch fires.
 #[cfg(feature = "gpeople")]
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GpeopleHookConfig {
     /// Fires when a contact joins the watched group.
@@ -2317,30 +2164,6 @@ mod tests {
         assert_eq!(alpn(&unset), None);
         assert_eq!(alpn(&empty), Some(Vec::new()));
         assert_eq!(alpn(&listed), Some(vec![String::from("imap")]));
-    }
-
-    #[cfg(feature = "wizard")]
-    #[test]
-    fn an_unset_alpn_is_not_rendered_back() {
-        let config: Config =
-            toml::from_str(&document("imap.alpn = []\n")).expect("parse the config");
-        let rendered = config.accounts["perso"]
-            .render("perso")
-            .expect("render the account");
-        let parsed: Config = toml::from_str(&rendered).expect("parse the rendered account");
-
-        assert!(rendered.contains("imap.alpn = []"));
-        assert_eq!(
-            parsed.accounts["perso"].imap.as_ref().unwrap().alpn,
-            Some(Vec::new())
-        );
-
-        let bare: Config = toml::from_str(&document("")).expect("parse the config");
-        let rendered = bare.accounts["perso"]
-            .render("perso")
-            .expect("render the account");
-
-        assert!(!rendered.contains("alpn"));
     }
 
     #[test]

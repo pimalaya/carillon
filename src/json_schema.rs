@@ -21,8 +21,6 @@ pub fn registry() -> JsonSchemaRegistry {
     let mut registry = JsonSchemaRegistry::new("carillon", env!("CARGO_PKG_VERSION"));
 
     registry.insert::<crate::check::CheckOutput>("carillon-check");
-    #[cfg(feature = "wizard")]
-    registry.insert::<crate::wizard::configure::ConfigureOutput>("carillon-configure");
     registry.insert::<ErrorReport>("carillon-error");
 
     registry
@@ -36,8 +34,8 @@ mod tests {
     use crate::cli::Cli;
 
     /// The runnable commands printing nothing, so described by no schema:
-    /// the bare binary prints its help or its welcome, and `watch` reports
-    /// through its hooks.
+    /// the bare binary prints its help, and `watch` reports through its
+    /// hooks.
     const SILENT: &[&str] = &["carillon", "carillon-watch"];
 
     /// Every command that prints is described, and no schema names a

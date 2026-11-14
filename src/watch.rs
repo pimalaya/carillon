@@ -33,7 +33,6 @@ use clap::Parser;
 #[cfg(feature = "imap")]
 use io_imap::watch::ImapMailboxWatchState;
 use log::{debug, error, info, warn};
-use pimalaya_cli::printer::Printer;
 
 #[cfg(api)]
 use crate::config::ApiWatchConfig;
@@ -55,7 +54,6 @@ use crate::{
 };
 use crate::{
     backend::Backend,
-    cli::load_config,
     config::{AccountConfig, Config},
     event::{ItemSummary, WatchEvent},
     hook,
@@ -98,12 +96,11 @@ impl WatchCommand {
     /// Spawns one thread per selected account and joins them on Ctrl+C.
     pub fn execute(
         self,
-        printer: &mut impl Printer,
         config_paths: &[PathBuf],
         account_name: Option<&str>,
         backend: Backend,
     ) -> Result<()> {
-        let mut config = load_config(printer, config_paths)?;
+        let mut config = Config::load(config_paths)?;
         let selected = select_accounts(&mut config, account_name)?;
 
         let shutdown = Arc::new(AtomicBool::new(false));
