@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- **BREAKING**: Changed the configuration to refuse a key it does not read at the root and in an account, which it ignored, as every backend table already refused one: a file is no longer shared with himalaya's account keys, and a backend the build leaves out is refused rather than skipped. The keys carillon moved under each backend before 0.1 are refused naming where they went and MIGRATION.md: the account-level `folder`, `mailbox`, `collection`, `watch` and `hooks`, and the `dav` backend. `<backend>.hooks` still reads as `<backend>.hook`.
 - **BREAKING**: Changed a command line the grammar refuses under `--json` to print the failure object coded `usage-invalid` on stdout, nothing on stderr, still exiting 2; without `--json`, clap's message stays on stderr.
 - **BREAKING**: Changed `check` to exit 3 when a backend failed, once its report is printed, and each of its rows to carry `code` beside `backend`, `ok` and `error` (pimalaya-cli's backend check row).
 - **BREAKING**: Changed `-c` to take one path per flag, as pimalaya-cli's `ConfigFlags` do: repeat it to merge several files. A value is never split on `:`, so `-c a:b` now names one file called `a:b`, and the `CARILLON_CONFIG` environment variable is no longer read.

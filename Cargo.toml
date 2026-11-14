@@ -36,6 +36,7 @@ panic = "abort"
 
 [dev-dependencies]
 io-oauth = { version = "0.7", default-features = false, features = ["jwt-bearer", "rustls-ring"] }
+pimalaya-config = { version = "0.4", default-features = false, features = ["sample"] }
 rusqlite = { version = "0.41", default-features = false }
 tempfile = "3"
 toml = "1"

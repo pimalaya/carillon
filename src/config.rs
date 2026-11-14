@@ -5,9 +5,9 @@
 //! own protocol key.
 //!
 //! Declaring more than one backend is allowed, `-b/--backend` picking the
-//! active one. A whole file is not portable between the three binaries:
-//! every backend block is `deny_unknown_fields` on each side and carries
-//! keys the others do not know.
+//! active one. Every table refuses a key it does not read, the root and
+//! the account included, so a file is not shared with the himalaya
+//! binaries; a key carillon used to read is refused naming where it went.
 //!
 //! Everything a backend needs lives under it: the collection it watches,
 //! under its own domain's name, how it watches, and the hooks it fires.
@@ -54,7 +54,10 @@ use pimalaya_stream::{
 };
 #[cfg(network)]
 use secrecy::SecretString;
-use serde::Deserialize;
+use serde::{
+    Deserialize, Deserializer,
+    de::{self, Error as _},
+};
 
 #[cfg(any(feature = "jmap", feature = "dav", api))]
 use crate::event::WatchDomain;
@@ -65,7 +68,7 @@ use crate::{
 
 /// Root configuration: a map of named accounts.
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
     pub accounts: HashMap<String, AccountConfig>,
 }
@@ -131,12 +134,8 @@ impl Config {
 }
 
 /// Per-account configuration.
-///
-/// `deny_unknown_fields` is deliberately omitted, so the account-level
-/// fields of himalaya CLI v2 and himalaya-tui coexist silently. The
-/// backend blocks are strict, so the tolerance stops at this level.
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AccountConfig {
     /// Use this account when `-a/--account` names none.
     #[serde(default)]
@@ -176,6 +175,81 @@ pub struct AccountConfig {
     #[cfg(feature = "pimdir")]
     #[serde(default)]
     pub pimdir: Option<PimdirConfig>,
+    /// Refused: the mirador `folder`, now the backend's collection key.
+    #[serde(default, deserialize_with = "refuse_folder")]
+    #[allow(dead_code)]
+    pub folder: Option<RemovedKeyConfig>,
+    /// Refused: the account-level `mailbox`, now the backend's.
+    #[serde(default, deserialize_with = "refuse_mailbox")]
+    #[allow(dead_code)]
+    pub mailbox: Option<RemovedKeyConfig>,
+    /// Refused: the account-level `collection`, now the backend's.
+    #[serde(default, deserialize_with = "refuse_collection")]
+    #[allow(dead_code)]
+    pub collection: Option<RemovedKeyConfig>,
+    /// Refused: the account-level `watch`, now `<backend>.watch`.
+    #[serde(default, deserialize_with = "refuse_watch")]
+    #[allow(dead_code)]
+    pub watch: Option<RemovedKeyConfig>,
+    /// Refused: the account-level `hooks`, now `<backend>.hook`.
+    #[serde(default, deserialize_with = "refuse_hooks")]
+    #[allow(dead_code)]
+    pub hooks: Option<RemovedKeyConfig>,
+    /// Refused: the plain `dav` backend, now `caldav` or `carddav`.
+    #[serde(default, deserialize_with = "refuse_dav")]
+    #[allow(dead_code)]
+    pub dav: Option<RemovedKeyConfig>,
+}
+
+/// An account key carillon no longer reads, which no configuration holds:
+/// present, it fails the load naming where it went.
+#[derive(Clone, Debug)]
+pub enum RemovedKeyConfig {}
+
+/// The error of an account key that moved under each backend.
+fn moved<E: de::Error>(key: &str, to: &str) -> E {
+    E::custom(format!(
+        "The account-level `{key}` moved under each backend as {to}, \
+         see MIGRATION.md"
+    ))
+}
+
+/// The error of the account-level keys that named the collection.
+fn collection_moved<E: de::Error>(key: &str) -> E {
+    moved(
+        key,
+        "its collection key (`imap.mailbox`, `caldav.calendar`, \
+         `carddav.addressbook`…)",
+    )
+}
+
+fn refuse_folder<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
+    Err(collection_moved("folder"))
+}
+
+fn refuse_mailbox<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
+    Err(collection_moved("mailbox"))
+}
+
+fn refuse_collection<'de, D: Deserializer<'de>>(
+    _: D,
+) -> Result<Option<RemovedKeyConfig>, D::Error> {
+    Err(collection_moved("collection"))
+}
+
+fn refuse_watch<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
+    Err(moved("watch", "`<backend>.watch` (`imap.watch`)"))
+}
+
+fn refuse_hooks<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
+    Err(moved("hooks", "`<backend>.hook` (`imap.hook`)"))
+}
+
+fn refuse_dav<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
+    Err(D::Error::custom(
+        "The `dav` backend is removed: watch a calendar with `caldav` or an \
+         addressbook with `carddav`, see MIGRATION.md",
+    ))
 }
 
 impl AccountConfig {
@@ -2421,5 +2495,118 @@ mod tests {
 
         assert!(api(&format!("{block}gcal.watch.push.ping = 30\n")).is_err());
         assert!(api(&format!("{block}gcal.hook.on-task-added.cmd = \"true\"\n")).is_err());
+    }
+
+    #[test]
+    fn an_unknown_key_is_refused_at_every_level() {
+        let root = format!("colour = true\n{}", document(""));
+        let mut documents = vec![("root", root)];
+
+        for (level, line) in [
+            ("account", "colour = true\n"),
+            ("backend", "imap.colour = true\n"),
+            ("tls", "imap.tls.colour = true\n"),
+            ("sasl", "imap.sasl.plain.colour = true\n"),
+            ("watch", "imap.watch.idle.colour = 30\n"),
+            ("hook table", "imap.hook.colour.cmd = \"true\"\n"),
+            ("hook", "imap.hook.on-message-added.colour = true\n"),
+        ] {
+            documents.push((level, document(line)));
+        }
+
+        for (level, document) in documents {
+            let err = toml::from_str::<Config>(&document).expect_err(level);
+            let err = err.to_string();
+            assert!(err.contains("unknown field `colour`"), "{level}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_key_carillon_no_longer_reads_is_refused_by_name() {
+        for (line, named) in [
+            ("folder = \"INBOX\"\n", "`imap.mailbox`"),
+            ("mailbox = \"INBOX\"\n", "`imap.mailbox`"),
+            ("collection = \"INBOX\"\n", "`imap.mailbox`"),
+            ("watch.poll.interval = 60\n", "`imap.watch`"),
+            ("hooks.on-message-added.cmd = \"true\"\n", "`imap.hook`"),
+            ("dav.server = \"https://dav.example.org\"\n", "`caldav`"),
+        ] {
+            let err = toml::from_str::<Config>(&document(line)).expect_err(line);
+            let err = err.to_string();
+            let key = line.split(['.', ' ']).next().unwrap();
+
+            assert!(err.contains(&format!("`{key}`")), "{line}: {err}");
+            assert!(err.contains(named), "{line}: {err}");
+            assert!(err.contains("MIGRATION.md"), "{line}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_removed_key_is_refused_by_name_when_the_file_is_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let line = "hooks.on-message-added.cmd = \"true\"\n";
+        std::fs::write(&path, document(line)).unwrap();
+
+        let err = Config::load(&[path]).expect_err("an account-level hooks table");
+        let err = format!("{err:#}");
+
+        assert!(
+            err.contains("`hooks` moved under each backend as `<backend>.hook`"),
+            "{err}"
+        );
+    }
+
+    /// The former names a 0.2 configuration may hold load until 1.0.
+    #[test]
+    fn the_former_names_still_load() {
+        let document = document(
+            "imap.sasl.plain.username = \"alice\"\n\
+             imap.sasl.plain.password.cmd = \"pass show imap\"\n\
+             imap.hooks.on-message-added.cmd = \"true\"\n",
+        );
+        let config: Config = toml::from_str(&document).expect("the aliases");
+        let imap = config.accounts["perso"].imap.as_ref().unwrap();
+
+        assert!(imap.hook.on_message_added.is_some());
+        let Some(SaslConfig::Plain(plain)) = &imap.sasl else {
+            panic!("a plain SASL table");
+        };
+        assert_eq!("alice", plain.authcid);
+    }
+
+    /// The sample as written loads, and no line it comments out names a
+    /// key or a variant the schema refuses: config.sample.toml has no
+    /// sections, so a backend's lines do not load one at a time.
+    #[cfg(all(
+        feature = "jmap",
+        feature = "maildir",
+        feature = "dav",
+        feature = "msgraph",
+        feature = "gmail",
+        feature = "gcal",
+        feature = "gpeople",
+        feature = "pimdir",
+        feature = "notify"
+    ))]
+    #[test]
+    fn the_sample_names_no_unknown_key() {
+        use pimalaya_config::sample::{Variant, variants};
+
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config.sample.toml");
+        Config::load(std::slice::from_ref(&path)).expect("the sample as written");
+
+        let sample = std::fs::read_to_string(&path).unwrap();
+        let variants = variants(&sample, &[]);
+        assert!(variants.len() > 100, "{} variants", variants.len());
+
+        for Variant { name, text } in variants {
+            let Err(err) = toml::from_str::<Config>(&text) else {
+                continue;
+            };
+
+            let err = err.to_string();
+            assert!(!err.contains("unknown"), "{name}: {err}");
+        }
     }
 }
