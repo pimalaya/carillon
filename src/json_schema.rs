@@ -9,9 +9,9 @@
 //! through the hooks and prints nothing; pimalaya-cli registers its own
 //! `completion`, `manual` and `json-schema`.
 //!
-//! [`JsonSchemaCommand`]: pimalaya_cli::clap::commands::JsonSchemaCommand
+//! [`JsonSchemaCommand`]: pimalaya_cli::clap::commands::json_schema::JsonSchemaCommand
 
-use pimalaya_cli::{clap::commands::JsonSchemaRegistry, error::ErrorReport};
+use pimalaya_cli::{clap::commands::json_schema::JsonSchemaRegistry, error::ErrorReport};
 
 /// Builds the command-to-schema registry consumed by `json-schema <DIR>`.
 ///

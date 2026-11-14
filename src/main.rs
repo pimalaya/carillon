@@ -12,7 +12,9 @@
 //! watch and check are the two commands, hook fires the notification and
 //! the command, json_schema names the schema of what each command prints.
 //! No configuration is ever written: an account is written by hand from
-//! config.sample.toml.
+//! config.sample.toml, which a person at a terminal missing one is
+//! welcomed to by pimalaya-cli's welcome, a script or a JSON caller
+//! getting the failure alone.
 //!
 //! watch carries the runtime: it selects the accounts, spawns one thread
 //! each, and each thread opens the session its backend calls for,
@@ -92,31 +94,70 @@ mod pimdir;
 mod poll;
 mod watch;
 
+use std::{path::PathBuf, process};
+
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
-use pimalaya_cli::{error::ErrorReport, log::Logger, printer::StdoutPrinter};
+use pimalaya_cli::{
+    clap::args::LogFlags,
+    error::{EXIT_FAILURE, ErrorReport},
+    log::Logger,
+    printer::StdoutPrinter,
+    welcome::{is_wanted, shipped_sample},
+};
+use pimalaya_config::toml::ConfigMissingError;
 
-use crate::cli::Cli;
+use crate::{
+    backend::Backend,
+    cli::{Cli, Command},
+};
 
 fn main() {
     let cli = Cli::parse();
     let mut printer = StdoutPrinter::new(&cli.json);
-    let result = execute(&mut printer, cli);
+    let config_paths = &cli.config.paths;
+    let account_name = cli.account.name.as_deref();
+
+    let result = execute(
+        &mut printer,
+        cli.command,
+        &cli.log,
+        config_paths,
+        account_name,
+        cli.backend,
+    );
+
+    // A person missing a configuration meets the welcome, a script or a
+    // JSON caller the error.
+    if let Err(err) = &result
+        && let Some(missing) = err.downcast_ref::<ConfigMissingError>()
+        && is_wanted(&printer)
+    {
+        let sample = shipped_sample("carillon");
+        let welcome = cli::welcome(&missing.path, config_paths, sample.as_deref());
+        eprint!("{welcome}");
+        process::exit(EXIT_FAILURE);
+    }
+
     ErrorReport::eval(&mut printer, result);
 }
 
 /// Runs the parsed command, or meets a bare `carillon` with the help,
 /// with a configuration or without one.
-fn execute(printer: &mut StdoutPrinter, cli: Cli) -> Result<()> {
-    Logger::try_init(&cli.log)?;
+fn execute(
+    printer: &mut StdoutPrinter,
+    command: Option<Command>,
+    log: &LogFlags,
+    config_paths: &[PathBuf],
+    account_name: Option<&str>,
+    backend: Backend,
+) -> Result<()> {
+    Logger::try_init(log)?;
 
-    let Some(command) = cli.command else {
+    let Some(command) = command else {
         Cli::command().print_help()?;
         return Ok(());
     };
 
-    let config_paths = cli.config_paths.as_ref();
-    let account_name = cli.account.name.as_deref();
-
-    command.execute(printer, config_paths, account_name, cli.backend)
+    command.execute(printer, config_paths, account_name, backend)
 }

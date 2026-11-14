@@ -94,15 +94,15 @@ nix run
 
 ## Configuration
 
-The configuration is loaded from the first existing path among:
+The configuration is loaded from every existing path among, each one merged on top of the ones before it (the rc file last):
 
 - `$XDG_CONFIG_HOME/carillon/config.toml`
 - `$HOME/.config/carillon/config.toml`
 - `$HOME/.carillonrc`
 
-Override the path with `carillon -c <PATH>` or `CARILLON_CONFIG=<PATH>`. Multiple paths can be passed at once, separated by `:`; the first is the base and the rest are deep-merged on top. The full field reference lives in [config.sample.toml](./config.sample.toml).
+Override the path with `carillon -c <PATH>`, one path per flag: repeat it to merge several files, the first being the base and the next ones deep-merged on top. A path is never split on `:`, and no environment variable names one. The full field reference lives in [config.sample.toml](./config.sample.toml).
 
-Carillon never writes a configuration: copy [config.sample.toml](./config.sample.toml) to one of the paths above, keep one backend and the hooks you want, then delete the rest. A command finding no configuration fails naming the path it looked at and the sample; `carillon` with no command prints the help. Leave the watch method out unless you need one: an account takes the best one its backend supports. Then run `carillon check` to test the connection.
+Carillon never writes a configuration: copy [config.sample.toml](./config.sample.toml) to one of the paths above, keep one backend and the hooks you want, then delete the rest. A command finding no configuration fails naming the path it looked at and the sample, and a person at a terminal is shown the commands creating the file from it; `carillon` with no command prints the help. Leave the watch method out unless you need one: an account takes the best one its backend supports. Then run `carillon check` to test the connection.
 
 An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople`, `pimdir`) carrying the collection it watches (one per domain over JMAP and Microsoft Graph, sharing one connection), how it watches it (`watch`) and what it fires (`hook`). Declaring several is allowed, `-b/--backend` then selecting one.
 

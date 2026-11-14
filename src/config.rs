@@ -26,7 +26,9 @@ use std::{
 
 #[cfg(feature = "imap")]
 use anyhow::anyhow;
-use anyhow::{Context, Result, bail};
+#[cfg(any(network, feature = "pimdir"))]
+use anyhow::bail;
+use anyhow::{Context, Result};
 #[cfg(feature = "imap")]
 use io_imap::types::{
     IntoStatic,
@@ -48,7 +50,7 @@ use pimalaya_config::{command, notify::NotificationTemplate, toml::TomlConfig};
 #[cfg(network)]
 use pimalaya_stream::{
     proxy::{Proxy, ProxyAuth},
-    tls::{Rustls, RustlsCrypto, Tls, TlsProvider},
+    tls::{Rustls, RustlsCrypto, Tls, TlsProvider, TlsServer},
 };
 #[cfg(network)]
 use secrecy::SecretString;
@@ -60,10 +62,6 @@ use crate::{
     event::WatchEvent,
     hook::{self, HookCollection, Vocabulary},
 };
-
-/// The documented sample, named by the error meeting no configuration.
-const CONFIG_SAMPLE_URL: &str =
-    "https://github.com/pimalaya/carillon/blob/master/config.sample.toml";
 
 /// Root configuration: a map of named accounts.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -79,34 +77,30 @@ impl TomlConfig for Config {
         env!("CARGO_PKG_NAME")
     }
 
-    fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)> {
-        self.accounts.remove_entry(name)
+    fn sample_url() -> &'static str {
+        "https://github.com/pimalaya/carillon/blob/master/config.sample.toml"
     }
 
-    fn take_default_account(&mut self) -> Option<(String, Self::Account)> {
-        let name = self
-            .accounts
+    fn accounts(&self) -> impl Iterator<Item = (&str, bool)> {
+        self.accounts
             .iter()
-            .find_map(|(name, account)| account.default.then(|| name.clone()))?;
-        self.take_named_account(&name)
+            .map(|(name, account)| (name.as_str(), account.default))
+    }
+
+    fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)> {
+        self.accounts.remove_entry(name)
     }
 }
 
 impl Config {
     /// Loads the config from `config_paths`.
     ///
-    /// No configuration fails naming the path looked at, the first `-c`
-    /// path or else the default one, and the documented sample: carillon
-    /// writes none, an account being written by hand.
+    /// No configuration fails with pimalaya-config's `ConfigMissingError`,
+    /// naming the path looked at, the first `-c` path or else the default
+    /// one, and the documented sample: carillon writes none, an account
+    /// being written by hand.
     pub fn load(config_paths: &[PathBuf]) -> Result<Config> {
-        let Some(config) = Config::from_paths_or_default(config_paths)? else {
-            let path = Config::target_path(config_paths)?;
-            bail!(
-                "No configuration found at {}, write one by hand from the sample: \
-                 {CONFIG_SAMPLE_URL}",
-                path.display(),
-            );
-        };
+        let config = <Config as TomlConfig>::load(config_paths)?;
 
         #[cfg(network)]
         let config = config.with_inherited_proxies();
@@ -610,7 +604,8 @@ impl TlsConfig {
                 }),
                 alpn,
             },
-            cert: self.cert,
+            server: self.cert.map(|cert| TlsServer { cert }),
+            client: None,
         }
     }
 }

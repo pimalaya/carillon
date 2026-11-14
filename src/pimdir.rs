@@ -261,7 +261,15 @@ fn is_calendar(kind: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{
+        path::Path,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread,
+        time::Duration,
+    };
 
     use ceichas::timer::CeichasTimer;
     use io_pimdir::{
@@ -273,7 +281,12 @@ mod tests {
     use jiff::Timestamp;
     use tempfile::TempDir;
 
-    use crate::{alarm::AlarmShared, config::PimdirConfig, pimdir::*};
+    use crate::{
+        alarm::{self, AlarmShared},
+        config::PimdirConfig,
+        pimdir::*,
+        poll,
+    };
 
     /// The calendar collection of every case.
     const CAL: &str = "cal";
@@ -407,12 +420,66 @@ mod tests {
 
         let mut producer = PimdirProducer::open(dir.path(), "test").unwrap();
         producer
-            .enqueue(CAL, &PimdirAction::Remove { seq }, None)
+            .enqueue(
+                CAL,
+                &PimdirAction::Remove {
+                    seq,
+                    if_match: None,
+                    resolves: None,
+                },
+                None,
+            )
             .unwrap();
         drop(producer);
         drain(dir.path());
         follow(&reader, CAL, cursor, &alarms).unwrap();
 
         assert!(alarms.triggers(at("00:00:00"), at("23:00:00")).is_empty());
+    }
+
+    /// An event of `uid` whose one `-PT15M` display alarm triggers at
+    /// `trigger`, in seconds since the Unix epoch.
+    fn event_alarming_at(uid: &str, trigger: i64) -> String {
+        let start = Timestamp::from_second(trigger + 900).unwrap();
+        let start = start.strftime("%Y%m%dT%H%M%SZ");
+
+        format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20261101T000000Z\r\nDTSTART:{start}\r\nDURATION:PT30M\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:x\r\nTRIGGER:-PT15M\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+    }
+
+    #[test]
+    fn a_store_of_the_current_draft_is_watched_and_its_alarm_fires() {
+        let dir = scratch();
+        let trigger = Timestamp::now().as_second() + 2;
+        add(dir.path(), CAL, &event_alarming_at("standup", trigger));
+
+        let config = config(dir.path(), CAL);
+        let timer = CeichasTimer::new(Default::default()).unwrap();
+        let alarms = AlarmShared::new(timer.waker());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut fired = Vec::new();
+
+        thread::scope(|scope| {
+            let watch = scope.spawn(|| watch(&config, &shutdown, &alarms));
+
+            // Ends the test should the alarm never fire.
+            scope.spawn(|| {
+                if poll::sleep(Duration::from_secs(30), &shutdown) {
+                    shutdown.store(true, Ordering::SeqCst);
+                    alarms.update(|_| ());
+                }
+            });
+
+            alarm::run(&alarms, timer, &shutdown, |firing| {
+                fired.push((firing.uid.clone(), firing.trigger));
+                shutdown.store(true, Ordering::SeqCst);
+                alarms.update(|_| ());
+            });
+
+            watch.join().unwrap().unwrap();
+        });
+
+        assert_eq!(vec![(String::from("standup"), trigger)], fired);
     }
 }

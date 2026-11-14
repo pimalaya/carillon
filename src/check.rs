@@ -10,7 +10,7 @@
 use std::sync::{Arc, atomic::AtomicBool};
 use std::{fmt, path::PathBuf};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use clap::Parser;
 use pimalaya_cli::printer::Printer;
 #[cfg(network)]
@@ -61,11 +61,7 @@ impl CheckCommand {
     ) -> Result<()> {
         let mut config = Config::load(config_paths)?;
 
-        let (name, account_config) = config.take_account(account_name)?.ok_or_else(|| {
-            anyhow!(
-                "No default account found, name one with `-a <NAME>` or mark one with `default = true`"
-            )
-        })?;
+        let (name, account_config) = config.take_account(account_name)?;
 
         let mut report = CheckOutput {
             account: name,

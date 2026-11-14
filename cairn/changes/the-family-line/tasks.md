@@ -25,21 +25,21 @@ change: the-family-line
 
 ## Phase 2, the libraries (commit `build: move to pimalaya-cli 0.4, pimalaya-config 0.4, pimalaya-stream 0.4 and io-pimdir 0.12`)
 
-- [ ] Cargo.toml: pimalaya-cli 0.4 (dependency and build-dependency), pimalaya-config 0.4 (its git pin dropped), pimalaya-stream 0.4, io-http 0.8, io-imap 0.10, io-jmap 0.9, io-msgraph 0.9, io-gmail 0.8, io-pimdir 0.12, dev io-oauth 0.7.
-- [ ] `[patch.crates-io]`, sorted, no comment: ceichas (kept), io-gcal dbb4481cd77ef65ca451420cb4e087fdccfe6fdb, io-gpeople e4a9cac80d023688118dbae88f8535145e8d2c9b, io-webdav 185ab63be5859c5ef6115bef97e4df5cb1187973, pimalaya-cli 0be1b1f08d19ccb9d16ee8e1d4266c27c96e0cdd; a crate released meanwhile from crates.io instead.
-- [ ] `cargo update`; the lock holds pimalaya-config 0.4.1.
-- [ ] src/config.rs:744 `Tls::server`; src/config.rs:145-163 `TomlConfig` (`sample_url`, `accounts`, no `take_default_account`); src/check.rs:64 and src/watch.rs:179-182 through `take_account` and `AccountError`.
-- [ ] src/cli.rs:59-65: pimalaya-cli's `ConfigFlags` (one path per `-c`, no `CARILLON_CONFIG`); src/cli.rs:21 imports.
-- [ ] src/main.rs: pimalaya-cli's welcome above the missing-configuration failure for a person at a terminal (`welcome::is_wanted`, `shipped_sample`, as himalaya and comodoro).
-- [ ] io-pimdir 0.12: src/pimdir.rs builds; its tests' `PimdirAction::Remove { seq, if_match, resolves }` (:410); a test watching a store made by io-pimdir 0.12 fires its alarm.
-- [ ] tests/common/mod.rs:274, :325 and tests/google.rs:261 (`Tls::default()` with io-oauth 0.7) build.
-- [ ] `cargo tree -d --all-features -e normal`: no pimalaya-stream, io-http, io-oauth or io-pimdir twice.
-- [ ] Spec: MODIFIED of delta.md folded.
-- [ ] Phase checks pass.
+- [x] Cargo.toml: pimalaya-cli 0.4 (dependency and build-dependency), pimalaya-config 0.4 (its git pin dropped), pimalaya-stream 0.4, io-http 0.8, io-imap 0.10, io-jmap 0.9, io-msgraph 0.9, io-gmail 0.8, io-pimdir 0.12, dev io-oauth 0.7.
+- [x] `[patch.crates-io]`, sorted, no comment: ceichas (kept), io-gcal dbb4481cd77ef65ca451420cb4e087fdccfe6fdb, io-gpeople e4a9cac80d023688118dbae88f8535145e8d2c9b, io-webdav 185ab63be5859c5ef6115bef97e4df5cb1187973, pimalaya-cli 0be1b1f08d19ccb9d16ee8e1d4266c27c96e0cdd; a crate released meanwhile from crates.io instead.
+- [x] `cargo update`; the lock holds pimalaya-config 0.4.1.
+- [x] src/config.rs:744 `Tls::server`; src/config.rs:145-163 `TomlConfig` (`sample_url`, `accounts`, no `take_default_account`); src/check.rs:64 and src/watch.rs:179-182 through `take_account` and `AccountError`.
+- [x] src/cli.rs:59-65: pimalaya-cli's `ConfigFlags` (one path per `-c`, no `CARILLON_CONFIG`); src/cli.rs:21 imports.
+- [x] src/main.rs: pimalaya-cli's welcome above the missing-configuration failure for a person at a terminal (`welcome::is_wanted`, `shipped_sample`, as himalaya and comodoro).
+- [x] io-pimdir 0.12: src/pimdir.rs builds; its tests' `PimdirAction::Remove { seq, if_match, resolves }` (:410); a test watching a store made by io-pimdir 0.12 fires its alarm.
+- [x] tests/common/mod.rs:274, :325 and tests/google.rs:261 (`Tls::default()` with io-oauth 0.7) build.
+- [x] `cargo tree -d --all-features -e normal`: no pimalaya-stream, io-http, io-oauth or io-pimdir twice.
+- [x] Spec: MODIFIED of delta.md folded.
+- [x] Phase checks pass.
 
 ## Landing
 
-- [ ] CHANGELOG (the **BREAKING** entries, the dependency line, Fixed), MIGRATION.md created ("From 0.2 to the next release"), README.
-- [ ] Log cairn/log/<date>-the-family-line.md (frontmatter `cairn: log`, `change`, `landed:`); status landed; `sh cairn/verify.sh` clean.
+- [x] CHANGELOG (the **BREAKING** entries, the dependency line, Fixed), MIGRATION.md created ("From 0.2 to the next release"), README.
+- [x] Log cairn/log/<date>-the-family-line.md (frontmatter `cairn: log`, `change`, `landed:`); status landed; `sh cairn/verify.sh` clean.
 - [ ] Then a-refusal-carries-its-code starts.
 - [ ] The live suites (`--test google --test msgraph --test jmap -- --ignored --test-threads 1`, Stalwart through tests/stalwart.sh) run by the owner.

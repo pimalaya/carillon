@@ -1,23 +1,29 @@
 //! # Parser
 //!
-//! The top-level CLI parser and subcommand dispatcher. A bare `carillon`
-//! is met in main.
+//! The top-level CLI parser and subcommand dispatcher, and the welcome a
+//! person missing a configuration meets. A bare `carillon` is met in main.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use pimalaya_cli::{
     clap::{
-        args::{AccountFlag, JsonFlag, LogFlags},
-        commands::{CompletionCommand, JsonSchemaCommand, ManualCommand},
-        parsers::path_parser,
+        args::{AccountFlag, ConfigFlags, JsonFlag, LogFlags},
+        commands::{
+            completion::CompletionCommand, json_schema::JsonSchemaCommand, manual::ManualCommand,
+        },
     },
     footer, long_version,
     printer::Printer,
+    welcome::Welcome,
 };
 
 use crate::{backend::Backend, check::CheckCommand, json_schema, watch::WatchCommand};
+
+/// The sample configuration as a raw file, for `curl` to fetch.
+const SAMPLE_RAW_URL: &str =
+    "https://raw.githubusercontent.com/pimalaya/carillon/master/config.sample.toml";
 
 /// Top-level CLI: global flags and subcommand dispatch.
 #[derive(Parser, Debug)]
@@ -32,13 +38,8 @@ pub struct Cli {
     /// Omitted, a bare `carillon` shows this help.
     #[command(subcommand)]
     pub command: Option<Command>,
-    /// Override the default configuration file path.
-    ///
-    /// Paths are shell-expanded then canonicalized; multiple paths may be
-    /// delimited by `:` and are merged left-to-right.
-    #[arg(short, long = "config", global = true, env = "CARILLON_CONFIG")]
-    #[arg(value_name = "PATH", value_parser = path_parser, value_delimiter = ':')]
-    pub config_paths: Vec<PathBuf>,
+    #[command(flatten)]
+    pub config: ConfigFlags,
     #[command(flatten)]
     pub account: AccountFlag,
     /// Force a specific backend.
@@ -92,5 +93,58 @@ impl Command {
             Self::Completion(cmd) => cmd.execute(printer, Cli::command()),
             Self::JsonSchema(cmd) => cmd.execute(printer, json_schema::registry()),
         }
+    }
+}
+
+/// The welcome a person meets when no configuration exists at `path`:
+/// the commands creating it from `sample`, the shipped sample
+/// configuration, or downloading it without one, then `check`.
+pub fn welcome<'a>(
+    path: &'a Path,
+    config_paths: &'a [PathBuf],
+    sample: Option<&'a Path>,
+) -> Welcome<'a> {
+    Welcome {
+        bin: "carillon",
+        intro: "Welcome to Carillon, the CLI to watch PIM collection changes.",
+        path,
+        config_paths,
+        sample,
+        sample_url: SAMPLE_RAW_URL,
+        next: "Edit it, keep one backend and the hooks you want, then check the account:",
+        command: "check",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use crate::cli::welcome;
+
+    #[test]
+    #[cfg(not(windows))]
+    fn the_welcome_downloads_the_raw_sample_then_checks() {
+        let paths = [PathBuf::from("/nonexistent/carillon/config.toml")];
+        let welcome = welcome(&paths[0], &paths, None).to_string();
+
+        let curl = "curl -sSL --create-dirs -o '/nonexistent/carillon/config.toml' \
+                    https://raw.githubusercontent.com/pimalaya/carillon/master/config.sample.toml";
+        assert!(welcome.contains(curl), "{welcome}");
+        let check = "\n  carillon -c '/nonexistent/carillon/config.toml' check\n";
+        assert!(welcome.contains(check), "{welcome}");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn the_welcome_copies_the_shipped_sample() {
+        let paths = [PathBuf::from("/nonexistent/carillon/config.toml")];
+        let sample = Path::new("/usr/share/doc/carillon/config.sample.toml");
+        let welcome = welcome(&paths[0], &paths, Some(sample)).to_string();
+
+        let copy = "install -m 644 '/usr/share/doc/carillon/config.sample.toml' \
+                    '/nonexistent/carillon/config.toml'";
+        assert!(welcome.contains(copy), "{welcome}");
+        assert!(!welcome.contains("curl"), "{welcome}");
     }
 }

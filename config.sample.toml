@@ -1,14 +1,14 @@
 # ================================================================================
 # `carillon` configuration file.
 #
-# Loaded from the first valid path among:
+# Loaded from every existing path among, each merged on top of the ones before:
 #   - $XDG_CONFIG_HOME/carillon/config.toml
 #   - $HOME/.config/carillon/config.toml
 #   - $HOME/.carillonrc
 #
-# Override with `carillon -c <PATH>` or `CARILLON_CONFIG=<PATH>`, both taking a
-# `:`-delimited list: the first one is the base and the rest are deep-merged on
-# top of it.
+# Override with `carillon -c <PATH>`, one path per flag: repeat it to merge
+# several files, the first one being the base and the next ones deep-merged on
+# top of it. A path is never split on `:`.
 #
 # Carillon writes no configuration: copy this file, keep one backend and the
 # hooks you want, then delete the rest.
@@ -351,6 +351,8 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 # A pimdir store another tool keeps in sync, read and never written. Only its
 # alarms fire, through the one hook it has. Requires the `pimdir` cargo feature.
+# The store is one of pimdir draft-11, the one neverest writes; another draft is
+# refused.
 
 # The directory holding the store. Required.
 #pimdir.root = "~/.local/share/pimdir"

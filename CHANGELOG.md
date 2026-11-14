@@ -8,7 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
-- Added the `wizard` cargo feature, on by default, gating the interactive configuration: the `configure` command and the offer a first run makes. A build without it drops the prompts and the dependencies only they use, and a missing configuration points at the documented sample instead.
 - Added `$collection` to every hook, templates and command environment alike: the collection as the account configured it, whatever the backend calls it, so one command serves every domain.
 - Added `msgraph.hook.on-message-changed`, fired when a draft is edited in place (its `changeKey` moving while no flag does).
 - Added the `notify` cargo feature, on by default, gating desktop notifications. A build without it refuses a `notify` table, naming the feature, and needs no D-Bus.
@@ -16,10 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   Alarms are resolved over the next 48 hours and kept current as the calendar changes, the bodies read only when this hook is set. They wait on the system's wall-clock timer through ceichas, so time asleep counts and a clock change is followed. The hook reads `$summary`, `$kind`, `$trigger`, `$at`, `$uid`, `$etag`, `$recurrenceId`, `$alarm`, `$alarmUid` and `$action`. Nothing is stored: an alarm due while carillon was not running never fires, and one reached more than 15 minutes late (a machine asleep) is dropped with a log line. Cancelled events, completed tasks, acknowledged alarms and `EMAIL` alarms never fire.
 
-- Added the `pimdir` backend, on by default, firing the alarms of one calendar of a local pimdir store another tool keeps in sync: `pimdir.root`, `pimdir.calendar`, `pimdir.watch.poll.interval` and `pimdir.hook.on-alarm-trigger`. The store is read and never written.
+- Added the `pimdir` backend, on by default, firing the alarms of one calendar of a local pimdir store another tool keeps in sync: `pimdir.root`, `pimdir.calendar`, `pimdir.watch.poll.interval` and `pimdir.hook.on-alarm-trigger`. The store is read and never written. It reads stores of pimdir draft-11, the ones neverest writes (io-pimdir 0.12), and refuses a store of another draft (`store-version`) naming its root.
 
 ### Changed
 
+- **BREAKING**: Changed `-c` to take one path per flag, as pimalaya-cli's `ConfigFlags` do: repeat it to merge several files. A value is never split on `:`, so `-c a:b` now names one file called `a:b`, and the `CARILLON_CONFIG` environment variable is no longer read.
+- Changed `-a` to resolve one way in `watch` and `check`, through pimalaya-config 0.4: `carillon -a default watch` watches the account marked default, `check` naming an unknown account lists the ones the configuration holds, and several accounts marked default are refused naming them, where one of them was picked.
 - **BREAKING**: Changed hook notifications to pimalaya-config's templates, in the shell's syntax shared with hook commands.
 
   `${name:default}` becomes `${name:-default}`, and the envelope variables become camelCase: `$sender_name`, `$sender_address`, `$recipient_name` and `$recipient_address` become `$senderName`, `$senderAddress`, `$recipientName` and `$recipientAddress`, in notifications and in the environment of commands alike. A notification in the former spelling is refused when the configuration is read, naming what to rewrite. A default no longer excuses a variable the hook does not have.
@@ -29,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Changed `gpeople.addressbook = "contacts"` to watch every contact the account owns, and `msgraph.addressbook = "contacts"` to name the default contact folder first; a Graph contact folder or calendar is also found by id beyond the first listing page, nested contact folders included.
 
-- Bumped io-gcal to 0.4, io-gmail to 0.7, io-gpeople to 0.7, io-http to 0.7, io-imap to 0.9, io-jmap to 0.8, io-maildir to 0.4, io-msgraph to 0.8, io-pim-discovery to 0.12, io-sasl to 0.2 and io-webdav to 0.8, their releases of 2026-11-13, and io-pimdir to 0.9 and pimalaya-cli to 0.3.
+- Bumped pimalaya-stream to 0.4, io-gmail to 0.8, io-http to 0.8, io-imap to 0.10, io-jmap to 0.9, io-maildir to 0.4, io-msgraph to 0.9, io-pimdir to 0.12, io-sasl to 0.2, pimalaya-cli to 0.4 (git 0be1b1f) and pimalaya-config to 0.4.1, and io-gcal 0.4 (git dbb4481), io-gpeople 0.7 (git e4a9cac) and io-webdav 0.8 (git 185ab63) to their pimalaya-stream 0.4 commits until they release.
 
   A WebDAV multistatus is parsed 3.4 to 9 times faster, and an answer that is not one whole multistatus fails the round instead of reading as a shorter listing. `json-schema` now also describes `completion`, `manual` and `json-schema`.
 
@@ -45,8 +46,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Changed piped `--json` output to print one value per line, each schema of `json-schema` to carry an `$id` naming the contract version (`v0.2`), and added `carillon-error`, the schema of the JSON failure object (pimalaya-cli `55b6693`).
 
+### Removed
+
+- **BREAKING**: Removed the wizard: the `configure` command (alias `wizard`), and the offer a bare `carillon` or a command finding no configuration made.
+
+  A configuration is written by hand from config.sample.toml. A bare `carillon` prints the help, and a command finding no configuration fails naming the path it looked at and the sample, a person at a terminal being shown the commands creating the file from the sample instead (pimalaya-cli's welcome).
+
 ### Fixed
 
+- Fixed a credential command prompting for a password hanging: it reads the terminal again (pimalaya-config 0.4.1).
 - Fixed a DAV watch losing what moved when the server closed its idle connection: the round is run again on a fresh connection.
 - Fixed a DAV server with no `sync-collection` being unwatchable: the collection is listed on every poll instead.
 - Fixed a rejected DAV sync token hiding what moved meanwhile: the collection is read again against what the watch knew.

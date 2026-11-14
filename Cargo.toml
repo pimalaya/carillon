@@ -35,36 +35,36 @@ strip = "symbols"
 panic = "abort"
 
 [dev-dependencies]
-io-oauth = { version = "0.6", default-features = false, features = ["jwt-bearer", "rustls-ring"] }
+io-oauth = { version = "0.7", default-features = false, features = ["jwt-bearer", "rustls-ring"] }
 tempfile = "3"
 toml = "1"
 
 [build-dependencies]
-pimalaya-cli = { version = "0.3", default-features = false, features = ["build"] }
+pimalaya-cli = { version = "0.4", default-features = false, features = ["build"] }
 
 [dependencies]
 anyhow = "1"
 base64 = { version = "0.23", optional = true }
 ceichas = { version = "0.1", optional = true }
-clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
+clap = { version = "4.4", features = ["derive", "wrap_help"] }
 ctrlc = { version = "3", features = ["termination"] }
-io-http = { version = "0.7", default-features = false, optional = true }
+io-http = { version = "0.8", default-features = false, optional = true }
 io-gcal = { version = "0.4", default-features = false, optional = true }
-io-gmail = { version = "0.7", default-features = false, optional = true }
+io-gmail = { version = "0.8", default-features = false, optional = true }
 io-gpeople = { version = "0.7", default-features = false, optional = true }
 ical-rs = { version = "0.7", default-features = false, features = ["parser", "tzdb"], optional = true }
-io-imap = { version = "0.9", default-features = false, optional = true }
-io-jmap = { version = "0.8", default-features = false, optional = true }
+io-imap = { version = "0.10", default-features = false, optional = true }
+io-jmap = { version = "0.9", default-features = false, optional = true }
 io-maildir = { version = "0.4", default-features = false, optional = true }
-io-msgraph = { version = "0.8", default-features = false, optional = true }
-io-pimdir = { version = "0.9", default-features = false, optional = true }
+io-msgraph = { version = "0.9", default-features = false, optional = true }
+io-pimdir = { version = "0.12", default-features = false, optional = true }
 io-sasl = { version = "0.2", default-features = false, features = ["scram"] }
 io-webdav = { version = "0.8", default-features = false, optional = true }
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"], optional = true }
 log = "0.4"
-pimalaya-cli = { version = "0.3", default-features = false, features = ["terminal"] }
-pimalaya-config = { version = "0.3", default-features = false, features = ["toml", "secret"] }
-pimalaya-stream = { version = "0.3", default-features = false, features = ["std"] }
+pimalaya-cli = { version = "0.4", default-features = false, features = ["terminal"] }
+pimalaya-config = { version = "0.4", default-features = false, features = ["toml", "secret"] }
+pimalaya-stream = { version = "0.4", default-features = false, features = ["std"] }
 schemars = "1"
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
@@ -73,4 +73,7 @@ url = { version = "2.2", features = ["serde"] }
 
 [patch.crates-io]
 ceichas = { git = "https://github.com/pimalaya/ceichas", rev = "661be05e8dba827ee9c9ce80825bdaee7fe51ce4" }
-pimalaya-config = { git = "https://github.com/pimalaya/config", rev = "09f5060339cc1e98d9c8b304b7ce41c87cf57f22" }
+io-gcal = { git = "https://github.com/pimalaya/io-gcal", rev = "dbb4481cd77ef65ca451420cb4e087fdccfe6fdb" }
+io-gpeople = { git = "https://github.com/pimalaya/io-gpeople", rev = "e4a9cac80d023688118dbae88f8535145e8d2c9b" }
+io-webdav = { git = "https://github.com/pimalaya/io-webdav", rev = "185ab63be5859c5ef6115bef97e4df5cb1187973" }
+pimalaya-cli = { git = "https://github.com/pimalaya/cli", rev = "0be1b1f08d19ccb9d16ee8e1d4266c27c96e0cdd" }

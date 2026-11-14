@@ -33,6 +33,7 @@ use clap::Parser;
 #[cfg(feature = "imap")]
 use io_imap::watch::ImapMailboxWatchState;
 use log::{debug, error, info, warn};
+use pimalaya_config::toml::TomlConfig;
 
 #[cfg(api)]
 use crate::config::ApiWatchConfig;
@@ -168,18 +169,8 @@ fn select_accounts(
     config: &mut Config,
     account_name: Option<&str>,
 ) -> Result<Vec<(String, AccountConfig)>> {
-    if let Some(name) = account_name {
-        let Some(entry) = config.accounts.remove_entry(name) else {
-            let mut names: Vec<&str> = config.accounts.keys().map(String::as_str).collect();
-            names.sort_unstable();
-
-            bail!(
-                "Account `{name}` not found, the configuration holds: {}",
-                names.join(", "),
-            );
-        };
-
-        return Ok(vec![entry]);
+    if account_name.is_some() {
+        return Ok(vec![config.take_account(account_name)?]);
     }
 
     if config.accounts.is_empty() {
