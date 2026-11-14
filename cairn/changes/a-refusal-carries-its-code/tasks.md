@@ -28,15 +28,15 @@ change: a-refusal-carries-its-code
 
 ## Phase 2, the codes (commit `feat: code a server's refusal and a store's`)
 
-- [ ] `error::code` walks the chain over the readers below; the store codes reach it through an `of_pimdir` table.
-- [ ] Readers: IMAP (src/imap.rs; :393 keeps the typed cause), DAV (src/dav.rs, the inner io-webdav error types of :986 and :1188), Graph (src/msgraph.rs), Gmail, Google Calendar and Google People (src/gmail.rs, src/gcal.rs, src/gpeople.rs, a `google_code` copy), JMAP (src/jmap.rs, if io-jmap 0.9's client error exposes the status), pimdir (src/pimdir.rs:87 keeps the `PimdirError`).
-- [ ] src/watch.rs:239: the warning names the code when there is one.
-- [ ] Tests: the scripted IMAP server (src/imap.rs:466+) `NO [NOPERM]` and `NO [OVERQUOTA]`; the DAV scripted answers (src/dav.rs:1321+) a 403 bare, a 403 naming `valid-calendar-data`, a 507; Gmail's scripted stream (src/gmail.rs:389+) a 403 `insufficientPermissions` and a 429; `check --json` over a store of another draft coded `store-version`, exit 3.
-- [ ] Spec: Phase 2's part of delta.md folded.
-- [ ] Phase checks pass.
+- [x] `error::code` walks the chain over the readers below; the store codes reach it through an `of_pimdir` table.
+- [x] Readers: IMAP (src/imap.rs; :393 keeps the typed cause), DAV (src/dav.rs, the inner io-webdav error types of :986 and :1188), Graph (src/msgraph.rs), Gmail, Google Calendar and Google People (src/gmail.rs, src/gcal.rs, src/gpeople.rs, a `google_code` copy), JMAP (src/jmap.rs, if io-jmap 0.9's client error exposes the status), pimdir (src/pimdir.rs:87 keeps the `PimdirError`).
+- [x] src/watch.rs:239: the warning names the code when there is one.
+- [x] Tests: the scripted IMAP server (src/imap.rs:466+) `NO [NOPERM]` and `NO [OVERQUOTA]`; the DAV scripted answers (src/dav.rs:1321+) a 403 bare, a 403 naming `valid-calendar-data`, a 507; Gmail's scripted stream (src/gmail.rs:389+) a 403 `insufficientPermissions` and a 429; `check --json` over a store of another draft coded `store-version`, exit 3.
+- [x] Spec: Phase 2's part of delta.md folded.
+- [x] Phase checks pass.
 
 ## Landing
 
-- [ ] CHANGELOG (two **BREAKING**, Added, Fixed), MIGRATION.md, README exit statuses, the src/main.rs header.
-- [ ] Log cairn/log/<date>-a-refusal-carries-its-code.md (frontmatter `cairn: log`, `change`, `landed:`); status landed; `sh cairn/verify.sh` clean.
+- [x] CHANGELOG (two **BREAKING**, Added, Fixed), MIGRATION.md, README exit statuses, the src/main.rs header.
+- [x] Log cairn/log/<date>-a-refusal-carries-its-code.md (frontmatter `cairn: log`, `change`, `landed:`); status landed; `sh cairn/verify.sh` clean.
 - [ ] The live suites run by the owner.

@@ -232,6 +232,7 @@ dependencies = [
  "pimalaya-cli",
  "pimalaya-config",
  "pimalaya-stream",
+ "rusqlite",
  "schemars",
  "secrecy",
  "serde",

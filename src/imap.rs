@@ -14,7 +14,6 @@
 
 use std::{
     collections::BTreeSet,
-    fmt,
     io::{self, Read, Write},
     num::NonZeroU32,
     sync::{
@@ -43,7 +42,7 @@ use io_imap::{
         fetch::{MacroOrMessageDataItemNames, MessageDataItem, MessageDataItemName},
         flag::Flag,
         mailbox::Mailbox,
-        response::Capability,
+        response::{Capability, Code},
     },
     watch::{ImapMailboxWatchEvent, ImapMailboxWatchState},
 };
@@ -54,6 +53,7 @@ use url::Url;
 
 use crate::{
     config::{ImapConfig, ProxyConfig, resolve_auto_id_params},
+    error::ErrorCode,
     event::{ItemSummary, WatchDomain, WatchEvent},
 };
 
@@ -360,7 +360,7 @@ fn pump<C, T, E>(
 ) -> Result<T>
 where
     C: ImapCoroutine<Yield = ImapYield, Return = Result<T, E>>,
-    E: fmt::Display,
+    E: Into<ImapClientError>,
 {
     let mut buf = [0u8; READ_BUF];
     let mut arg: Option<Vec<u8>> = None;
@@ -390,7 +390,10 @@ where
                 arg = Some(tag.as_ref().as_bytes().to_vec());
             }
             ImapCoroutineState::Complete(Ok(value)) => return Ok(value),
-            ImapCoroutineState::Complete(Err(err)) => bail!("{err}"),
+            ImapCoroutineState::Complete(Err(err)) => {
+                let err: ImapClientError = err.into();
+                return Err(err.into());
+            }
         }
     }
 }
@@ -459,6 +462,21 @@ pub fn parse_server(server: &str) -> Result<Url> {
     }
 }
 
+/// The code of an IMAP refusal in an error chain: a completion naming
+/// `NOPERM` is `permission-denied`, one naming `OVERQUOTA`
+/// `quota-exceeded` (RFC 5530 §3).
+pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<ErrorCode> {
+    let status = cause.downcast_ref::<ImapClientError>()?.status()?;
+
+    match status.code.as_ref()? {
+        Code::OverQuota => Some(ErrorCode::QuotaExceeded),
+        Code::Other(code) if code.inner().eq_ignore_ascii_case(b"NOPERM") => {
+            Some(ErrorCode::PermissionDenied)
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -467,6 +485,7 @@ mod tests {
         thread,
     };
 
+    use pimalaya_cli::error::ErrorReport;
     use toml::from_str;
 
     use crate::imap::*;
@@ -581,5 +600,81 @@ mod tests {
         assert!(refused.is_err());
         assert!(events.is_empty(), "got {events:?}");
         assert!(resume.is_none());
+    }
+
+    /// Starts a server refusing every EXAMINE with the response code
+    /// `code`, taking any number of connections.
+    fn refuse(code: &'static str) -> ImapConfig {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+
+                stream
+                    .write_all(b"* PREAUTH [CAPABILITY IMAP4rev1] ready\r\n")
+                    .unwrap();
+
+                loop {
+                    let mut line = String::new();
+
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+
+                    let mut words = line.split_whitespace();
+                    let tag = words.next().unwrap_or_default();
+                    let answer = match words.next().unwrap_or_default() {
+                        "EXAMINE" => format!("{tag} NO [{code}] refused\r\n"),
+                        _ => format!("{tag} OK done\r\n"),
+                    };
+
+                    if stream.write_all(answer.as_bytes()).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        from_str(&format!(
+            "mailbox = \"INBOX\"\nserver = \"imap://{addr}\"\n"
+        ))
+        .unwrap()
+    }
+
+    /// The watch's failure carries the code, and so does the failure
+    /// object a command failing with it prints.
+    #[test]
+    fn a_watch_refused_with_noperm_is_permission_denied() {
+        let config = refuse("NOPERM");
+
+        let (result, _) = poll(&config, &mut None);
+        let err = result.unwrap_err();
+        assert_eq!(
+            Some(ErrorCode::PermissionDenied),
+            crate::error::code(&err),
+            "{err:#}"
+        );
+
+        let report = ErrorReport::<ErrorCode>::from(crate::error::with_code(err));
+        let report = serde_json::to_value(&report).unwrap();
+        assert_eq!("permission-denied", report["code"], "{report}");
+    }
+
+    /// The resolver's own connection keeps the server's refusal typed.
+    #[test]
+    fn a_resolve_refused_with_overquota_is_quota_exceeded() {
+        let config = refuse("OVERQUOTA");
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut resolver = Resolver::new(&config, "INBOX", &shutdown);
+
+        let err = resolver.summary("1").unwrap_err();
+        assert_eq!(
+            Some(ErrorCode::QuotaExceeded),
+            crate::error::code(&err),
+            "{err:#}"
+        );
     }
 }

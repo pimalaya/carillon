@@ -16,6 +16,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use io_pimdir::client::{
+    PimdirError,
     blobs::PimdirBlobs,
     reader::{PimdirChangeCursor, PimdirItem, PimdirReader},
 };
@@ -24,6 +25,7 @@ use log::{debug, trace, warn};
 use crate::{
     alarm::{AlarmBook, AlarmShared},
     config::PimdirConfig,
+    error::ErrorCode,
     poll,
 };
 
@@ -82,10 +84,14 @@ pub fn probe(config: &PimdirConfig) -> Result<()> {
 fn open(config: &PimdirConfig) -> Result<PimdirReader> {
     let root = &config.root;
 
-    match PimdirReader::open(root) {
-        Ok(reader) => Ok(reader),
-        Err(err) => bail!("Cannot open pimdir store at {}: {err}", root.display()),
-    }
+    PimdirReader::open(root)
+        .with_context(|| format!("Cannot open pimdir store at {}", root.display()))
+}
+
+/// The code of a store failure in an error chain, as io-pimdir names it
+/// ([`ErrorCode::of_pimdir`]).
+pub(crate) fn store_code(cause: &(dyn std::error::Error + 'static)) -> Option<ErrorCode> {
+    ErrorCode::of_pimdir(cause.downcast_ref::<PimdirError>()?)
 }
 
 /// Refuses a calendar the store does not hold, or holding no calendars.

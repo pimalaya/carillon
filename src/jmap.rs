@@ -30,14 +30,18 @@ use io_jmap::{
         get::JmapCalendarEventGetOptions,
         query::{JmapCalendarEventFilter, JmapCalendarEventQueryOptions},
     },
-    client::{JmapClientStd, JmapClientStdConnectOptions},
+    client::{JmapClientStd, JmapClientStdConnectOptions, JmapClientStdError},
     coroutine::{JmapCoroutine, JmapCoroutineState},
     rfc8620::{
         changes::JmapChangesOutput,
         event_source::{
             JmapCloseAfter, JmapStateChange,
-            subscribe::{JmapEventSource, JmapEventSourceOptions, JmapEventSourceYield},
+            subscribe::{
+                JmapEventSource, JmapEventSourceError, JmapEventSourceOptions, JmapEventSourceYield,
+            },
         },
+        send::JmapSendError,
+        session_get::JmapSessionGetError,
     },
     rfc8621::{
         email::{
@@ -60,6 +64,7 @@ use url::Url;
 
 use crate::{
     config::{JmapAuthConfig, JmapConfig, ProxyConfig},
+    error::ErrorCode,
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,
 };
@@ -670,6 +675,36 @@ fn is_timeout(err: &io::Error) -> bool {
     )
 }
 
+/// The code of a JMAP refusal in an error chain, read from the HTTP status
+/// the session, a method call or the event source was answered with: a
+/// 403 is `permission-denied`, a 429 `rate-limited`, a 507
+/// `quota-exceeded`. Carillon only reads, so no `SetError` arises.
+pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<ErrorCode> {
+    let status = if let Some(err) = cause.downcast_ref::<JmapSendError>() {
+        match err {
+            JmapSendError::HttpStatus(status) | JmapSendError::Request { status, .. } => *status,
+            _ => return None,
+        }
+    } else if let Some(err) = cause.downcast_ref::<JmapClientStdError>() {
+        match err {
+            JmapClientStdError::SessionGet(JmapSessionGetError::HttpStatus(status)) => *status,
+            _ => return None,
+        }
+    } else {
+        match cause.downcast_ref::<JmapEventSourceError>()? {
+            JmapEventSourceError::HttpStatus(status) => *status,
+            _ => return None,
+        }
+    };
+
+    match status {
+        403 => Some(ErrorCode::PermissionDenied),
+        429 => Some(ErrorCode::RateLimited),
+        507 => Some(ErrorCode::QuotaExceeded),
+        _ => None,
+    }
+}
+
 /// Lists what the watched mailbox holds, with each message's keywords.
 fn baseline_mailbox(client: &mut JmapClientStd, mailbox_id: &str) -> Result<Known> {
     let filter = JmapEmailFilter {
@@ -860,6 +895,12 @@ type Known = BTreeMap<String, BTreeSet<String>>;
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        io::{BufRead, BufReader},
+        net::TcpListener,
+        thread,
+    };
+
     use io_jmap::rfc8621::email::JmapEmailAddress;
 
     use crate::jmap::*;
@@ -1011,5 +1052,53 @@ mod tests {
 
         let (id, name) = listed();
         assert_eq!(None, matches_collection(id, name, "Work"));
+    }
+
+    /// The failure opening a session meets on a server answering its first
+    /// request with `status`.
+    fn refused(status: &'static str) -> anyhow::Error {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim_end().is_empty() {
+                    break;
+                }
+            }
+
+            let answer = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\n\r\n");
+            let _ = stream.write_all(answer.as_bytes());
+        });
+
+        let config: JmapConfig = toml::from_str(&format!(
+            "mailbox = \"INBOX\"\nserver = \"http://{addr}/jmap/session\"\nauth.header.raw = \"token\"\n"
+        ))
+        .unwrap();
+
+        open(&config, &mut SecretResolver::new()).err().unwrap()
+    }
+
+    #[test]
+    fn a_session_refused_with_403_or_429_carries_its_code() {
+        let denied = refused("403 Forbidden");
+        let limited = refused("429 Too Many Requests");
+
+        assert_eq!(
+            Some(ErrorCode::PermissionDenied),
+            crate::error::code(&denied),
+            "{denied:#}"
+        );
+        assert_eq!(
+            Some(ErrorCode::RateLimited),
+            crate::error::code(&limited),
+            "{limited:#}"
+        );
     }
 }

@@ -224,7 +224,11 @@ fn watch_account(
 
         match outcome {
             Ok(()) => debug!("[{account}] session ended, reopening"),
-            Err(err) => warn!("[{account}] session lost: {err:#}"),
+            // NOTE: the code tells a refused account from a network blip.
+            Err(err) => match crate::error::code(&err) {
+                Some(code) => warn!("[{account}] session lost ({code}): {err:#}"),
+                None => warn!("[{account}] session lost: {err:#}"),
+            },
         }
 
         // NOTE: a session that stayed up is evidence the server is

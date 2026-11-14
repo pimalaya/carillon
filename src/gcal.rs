@@ -25,7 +25,7 @@ use io_gcal::v3::{
         calendar_list::list::GcalCalendarListListParams,
         events::{GcalEvent, GcalEventStatus, list::GcalEventsListParams},
     },
-    send::GCAL_API_BASE,
+    send::{GCAL_API_BASE, GcalSendError},
 };
 use log::{debug, trace};
 use pimalaya_config::secret::SecretResolver;
@@ -35,6 +35,7 @@ use url::Url;
 
 use crate::{
     config::{GcalConfig, ProxyConfig},
+    error::{ErrorCode, GoogleAnswer, google_code},
     event::{ItemSummary, WatchDomain, WatchEvent},
     picture::{self, Item, Known},
     poll,
@@ -318,6 +319,23 @@ fn is_expired(err: &Error) -> bool {
             cause.downcast_ref::<GcalClientStdError>(),
             Some(GcalClientStdError::Send(send)) if send.is_sync_token_expired()
         )
+    })
+}
+
+/// The code of a Google Calendar refusal in an error chain ([`google_code`]).
+pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<ErrorCode> {
+    let GcalClientStdError::Send(GcalSendError::Api(err)) =
+        cause.downcast_ref::<GcalClientStdError>()?
+    else {
+        return None;
+    };
+
+    google_code(&GoogleAnswer {
+        status: err.status,
+        message: &err.message,
+        reasons: &err.reasons,
+        detail_reasons: &err.detail_reasons,
+        google_status: err.google_status.as_deref(),
     })
 }
 

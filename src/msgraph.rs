@@ -40,6 +40,7 @@ use secrecy::ExposeSecret;
 
 use crate::{
     config::{MsgraphConfig, ProxyConfig},
+    error::ErrorCode,
     event::{ItemSummary, WatchDomain, WatchEvent},
     picture::{self, Item, Known},
     poll,
@@ -581,6 +582,23 @@ fn is_expired(err: &Error) -> bool {
             Some(MsgraphClientStdError::Send(send)) if send.status() == Some(410)
         )
     })
+}
+
+/// The code of a Graph refusal in an error chain: Graph's
+/// `ErrorQuotaExceeded` or a 507 is `quota-exceeded`, a 429
+/// `rate-limited`, a 403 `permission-denied`.
+pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<ErrorCode> {
+    let MsgraphClientStdError::Send(send) = cause.downcast_ref::<MsgraphClientStdError>()? else {
+        return None;
+    };
+    let err = send.api()?;
+
+    match (err.status, err.code.as_str()) {
+        (_, "ErrorQuotaExceeded") | (507, _) => Some(ErrorCode::QuotaExceeded),
+        (429, _) => Some(ErrorCode::RateLimited),
+        (403, _) => Some(ErrorCode::PermissionDenied),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

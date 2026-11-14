@@ -490,4 +490,26 @@ The command line SHALL be parsed through pimalaya-cli's `clap::parse`: help and 
 - **THEN** it prints one failure object coded `usage-invalid`, its `error` naming `--nope`, on stdout and exits 2
 
 ### Requirement: A failure carries a stable code
-A failure a caller is expected to act on SHALL carry a stable code, printed under `--json` as a `code` string beside `error`, `sources` and `backtrace`, and in a `check` row beside `backend`, `ok` and `error`. The code SHALL be found anywhere in the error chain. A failure with no code SHALL print `"code": null`; the text output SHALL stay unchanged. Codes are kebab-case and never renamed; `error` stays free wording. Every code SHALL be declared in every build: `usage-invalid`, raised by pimalaya-cli when the command line does not match the grammar (nothing ran), and carillon's `permission-denied`, `quota-exceeded`, `rate-limited`, `store-version`, `store-uncreated`, `store-foreign`, `store-corrupt`, `store-not-current`, `store-hash-algo`, `store-exposed` and `sync-version`.
+A failure a caller is expected to act on SHALL carry a stable code, printed under `--json` as a `code` string beside `error`, `sources` and `backtrace`, and in a `check` row beside `backend`, `ok` and `error`. The code SHALL be found anywhere in the error chain or read from the typed error of the protocol that refused or of the store that failed. A failure with no code SHALL print `"code": null`; the text output SHALL stay unchanged. Codes are kebab-case and never renamed; `error` stays free wording. Every code SHALL be declared in every build.
+
+| Code | Raised when |
+|---|---|
+| `usage-invalid` | the command line does not match the grammar, raised by pimalaya-cli; nothing ran |
+| `permission-denied` | the server refused the account: an HTTP 403 that is no rate limit (Graph, Gmail, Google Calendar, Google People, JMAP), a DAV 403 whose body names no precondition or `need-privileges` (RFC 3744 §7.1.1), an IMAP `NOPERM` (RFC 5530 §3) |
+| `quota-exceeded` | an HTTP 507, a DAV body naming `quota-not-exceeded` (RFC 4331 §6), Graph's `ErrorQuotaExceeded`, an IMAP `OVERQUOTA` (RFC 5530 §3) |
+| `rate-limited` | an HTTP 429, or a Google 403 naming a rate limit or a quota; carillon sends no request twice |
+| `store-version` | the pimdir store is of another draft than the one carillon reads; neverest reinstalls it |
+| `store-uncreated` | the pimdir root holds no store yet; its sync engine creates it |
+| `store-foreign` | the pimdir root holds a database another program wrote |
+| `store-corrupt` | the pimdir store's version records disagree |
+| `store-not-current` | the pimdir store holds no schema yet |
+| `store-hash-algo` | the pimdir store names its bodies by a hash carillon does not know |
+| `store-exposed` | another user can reach the pimdir store, or a link stands where its files belong |
+| `sync-version` | another sync engine version wrote the pimdir store's sync state |
+
+A DAV 403 naming another precondition is no matter of rights and SHALL carry no code. A watch's "session lost" warning SHALL name the code of the failure that ended the session when it carries one.
+
+#### Scenario: A store another draft wrote
+- **GIVEN** an account whose `pimdir.root` holds a store of another pimdir draft
+- **WHEN** `carillon --json check` runs
+- **THEN** the pimdir row reads `ok: false`, `code: "store-version"`, and the command exits 3

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Added a stable `code` to the failures a caller acts on, under `--json` in the failure object and in each `check` row, `null` for a failure carrying none: `permission-denied`, `quota-exceeded` and `rate-limited` for a server's refusal (an IMAP `NOPERM` or `OVERQUOTA`, a DAV 403, 429 or 507, a Graph, Gmail, Google Calendar, Google People or JMAP 403, 429 or 507), and io-pimdir's codes for a pimdir store it cannot read (`store-version`, `store-uncreated`, `store-foreign`, `store-corrupt`, `store-not-current`, `store-hash-algo`, `store-exposed`, `sync-version`). A watch's `session lost` warning names the code too, so a log reader tells a refused account from a network blip.
 - Added `$collection` to every hook, templates and command environment alike: the collection as the account configured it, whatever the backend calls it, so one command serves every domain.
 - Added `msgraph.hook.on-message-changed`, fired when a draft is edited in place (its `changeKey` moving while no flag does).
 - Added the `notify` cargo feature, on by default, gating desktop notifications. A build without it refuses a `notify` table, naming the feature, and needs no D-Bus.
@@ -19,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- **BREAKING**: Changed a command line the grammar refuses under `--json` to print the failure object coded `usage-invalid` on stdout, nothing on stderr, still exiting 2; without `--json`, clap's message stays on stderr.
+- **BREAKING**: Changed `check` to exit 3 when a backend failed, once its report is printed, and each of its rows to carry `code` beside `backend`, `ok` and `error` (pimalaya-cli's backend check row).
 - **BREAKING**: Changed `-c` to take one path per flag, as pimalaya-cli's `ConfigFlags` do: repeat it to merge several files. A value is never split on `:`, so `-c a:b` now names one file called `a:b`, and the `CARILLON_CONFIG` environment variable is no longer read.
 - Changed `-a` to resolve one way in `watch` and `check`, through pimalaya-config 0.4: `carillon -a default watch` watches the account marked default, `check` naming an unknown account lists the ones the configuration holds, and several accounts marked default are refused naming them, where one of them was picked.
 - **BREAKING**: Changed hook notifications to pimalaya-config's templates, in the shell's syntax shared with hook commands.
@@ -54,6 +57,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed the Ctrl+C notice of `watch` printed on stdout, which `--json` reserves for values: it goes to stderr.
 - Fixed a credential command prompting for a password hanging: it reads the terminal again (pimalaya-config 0.4.1).
 - Fixed a DAV watch losing what moved when the server closed its idle connection: the round is run again on a fresh connection.
 - Fixed a DAV server with no `sync-collection` being unwatchable: the collection is listed on every poll instead.

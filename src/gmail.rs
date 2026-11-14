@@ -33,6 +33,7 @@ use io_gmail::v1::{
         },
         messages::{GmailMessage, GmailMessageFormat},
     },
+    send::GmailSendError,
 };
 use log::{debug, trace, warn};
 use pimalaya_config::secret::SecretResolver;
@@ -40,6 +41,7 @@ use secrecy::ExposeSecret;
 
 use crate::{
     config::{GmailConfig, ProxyConfig},
+    error::{ErrorCode, GoogleAnswer, google_code},
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,
 };
@@ -371,6 +373,23 @@ fn current_history(client: &mut GmailClientStd) -> Result<String> {
         .ok_or_else(|| anyhow!("Gmail returned no history cursor"))
 }
 
+/// The code of a Gmail refusal in an error chain ([`google_code`]).
+pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<ErrorCode> {
+    let GmailClientStdError::Send(GmailSendError::Api(err)) =
+        cause.downcast_ref::<GmailClientStdError>()?
+    else {
+        return None;
+    };
+
+    google_code(&GoogleAnswer {
+        status: err.status,
+        message: &err.message,
+        reasons: &err.reasons,
+        detail_reasons: &err.detail_reasons,
+        google_status: err.google_status.as_deref(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -383,11 +402,11 @@ mod tests {
 
     use crate::gmail::*;
 
-    /// A stream answering each request with the next of its bodies, and
-    /// keeping the request lines it was sent.
+    /// A stream answering each request with the next of its answers, a
+    /// status and a body, and keeping the request lines it was sent.
     #[derive(Default)]
     struct Scripted {
-        bodies: VecDeque<&'static str>,
+        answers: VecDeque<(&'static str, &'static str)>,
         answer: Cursor<Vec<u8>>,
         request: Vec<u8>,
         seen: Vec<String>,
@@ -412,10 +431,10 @@ mod tests {
                 let line = request.lines().next().unwrap_or_default();
                 self.seen.push(line.to_string());
 
-                let body = self.bodies.pop_front().unwrap_or_default();
+                let (status, body) = self.answers.pop_front().unwrap_or((OK, ""));
                 let length = body.len();
                 let answer = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n{body}"
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n{body}"
                 );
                 self.answer = Cursor::new(answer.into_bytes());
             }
@@ -424,9 +443,17 @@ mod tests {
         }
     }
 
+    /// The status of an answer that went through.
+    const OK: &str = "200 OK";
+
     fn client(bodies: &[&'static str]) -> GmailClientStd {
+        let answers: Vec<_> = bodies.iter().map(|body| (OK, *body)).collect();
+        answering(&answers)
+    }
+
+    fn answering(answers: &[(&'static str, &'static str)]) -> GmailClientStd {
         let stream = Scripted {
-            bodies: bodies.iter().copied().collect(),
+            answers: answers.iter().copied().collect(),
             ..Default::default()
         };
 
@@ -570,6 +597,49 @@ mod tests {
         assert_eq!(
             (None, Some(String::from("bob@example.org"))),
             party("bob@example.org")
+        );
+    }
+
+    /// The failure a watch meets arming against a single answer.
+    fn refused(status: &'static str, body: &'static str) -> anyhow::Error {
+        let mut client = answering(&[(status, body)]);
+        Watched::arm(&mut client, "work", None).err().unwrap()
+    }
+
+    #[test]
+    fn a_403_for_missing_scopes_is_permission_denied() {
+        let err = refused(
+            "403 Forbidden",
+            r#"{"error":{"code":403,"message":"Request had insufficient authentication scopes.","errors":[{"message":"Insufficient Permission","domain":"global","reason":"insufficientPermissions"}],"status":"PERMISSION_DENIED"}}"#,
+        );
+
+        assert_eq!(
+            Some(ErrorCode::PermissionDenied),
+            crate::error::code(&err),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn a_429_or_a_403_naming_a_rate_limit_is_rate_limited() {
+        let throttled = refused(
+            "429 Too Many Requests",
+            r#"{"error":{"code":429,"message":"Too many concurrent requests for user","errors":[{"message":"Too many concurrent requests for user","domain":"global","reason":"rateLimitExceeded"}],"status":"RESOURCE_EXHAUSTED"}}"#,
+        );
+        let limited = refused(
+            "403 Forbidden",
+            r#"{"error":{"code":403,"message":"User Rate Limit Exceeded","errors":[{"message":"User Rate Limit Exceeded","domain":"usageLimits","reason":"userRateLimitExceeded"}]}}"#,
+        );
+
+        assert_eq!(
+            Some(ErrorCode::RateLimited),
+            crate::error::code(&throttled),
+            "{throttled:#}"
+        );
+        assert_eq!(
+            Some(ErrorCode::RateLimited),
+            crate::error::code(&limited),
+            "{limited:#}"
         );
     }
 }

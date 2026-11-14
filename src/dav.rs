@@ -63,6 +63,7 @@ use url::Url;
 use crate::{
     alarm::{AlarmBook, AlarmShared},
     config::{DavAuthConfig, DavServer, ProxyConfig},
+    error::ErrorCode,
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,
 };
@@ -1203,6 +1204,56 @@ fn is_unsupported_report(err: &Error) -> bool {
     })
 }
 
+/// The status and body of an answer that refused an exchange, wherever
+/// io-webdav surfaces it among the errors of the coroutines driven here.
+fn refused<'a>(cause: &'a (dyn error::Error + 'static)) -> Option<(u16, &'a str)> {
+    if let Some(WebdavSendError::HttpStatus { status, body }) =
+        cause.downcast_ref::<WebdavSendError>()
+    {
+        return Some((*status, body));
+    }
+
+    match cause.downcast_ref::<WebdavSyncCollectionError>() {
+        Some(WebdavSyncCollectionError::Send(WebdavSendError::HttpStatus { status, body })) => {
+            return Some((*status, body));
+        }
+        Some(_) => return None,
+        None => (),
+    }
+
+    match cause.downcast_ref::<WebdavFollowRedirectsError>()? {
+        WebdavFollowRedirectsError::HttpStatus { status, body } => Some((*status, body)),
+        _ => None,
+    }
+}
+
+/// The code of a DAV refusal in an error chain.
+///
+/// A 507, or a body naming `quota-not-exceeded` (RFC 4331 §6), is
+/// `quota-exceeded`; a 429 `rate-limited`; a 403 `permission-denied` when
+/// its body names `need-privileges` (RFC 3744 §7.1.1) or no precondition
+/// at all. Any other 403 names a precondition the request failed, no
+/// matter of rights.
+pub(crate) fn refusal_code(cause: &(dyn error::Error + 'static)) -> Option<ErrorCode> {
+    let (status, body) = refused(cause)?;
+
+    match status {
+        _ if body.contains("quota-not-exceeded") => Some(ErrorCode::QuotaExceeded),
+        507 => Some(ErrorCode::QuotaExceeded),
+        429 => Some(ErrorCode::RateLimited),
+        403 if body.contains("need-privileges") || !names_precondition(body) => {
+            Some(ErrorCode::PermissionDenied)
+        }
+        _ => None,
+    }
+}
+
+/// Whether a refusal's body is a `DAV:error` element, which names the
+/// precondition the request failed (RFC 4918 §16).
+fn names_precondition(body: &str) -> bool {
+    body.contains(":error") || body.contains("<error")
+}
+
 #[cfg(test)]
 mod tests {
     use crate::dav::*;
@@ -1313,8 +1364,9 @@ mod tests {
         assert_eq!("/dav/calendars/alice/a/b", path(&base, "a/b"));
     }
 
-    /// A DAV server answering discovery, holding one calendar at
-    /// `/cal/alice/work` and implementing no `sync-collection`.
+    /// Scripted DAV servers: one answering discovery, holding one calendar
+    /// at `/cal/alice/work` and implementing no `sync-collection`, and one
+    /// refusing every request.
     mod fake {
         use std::{
             io::{BufRead, BufReader, Read, Write},
@@ -1337,14 +1389,36 @@ mod tests {
                 for stream in listener.incoming() {
                     let Ok(stream) = stream else { return };
                     let (members, seen) = (members.clone(), seen.clone());
-                    thread::spawn(move || serve(stream, members, seen));
+                    thread::spawn(move || {
+                        serve(stream, |method, path, body| {
+                            seen.lock().unwrap().push(format!("{method} {path}"));
+                            answer(method, path, body, &members)
+                        })
+                    });
                 }
             });
 
             addr
         }
 
-        fn serve(stream: TcpStream, members: Members, seen: Seen) {
+        /// Starts a server answering every request with `status` and
+        /// `body`, returning its address.
+        pub fn refusing(status: &'static str, body: &'static str) -> String {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+
+            thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(stream) = stream else { return };
+                    thread::spawn(move || serve(stream, |_, _, _| (status, body.to_string())));
+                }
+            });
+
+            addr
+        }
+
+        /// Answers each request `stream` carries, by method, path and body.
+        fn serve(stream: TcpStream, answer: impl Fn(&str, &str, &str) -> (&'static str, String)) {
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut stream = stream;
 
@@ -1375,9 +1449,7 @@ mod tests {
                 reader.read_exact(&mut body).unwrap();
                 let body = String::from_utf8_lossy(&body);
 
-                seen.lock().unwrap().push(format!("{method} {path}"));
-
-                let (status, xml) = answer(&method, &path, &body, &members);
+                let (status, xml) = answer(&method, &path, &body);
                 let response = format!(
                     "HTTP/1.1 {status}\r\nContent-Type: application/xml; charset=utf-8\r\nContent-Length: {}\r\n\r\n{xml}",
                     xml.len()
@@ -1512,6 +1584,78 @@ mod tests {
         assert!(
             seen.contains(&String::from("PROPFIND /principals/alice/")),
             "{seen:?}"
+        );
+    }
+
+    /// The failure a watch of `kind` meets on a server answering every
+    /// request with `status` and `body`, discovery left aside.
+    fn refused(kind: DavKind, status: &'static str, body: &'static str) -> Error {
+        let addr = fake::refusing(status, body);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut client = client(&addr);
+
+        let collection = locate(&mut client, kind.home(), "work", &shutdown).unwrap();
+        Domains::resolve(&mut client, &collection, kind, &shutdown)
+            .and_then(|domains| Watched::arm(&mut client, collection, domains, &shutdown))
+            .err()
+            .unwrap()
+    }
+
+    /// A precondition the request failed (RFC 4791 §5.3.2), no matter of
+    /// rights.
+    const PRECONDITION: &str = r#"<?xml version="1.0" encoding="utf-8"?><d:error xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><c:valid-calendar-data/></d:error>"#;
+
+    /// RFC 3744 §7.1.1's precondition naming the privilege missing.
+    const NEED_PRIVILEGES: &str = r#"<?xml version="1.0" encoding="utf-8"?><d:error xmlns:d="DAV:"><d:need-privileges/></d:error>"#;
+
+    #[test]
+    fn a_bare_403_is_permission_denied() {
+        let report = refused(DavKind::Addressbook, "403 Forbidden", "");
+        let listing = refused(
+            DavKind::Calendar(vec![WatchDomain::Event]),
+            "403 Forbidden",
+            "",
+        );
+
+        assert_eq!(
+            Some(ErrorCode::PermissionDenied),
+            crate::error::code(&report),
+            "{report:#}"
+        );
+        assert_eq!(
+            Some(ErrorCode::PermissionDenied),
+            crate::error::code(&listing),
+            "{listing:#}"
+        );
+    }
+
+    #[test]
+    fn a_403_naming_need_privileges_is_permission_denied() {
+        let err = refused(DavKind::Addressbook, "403 Forbidden", NEED_PRIVILEGES);
+
+        assert_eq!(
+            Some(ErrorCode::PermissionDenied),
+            crate::error::code(&err),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn a_403_naming_another_precondition_carries_no_code() {
+        let err = refused(DavKind::Addressbook, "403 Forbidden", PRECONDITION);
+
+        assert!(format!("{err:#}").contains("403"), "{err:#}");
+        assert_eq!(None, crate::error::code(&err), "{err:#}");
+    }
+
+    #[test]
+    fn a_507_is_quota_exceeded() {
+        let err = refused(DavKind::Addressbook, "507 Insufficient Storage", "");
+
+        assert_eq!(
+            Some(ErrorCode::QuotaExceeded),
+            crate::error::code(&err),
+            "{err:#}"
         );
     }
 }

@@ -109,3 +109,41 @@ fn a_failed_check_in_text_prints_its_report_alone_and_exits_3() {
     );
     assert!(!stdout.contains("Error:"), "{stdout}");
 }
+
+/// A pimdir store another draft of the format stamped is refused with
+/// io-pimdir's code, which the row carries.
+#[cfg(feature = "pimdir")]
+#[test]
+fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
+    let home = TempDir::new().unwrap();
+    let root = home.path().join("pimdir");
+    let store = io_pimdir::client::PimdirStore::open(&root).unwrap();
+    store.ensure_collection("cal", "text/calendar").unwrap();
+    drop(store);
+    rusqlite::Connection::open(root.join("pimdir.db"))
+        .unwrap()
+        .execute(
+            "UPDATE store_meta SET format_version = ?1",
+            ["storage-draft-08"],
+        )
+        .unwrap();
+
+    let config = home.path().join("config.toml");
+    let toml = format!(
+        "[accounts.a]\ndefault = true\npimdir.calendar = \"cal\"\npimdir.root = {:?}\npimdir.hook.on-alarm-trigger.cmd = \"true\"\n",
+        root.display().to_string(),
+    );
+    std::fs::write(&config, toml).unwrap();
+
+    let config = config.to_str().unwrap();
+    let args = ["--json", "-c", config, "--backend", "pimdir", "check"];
+    let output = run(home.path(), &args);
+    let stdout = text(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(3), "{stdout}");
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let row = &json["backends"][0];
+    assert_eq!(row["backend"], "pimdir", "{json}");
+    assert_eq!(row["ok"], false, "{json}");
+    assert_eq!(row["code"], "store-version", "{json}");
+}

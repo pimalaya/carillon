@@ -1,7 +1,7 @@
 ---
 cairn: change
 id: a-refusal-carries-its-code
-status: active
+status: landed
 created: 2026-11-14
 ---
 

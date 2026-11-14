@@ -11,7 +11,13 @@
 //! fails naming the file and the documented sample when there is none,
 //! watch and check are the two commands, hook fires the notification and
 //! the command, json_schema names the schema of what each command prints,
-//! error the stable codes a failure carries.
+//! error the stable codes a failure carries, each backend reading its own
+//! protocol's refusals into them.
+//!
+//! A command exits 0 on success, 1 on a failure, printed under `--json`
+//! as the failure object with its code, 2 on a command line the grammar
+//! refuses (`usage-invalid`), and 3 on a `check` that printed its report
+//! with a failed backend.
 //! No configuration is ever written: an account is written by hand from
 //! config.sample.toml, which a person at a terminal missing one is
 //! welcomed to by pimalaya-cli's welcome, a script or a JSON caller
