@@ -59,7 +59,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Watch a mailbox and fire hooks on every change until Ctrl+C.
+    /// Watch the accounts, fire their hooks and print every change until
+    /// a termination signal.
     Watch(WatchCommand),
     /// Validate the account configuration against each allowed backend.
     Check(CheckCommand),
@@ -87,7 +88,7 @@ impl Command {
         backend: Backend,
     ) -> Result<()> {
         match self {
-            Self::Watch(cmd) => cmd.execute(config_paths, account_name, backend),
+            Self::Watch(cmd) => cmd.execute(printer, config_paths, account_name, backend),
             Self::Check(cmd) => cmd.execute(printer, config_paths, account_name, backend),
             Self::Manual(cmd) => cmd.execute(printer, Cli::command()),
             Self::Completion(cmd) => cmd.execute(printer, Cli::command()),

@@ -53,7 +53,7 @@ perl -pi -e 's/\.hook\./.hooks./; s/\b(on-[a-z]+-(?:add|remov|chang))ed\b/$1 =~ 
 ### Configuration and first run
 
 - **The wizard is gone**: `carillon configure` (alias `wizard`) and its `carillon-configure` schema no longer exist, and no command offers to write a configuration. An existing configuration keeps working once migrated; a new one is written by hand from [config.sample.toml](./config.sample.toml): copy it to $XDG_CONFIG_HOME/carillon/config.toml, keep one backend and the hooks you want, delete the rest, then run `carillon check`. Run at a terminal with no configuration, any command prints the commands doing the copy. A bare `carillon` prints the help.
-- **An unknown key is refused at every level**, the root and the account included, naming the key and its line, where 0.2 ignored it there: fix a misspelt key, delete a key another tool reads (an account shared with himalaya goes in its own file), and build with the cargo feature of every backend the configuration declares. A key carillon moved under each backend before 0.1 is refused naming where it went, and was silently ignored until now:
+- **An unknown key is refused at every level**, the root and the account included, naming the key and its line, where 0.2 ignored it there: fix a misspelt key, and delete a key another tool reads (an account shared with himalaya goes in its own file). A backend the build leaves out is no unknown key: its block loads, and `watch` or `check` reaching it fails coded `backend-not-built`, naming the cargo feature to build with, where 0.2 skipped it silently. `watch` stops that account for the run and watches the others, and fails, exit 1, when no account is left. A key carillon moved under each backend before 0.1 is refused naming where it went, and was silently ignored until now:
   - `folder`, `mailbox` and `collection` on the account: name the collection under its backend, `imap.mailbox`, `maildir.mailbox`, `caldav.calendar`, `carddav.addressbook` and so on.
   - `watch` on the account: move it under its backend, `imap.watch.poll.interval` for instance.
   - `hooks` on the account: move each hook under its backend as `<backend>.hooks`, `hooks.on-message-added` becoming `imap.hooks.on-message-add`. Those hooks never fired while the table sat on the account.
@@ -91,7 +91,7 @@ imap.mailbox = "INBOX"
 
 - **`-c` takes one path per flag**: a value is no longer split on `:`. Repeat the flag to merge several files, the first one being the base.
 - **`CARILLON_CONFIG` is no longer read**: pass the path with `-c` instead, for example in the systemd unit or the script starting the watch. Left in the environment, the variable is ignored and the default paths are read.
-- **`-a default` names the account marked default** in `watch` as it already did in `check`, and `check` naming an unknown account lists the ones the configuration holds, as `watch` does.
+- **`-a default` names the account called `default`**, like any other name, where 0.2's `check` took the account marked default: to take that one, omit `-a` (`carillon check`). With no account called `default`, `-a default` fails coded `account-missing`, saying to omit `-a`. `check` naming an unknown account lists the ones the configuration holds, as `watch` does.
 
 ```sh
 # 0.2
@@ -116,12 +116,23 @@ case $? in
 esac
 ```
 
-- **The Ctrl+C notice of `watch` goes to stderr**, where it reached stdout: stdout stays empty but for `--json` values.
+- **`watch` prints what it observes on stdout**, one line per event, then one result line once SIGINT, SIGTERM or SIGHUP stops it, exiting 0; 0.2 printed nothing there but its Ctrl+C notice. A unit or a script redirecting its stdout now receives these lines: send them to `/dev/null` if nothing reads them, or read them instead of scraping the logs. A lost session and a failed hook are events now rather than `warn` log lines, and a hook command exiting non-zero counts as a failed hook. **A hook command's output goes to stderr**: what a hook printed on stdout, which reached carillon's stdout in 0.2, is now on carillon's stderr beside the logs, so redirect `2>` to keep it (`carillon watch 2>>~/hooks.log`). A second signal ends the process at once, with 130.
+
+```sh
+# 0.2: nothing on stdout
+carillon watch
+# 1.0: one line per event, then the result once Ctrl+C is pressed
+carillon watch
+# [perso] watching mailbox `INBOX` over imap, idling
+# [perso] mailbox `INBOX`: message 42 added
+# Watch stopped by a signal
+```
 
 ### JSON consumers
 
-- **Failures carry a stable code**: under `--json`, the failure object gains `code` beside `error`, `sources` and `backtrace`, `code` being `null` for a failure carrying none, and each `check` row reads `{backend, ok, code, error}`. Match on `code` (`permission-denied`, `quota-exceeded`, `rate-limited`, `store-version` and the other pimdir store codes, `usage-invalid`) rather than on the wording of `error`, which may change. `carillon json-schema carillon-error` describes the failure object.
+- **Failures carry a stable code**: under `--json`, the failure object gains `code` beside `error`, `sources` and `backtrace`, `code` being `null` for a failure carrying none, and each `check` row reads `{backend, ok, code, error}`. Match on `code` (`permission-denied`, `quota-exceeded`, `rate-limited`, `store-version` and the other pimdir store codes, `account-missing`, `account-default-missing`, `account-default-several`, `backend-not-built`, `usage-invalid`) rather than on the wording of `error`, which may change. `carillon json-schema carillon-error` describes the failure object.
 - **A command line refused under `--json`** prints its failure object, coded `usage-invalid`, on stdout and nothing on stderr, still exiting 2, where 0.2 printed clap's message on stderr.
+- **`watch --json` prints events, then one result**: each event is an object carrying `event` (`session-opened`, `session-lost`, `changed`, `hook-failed`, `alarm-fired`) and `account`, the result `{"stoppedBy":"signal"}` carries none. `carillon json-schema carillon-watch.events` describes the events, `carillon-watch` the result.
 - **Piped `--json` output prints one value per line**, and each schema of `carillon json-schema` carries an `$id` naming the contract version, `https://pimalaya.org/schemas/carillon/v1/<name>.json` from 1.0 on.
 
 ```jsonc
@@ -133,10 +144,16 @@ esac
 // 0.2: carillon --json -a wrok check, exiting 1
 {"error":"…","sources":[],"backtrace":null}
 // 1.0, exiting 1
-{"code":null,"error":"Account `wrok` not found, the configuration holds: perso, work","sources":[],"backtrace":null}
+{"code":"account-missing","error":"Account `wrok` not found, the configuration holds: perso, work","sources":[],"backtrace":null}
 
 // 1.0: carillon --json watch --nope, exiting 2, where 0.2 printed clap's message on stderr
 {"code":"usage-invalid","error":"unexpected argument '--nope' found\n\nUsage: carillon watch [OPTIONS]\n\nFor more information, try '--help'.","sources":[],"backtrace":null}
+
+// 1.0: carillon --json watch, then SIGTERM, exiting 0, where 0.2 printed nothing
+{"event":"session-opened","account":"perso","backend":"imap","method":"idle","collections":[{"name":"mailbox","value":"INBOX"}]}
+{"event":"changed","account":"perso","collection":{"name":"mailbox","value":"INBOX"},"change":{"kind":"item-added","domain":"message","id":"42"}}
+{"event":"hook-failed","account":"perso","reaction":"command","code":null,"error":"Hook command exited with exit status: 3","sources":[]}
+{"stoppedBy":"signal"}
 ```
 
 ## From 0.1 to 0.2

@@ -485,7 +485,7 @@ mod tests {
         thread,
     };
 
-    use pimalaya_cli::error::ErrorReport;
+    use pimalaya_cli::error::{ErrorReport, with_code};
     use toml::from_str;
 
     use crate::imap::*;
@@ -658,7 +658,7 @@ mod tests {
             "{err:#}"
         );
 
-        let report = ErrorReport::<ErrorCode>::from(crate::error::with_code(err));
+        let report = ErrorReport::<ErrorCode>::from(with_code(err, crate::error::code));
         let report = serde_json::to_value(&report).unwrap();
         assert_eq!("permission-denied", report["code"], "{report}");
     }

@@ -1,7 +1,7 @@
 //! # Watch
 //!
 //! The `carillon watch` command, watching accounts and firing their hooks
-//! on every change until Ctrl+C.
+//! on every change until a termination signal.
 //!
 //! Bare `watch` takes every configured account at once, one thread each
 //! under a single shared shutdown, `-a/--account` narrowing it to one.
@@ -12,12 +12,21 @@
 //! backend selection, reconnect backoff and envelope resolution all fail
 //! inside it: a failure ends the session, never the process, and one
 //! unreachable server cannot stop the other accounts watching.
+//!
+//! What the threads observe reaches the command's own thread as events,
+//! which alone prints them, then the result once a signal asked it to
+//! stop: pimalaya-cli's `Shutdown` turns the first signal into a request
+//! the command reads, a second one ending the process. A backend the
+//! build leaves out fails the session of its account coded
+//! `backend-not-built` and stops that account for the run, no retry
+//! building it; with no account left, the command fails with it.
 
 use std::{
     path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, RecvTimeoutError},
     },
     thread,
     time::{Duration, Instant},
@@ -32,7 +41,10 @@ use ceichas::{timer::CeichasTimer, waker::CeichasWaker};
 use clap::Parser;
 #[cfg(feature = "imap")]
 use io_imap::watch::ImapMailboxWatchState;
-use log::{debug, error, info, warn};
+#[cfg(any(alarm, feature = "imap"))]
+use log::warn;
+use log::{debug, error, info};
+use pimalaya_cli::{printer::Printer, signal::Shutdown};
 use pimalaya_config::toml::TomlConfig;
 
 #[cfg(api)]
@@ -51,13 +63,14 @@ use crate::pimdir;
 use crate::{
     alarm::{self, AlarmShared},
     config::ItemHook,
-    hook::HookCollection,
+    hook::{self, HookCollection},
 };
 use crate::{
     backend::Backend,
     config::{AccountConfig, Config},
+    error::{self, ErrorCode},
     event::{ItemSummary, WatchEvent},
-    hook,
+    stream::{WatchEvents, WatchMethod, WatchOutput, WatchStop},
 };
 #[cfg(feature = "dav")]
 use crate::{
@@ -85,6 +98,8 @@ const MAX_BACKOFF: Duration = Duration::from_secs(300);
 const HEALTHY_THRESHOLD: Duration = Duration::from_secs(60);
 /// Backoff sleep granularity, so a shutdown is noticed promptly.
 const BACKOFF_STEP: Duration = Duration::from_millis(200);
+/// How often the command reads the signal while no event comes.
+const SIGNAL_STEP: Duration = Duration::from_millis(100);
 
 /// Watch accounts and fire their hooks on every change.
 ///
@@ -94,9 +109,11 @@ const BACKOFF_STEP: Duration = Duration::from_millis(200);
 pub struct WatchCommand;
 
 impl WatchCommand {
-    /// Spawns one thread per selected account and joins them on Ctrl+C.
+    /// Spawns one thread per selected account, prints what they observe,
+    /// and once a termination signal asks, stops them and prints why.
     pub fn execute(
         self,
+        printer: &mut impl Printer,
         config_paths: &[PathBuf],
         account_name: Option<&str>,
         backend: Backend,
@@ -104,63 +121,91 @@ impl WatchCommand {
         let mut config = Config::load(config_paths)?;
         let selected = select_accounts(&mut config, account_name)?;
 
+        let signal = Shutdown::install()?;
         let shutdown = Arc::new(AtomicBool::new(false));
-        let shutdown_for_ctrlc = shutdown.clone();
         #[cfg(alarm)]
         let wakers = AlarmWakers::default();
-        #[cfg(alarm)]
-        let wakers_for_ctrlc = wakers.clone();
-
-        ctrlc::set_handler(move || {
-            eprintln!("received Ctrl+C, shutting down the watcher…");
-            shutdown_for_ctrlc.store(true, Ordering::SeqCst);
-
-            // NOTE: rung after the flag is set, so a woken alarm thread
-            // reads it and stops.
-            #[cfg(alarm)]
-            for waker in wakers_for_ctrlc
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .iter()
-            {
-                if let Err(err) = waker.wake() {
-                    warn!("cannot wake an alarm thread: {err}");
-                }
-            }
-        })?;
-
+        let (sender, receiver) = mpsc::channel();
         let mut handles = Vec::with_capacity(selected.len());
 
         for (name, account) in selected {
             let shutdown = shutdown.clone();
+            let events = WatchEvents::new(name.clone(), sender.clone());
             #[cfg(alarm)]
             let wakers = wakers.clone();
 
             let handle = thread::Builder::new().name(name.clone()).spawn(move || {
-                let outcome = watch_account(
+                watch_account(
                     &name,
                     account,
                     backend,
                     shutdown,
+                    &events,
                     #[cfg(alarm)]
                     wakers,
-                );
-
-                if let Err(err) = outcome {
-                    error!("[{name}] watch stopped: {err:#}");
-                }
+                )
             })?;
 
             handles.push(handle);
         }
 
+        // NOTE: the threads hold the only senders left, so the channel
+        // closes once every one of them ended.
+        drop(sender);
         info!("press Ctrl+C to exit");
 
-        for handle in handles {
-            let _ = handle.join();
+        let mut printed = Ok(());
+        let mut stopping = false;
+
+        loop {
+            match receiver.recv_timeout(SIGNAL_STEP) {
+                Ok(event) if printed.is_ok() => printed = printer.event(event),
+                Ok(_) | Err(RecvTimeoutError::Timeout) => (),
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+
+            // NOTE: a stdout no one reads any more stops the watch as a
+            // signal does, and its failure is the command's.
+            if !stopping && (signal.is_requested() || printed.is_err()) {
+                stopping = true;
+                info!("shutting down the watcher");
+                shutdown.store(true, Ordering::SeqCst);
+
+                // NOTE: rung after the flag is set, so a woken alarm
+                // thread reads it and stops.
+                #[cfg(alarm)]
+                for waker in wakers.lock().unwrap_or_else(PoisonError::into_inner).iter() {
+                    if let Err(err) = waker.wake() {
+                        warn!("cannot wake an alarm thread: {err}");
+                    }
+                }
+            }
         }
 
-        Ok(())
+        let mut stopped = Vec::new();
+
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(())) => (),
+                Ok(Err(err)) => stopped.push(err),
+                Err(_) => error!("an account thread panicked"),
+            }
+        }
+
+        printed?;
+
+        // NOTE: every account stopped on its own, a backend the build
+        // leaves out, so nothing is left to watch.
+        if !stopping {
+            match stopped.into_iter().next() {
+                Some(err) => return Err(err),
+                None => bail!("Every account thread ended before a shutdown was requested"),
+            }
+        }
+
+        printer.out(WatchOutput {
+            stopped_by: WatchStop::Signal,
+        })
     }
 }
 
@@ -185,13 +230,18 @@ fn select_accounts(
 
 /// Watches one account until `shutdown` is set, reopening the watch
 /// with a capped backoff whenever a session ends.
+///
+/// A backend the build leaves out stops the account for the run, its
+/// failure handed back: no reopening can build it.
 fn watch_account(
     account: &str,
     config: AccountConfig,
     backend: Backend,
     shutdown: Arc<AtomicBool>,
+    events: &WatchEvents,
     #[cfg(alarm)] wakers: AlarmWakers,
 ) -> Result<()> {
+    let mut stopped = Ok(());
     let mut backoff = INITIAL_BACKOFF;
     #[cfg(alarm)]
     let mut alarms = AlarmRunner::new(wakers);
@@ -206,6 +256,7 @@ fn watch_account(
             &config,
             backend,
             &shutdown,
+            events,
             #[cfg(alarm)]
             &mut alarms,
             #[cfg(any(feature = "imap", feature = "gmail"))]
@@ -222,13 +273,18 @@ fn watch_account(
             break;
         }
 
+        // NOTE: the event carries the code, which tells a refused account
+        // from a network blip.
         match outcome {
             Ok(()) => debug!("[{account}] session ended, reopening"),
-            // NOTE: the code tells a refused account from a network blip.
-            Err(err) => match crate::error::code(&err) {
-                Some(code) => warn!("[{account}] session lost ({code}): {err:#}"),
-                None => warn!("[{account}] session lost: {err:#}"),
-            },
+            Err(err) => {
+                events.lost(&err);
+
+                if error::code(&err) == Some(ErrorCode::BackendNotBuilt) {
+                    stopped = Err(err);
+                    break;
+                }
+            }
         }
 
         // NOTE: a session that stayed up is evidence the server is
@@ -246,7 +302,7 @@ fn watch_account(
     #[cfg(alarm)]
     alarms.join(account);
 
-    Ok(())
+    stopped
 }
 
 /// Runs one session against the account's active backend, with the method
@@ -256,10 +312,11 @@ fn watch_account(
 /// the backend's own config, so anything it cannot do was already refused
 /// when the file was read.
 fn watch_session(
-    account: &str,
+    #[cfg_attr(not(any(alarm, feature = "imap")), allow(unused_variables))] account: &str,
     config: &AccountConfig,
     backend: Backend,
     shutdown: &Arc<AtomicBool>,
+    events: &WatchEvents,
     #[cfg(alarm)] alarms: &mut AlarmRunner,
     #[cfg(any(feature = "imap", feature = "gmail"))] resume: &mut Resume,
 ) -> Result<()> {
@@ -269,22 +326,20 @@ fn watch_session(
             let collection = imap_config.collection();
             let mut resolver = Resolver::new(imap_config, collection.value, shutdown);
             let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
-                let Some(hook) = imap_config.hooks.get(&event) else {
-                    return;
-                };
+                let hook = imap_config.hooks.get(&event);
 
                 // NOTE: an IMAP delta names a UID and nothing else, so
                 // what the hook wants is read on a second connection.
-                let summary = summary.or_else(|| resolve_added(account, &event, &mut resolver));
-                hook::run(hook, &event, imap_config.collection(), summary.as_ref());
+                let summary = match hook {
+                    Some(_) => summary.or_else(|| resolve_added(account, &event, &mut resolver)),
+                    None => None,
+                };
+                events.react(hook, &event, imap_config.collection(), summary.as_ref());
             };
 
             return match &imap_config.watch {
                 Some(ImapWatchConfig::Poll(poll)) => {
-                    info!(
-                        "[{account}] watching `{}` over imap, polling",
-                        collection.value
-                    );
+                    events.opened("imap", WatchMethod::Poll, vec![collection]);
                     imap::watch_poll(
                         imap_config,
                         collection.value,
@@ -300,10 +355,7 @@ fn watch_session(
                         _ => IdleWatchConfig::default(),
                     };
 
-                    info!(
-                        "[{account}] watching `{}` over imap, idling",
-                        collection.value
-                    );
+                    events.opened("imap", WatchMethod::Idle, vec![collection]);
                     imap::watch_idle(
                         imap_config,
                         collection.value,
@@ -321,30 +373,33 @@ fn watch_session(
         }
     }
 
+    #[cfg(not(feature = "imap"))]
+    if backend.allows_imap() && config.imap.is_some() {
+        return Err(error::backend_not_built("imap", "imap"));
+    }
+
     #[cfg(feature = "jmap")]
     if backend.allows_jmap() {
         if let Some(jmap_config) = &config.jmap {
-            let collections = jmap_config
+            let collections: Vec<_> = jmap_config
                 .collections()
                 .into_iter()
-                .map(|(_, collection)| format!("{} `{}`", collection.name, collection.value))
-                .collect::<Vec<_>>()
-                .join(", ");
+                .map(|(_, collection)| collection)
+                .collect();
             let resolve = jmap_config.hooks.on_message_add.is_some();
 
             // NOTE: one JMAP account watches up to three domains, so the
             // collection a hook templates against follows the event.
             let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
-                if let Some(hook) = jmap_config.hooks.get(&event)
-                    && let Some(collection) = jmap_config.collection(event.domain())
-                {
-                    hook::run(hook, &event, collection, summary.as_ref());
+                if let Some(collection) = jmap_config.collection(event.domain()) {
+                    let hook = jmap_config.hooks.get(&event);
+                    events.react(hook, &event, collection, summary.as_ref());
                 }
             };
 
             return match &jmap_config.watch {
                 Some(JmapWatchConfig::Poll(poll)) => {
-                    info!("[{account}] watching {collections} over jmap, polling");
+                    events.opened("jmap", WatchMethod::Poll, collections);
                     jmap::watch_poll(
                         jmap_config,
                         poll.interval(),
@@ -358,7 +413,7 @@ fn watch_session(
                         Some(JmapWatchConfig::Push(push)) => push.ping,
                         _ => PushWatchConfig::default().ping,
                     };
-                    info!("[{account}] watching {collections} over jmap, pushed");
+                    events.opened("jmap", WatchMethod::Push, collections);
                     jmap::watch_push(jmap_config, ping, resolve, shutdown, &mut on_event)
                 }
             };
@@ -367,6 +422,11 @@ fn watch_session(
         if backend == Backend::Jmap {
             bail!("Account has no `jmap` config block");
         }
+    }
+
+    #[cfg(not(feature = "jmap"))]
+    if backend.allows_jmap() && config.jmap.is_some() {
+        return Err(error::backend_not_built("jmap", "jmap"));
     }
 
     #[cfg(feature = "maildir")]
@@ -378,14 +438,10 @@ fn watch_session(
                 .clone()
                 .unwrap_or(MaildirWatchConfig::Poll(Default::default()));
 
-            info!(
-                "[{account}] watching `{}` over maildir, polling",
-                collection.value
-            );
+            events.opened("maildir", WatchMethod::Poll, vec![collection]);
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
-                if let Some(hook) = maildir_config.hooks.get(&event) {
-                    hook::run(hook, &event, maildir_config.collection(), None);
-                }
+                let hook = maildir_config.hooks.get(&event);
+                events.react(hook, &event, maildir_config.collection(), None);
             };
             return maildir::watch(
                 maildir_config,
@@ -401,21 +457,22 @@ fn watch_session(
         }
     }
 
+    #[cfg(not(feature = "maildir"))]
+    if backend.allows_maildir() && config.maildir.is_some() {
+        return Err(error::backend_not_built("maildir", "maildir"));
+    }
+
     #[cfg(feature = "dav")]
     if backend.allows_caldav() {
         if let Some(caldav_config) = &config.caldav {
             let collection = caldav_config.collection();
-            info!(
-                "[{account}] watching `{}` over caldav, polling",
-                collection.value
-            );
+            events.opened("caldav", WatchMethod::Poll, vec![collection]);
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
-                if let Some(hook) = caldav_config.hooks.get(&event) {
-                    hook::run(hook, &event, caldav_config.collection(), None);
-                }
+                let hook = caldav_config.hooks.get(&event);
+                events.react(hook, &event, caldav_config.collection(), None);
             };
             let shared = match &caldav_config.hooks.on_alarm_trigger {
-                Some(hook) => Some(alarms.ensure(account, hook, collection, shutdown)?),
+                Some(hook) => Some(alarms.ensure(account, hook, collection, shutdown, events)?),
                 None => None,
             };
             return dav::watch(
@@ -434,18 +491,19 @@ fn watch_session(
         }
     }
 
+    #[cfg(not(feature = "dav"))]
+    if backend.allows_caldav() && config.caldav.is_some() {
+        return Err(error::backend_not_built("caldav", "dav"));
+    }
+
     #[cfg(feature = "dav")]
     if backend.allows_carddav() {
         if let Some(carddav_config) = &config.carddav {
             let collection = carddav_config.collection();
-            info!(
-                "[{account}] watching `{}` over carddav, polling",
-                collection.value
-            );
+            events.opened("carddav", WatchMethod::Poll, vec![collection]);
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
-                if let Some(hook) = carddav_config.hooks.get(&event) {
-                    hook::run(hook, &event, carddav_config.collection(), None);
-                }
+                let hook = carddav_config.hooks.get(&event);
+                events.react(hook, &event, carddav_config.collection(), None);
             };
             return dav::watch(
                 carddav_config.server(),
@@ -463,28 +521,31 @@ fn watch_session(
         }
     }
 
+    #[cfg(not(feature = "dav"))]
+    if backend.allows_carddav() && config.carddav.is_some() {
+        return Err(error::backend_not_built("carddav", "dav"));
+    }
+
     #[cfg(feature = "msgraph")]
     if backend.allows_msgraph() {
         if let Some(msgraph_config) = &config.msgraph {
-            let collections = msgraph_config
+            let collections: Vec<_> = msgraph_config
                 .collections()
                 .into_iter()
-                .map(|(_, collection)| format!("{} `{}`", collection.name, collection.value))
-                .collect::<Vec<_>>()
-                .join(", ");
+                .map(|(_, collection)| collection)
+                .collect();
             let resolve = msgraph_config.hooks.on_message_add.is_some();
 
             // NOTE: one Graph account watches up to three domains, so the
             // collection a hook templates against follows the event.
             let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
-                if let Some(hook) = msgraph_config.hooks.get(&event)
-                    && let Some(collection) = msgraph_config.collection(event.domain())
-                {
-                    hook::run(hook, &event, collection, summary.as_ref());
+                if let Some(collection) = msgraph_config.collection(event.domain()) {
+                    let hook = msgraph_config.hooks.get(&event);
+                    events.react(hook, &event, collection, summary.as_ref());
                 }
             };
 
-            info!("[{account}] watching {collections} over msgraph, polling");
+            events.opened("msgraph", WatchMethod::Poll, collections);
             return msgraph::watch(
                 msgraph_config,
                 ApiWatchConfig::interval(&msgraph_config.watch),
@@ -499,21 +560,22 @@ fn watch_session(
         }
     }
 
+    #[cfg(not(feature = "msgraph"))]
+    if backend.allows_msgraph() && config.msgraph.is_some() {
+        return Err(error::backend_not_built("msgraph", "msgraph"));
+    }
+
     #[cfg(feature = "gmail")]
     if backend.allows_gmail() {
         if let Some(gmail_config) = &config.gmail {
             let collection = gmail_config.collection();
             let resolve = gmail_config.hooks.on_message_add.is_some();
             let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
-                if let Some(hook) = gmail_config.hooks.get(&event) {
-                    hook::run(hook, &event, gmail_config.collection(), summary.as_ref());
-                }
+                let hook = gmail_config.hooks.get(&event);
+                events.react(hook, &event, gmail_config.collection(), summary.as_ref());
             };
 
-            info!(
-                "[{account}] watching `{}` over gmail, polling",
-                collection.value
-            );
+            events.opened("gmail", WatchMethod::Poll, vec![collection]);
             return gmail::watch(
                 gmail_config,
                 ApiWatchConfig::interval(&gmail_config.watch),
@@ -529,20 +591,21 @@ fn watch_session(
         }
     }
 
+    #[cfg(not(feature = "gmail"))]
+    if backend.allows_gmail() && config.gmail.is_some() {
+        return Err(error::backend_not_built("gmail", "gmail"));
+    }
+
     #[cfg(feature = "gcal")]
     if backend.allows_gcal() {
         if let Some(gcal_config) = &config.gcal {
             let collection = gcal_config.collection();
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
-                if let Some(hook) = gcal_config.hooks.get(&event) {
-                    hook::run(hook, &event, gcal_config.collection(), None);
-                }
+                let hook = gcal_config.hooks.get(&event);
+                events.react(hook, &event, gcal_config.collection(), None);
             };
 
-            info!(
-                "[{account}] watching `{}` over gcal, polling",
-                collection.value
-            );
+            events.opened("gcal", WatchMethod::Poll, vec![collection]);
             return gcal::watch(
                 gcal_config,
                 ApiWatchConfig::interval(&gcal_config.watch),
@@ -556,20 +619,21 @@ fn watch_session(
         }
     }
 
+    #[cfg(not(feature = "gcal"))]
+    if backend.allows_gcal() && config.gcal.is_some() {
+        return Err(error::backend_not_built("gcal", "gcal"));
+    }
+
     #[cfg(feature = "gpeople")]
     if backend.allows_gpeople() {
         if let Some(gpeople_config) = &config.gpeople {
             let collection = gpeople_config.collection();
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
-                if let Some(hook) = gpeople_config.hooks.get(&event) {
-                    hook::run(hook, &event, gpeople_config.collection(), None);
-                }
+                let hook = gpeople_config.hooks.get(&event);
+                events.react(hook, &event, gpeople_config.collection(), None);
             };
 
-            info!(
-                "[{account}] watching `{}` over gpeople, polling",
-                collection.value
-            );
+            events.opened("gpeople", WatchMethod::Poll, vec![collection]);
             return gpeople::watch(
                 gpeople_config,
                 ApiWatchConfig::interval(&gpeople_config.watch),
@@ -583,6 +647,11 @@ fn watch_session(
         }
     }
 
+    #[cfg(not(feature = "gpeople"))]
+    if backend.allows_gpeople() && config.gpeople.is_some() {
+        return Err(error::backend_not_built("gpeople", "gpeople"));
+    }
+
     #[cfg(feature = "pimdir")]
     if backend.allows_pimdir() {
         if let Some(pimdir_config) = &config.pimdir {
@@ -591,17 +660,19 @@ fn watch_session(
                 bail!("Account has no `pimdir.hooks.on-alarm-trigger`, so nothing to watch for");
             };
 
-            info!(
-                "[{account}] watching `{}` over pimdir, polling",
-                collection.value
-            );
-            let shared = alarms.ensure(account, hook, collection, shutdown)?;
+            events.opened("pimdir", WatchMethod::Poll, vec![collection]);
+            let shared = alarms.ensure(account, hook, collection, shutdown, events)?;
             return pimdir::watch(pimdir_config, shutdown, shared);
         }
 
         if backend == Backend::Pimdir {
             bail!("Account has no `pimdir` config block");
         }
+    }
+
+    #[cfg(not(feature = "pimdir"))]
+    if backend.allows_pimdir() && config.pimdir.is_some() {
+        return Err(error::backend_not_built("pimdir", "pimdir"));
     }
 
     bail!(
@@ -653,13 +724,15 @@ impl AlarmRunner {
     }
 
     /// The alarms of this account, starting its thread on the first
-    /// session to fire `hook` for the alarms of `collection`.
+    /// session to fire `hook` for the alarms of `collection`, each firing
+    /// reported to `events`.
     fn ensure(
         &mut self,
         account: &str,
         hook: &ItemHook,
         collection: HookCollection<'_>,
         shutdown: &Arc<AtomicBool>,
+        events: &WatchEvents,
     ) -> Result<&AlarmShared> {
         if let Some(started) = self.started.take() {
             let (shared, _) = self.started.insert(started);
@@ -683,6 +756,7 @@ impl AlarmRunner {
         let value = collection.value.to_owned();
         let thread_shared = shared.clone();
         let thread_shutdown = shutdown.clone();
+        let events = events.clone();
 
         let handle = thread::Builder::new()
             .name(format!("{account}-alarms"))
@@ -692,7 +766,8 @@ impl AlarmRunner {
                         name,
                         value: &value,
                     };
-                    hook::run_alarm(&hook, collection, firing);
+                    let failures = hook::run_alarm(&hook, collection, firing);
+                    events.alarm(collection, firing, failures);
                 })
             })?;
 

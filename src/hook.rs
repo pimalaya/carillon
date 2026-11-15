@@ -12,16 +12,18 @@
 //! same camelCase variables are exported as environment variables on the
 //! spawned command, so both shapes template against one vocabulary.
 //!
-//! A failing hook is logged and never propagated, since a broken script
-//! must not stop the watch.
+//! A failing hook is handed back to the watch, which prints it as an
+//! event and goes on, since a broken script must not stop the watch.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, io};
 
-use anyhow::{Result, bail};
+use anyhow::{Error, Result, bail};
 #[cfg(alarm)]
 use jiff::{Timestamp, tz::TimeZone};
 use log::{trace, warn};
 use pimalaya_config::{command::CommandConfig, notify::NotificationTemplate};
+use schemars::JsonSchema;
+use serde::Serialize;
 
 #[cfg(all(alarm, feature = "notify"))]
 use crate::alarm::AlarmAction;
@@ -69,6 +71,24 @@ const ALARM_VARS: &[&str] = &[
 /// freedesktop sound naming specification.
 #[cfg(all(alarm, feature = "notify"))]
 const ALARM_SOUND: &str = "alarm-clock-elapsed";
+
+/// Which of its two reactions a hook failed to run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum HookReaction {
+    /// The desktop notification.
+    Notify,
+    /// The command.
+    Command,
+}
+
+/// One reaction of a hook that failed, for the watch to report.
+pub struct HookFailure {
+    /// The reaction that failed.
+    pub reaction: HookReaction,
+    /// Why it failed.
+    pub error: Error,
+}
 
 /// The collection a watch is on: what its backend calls it, and which one
 /// it is.
@@ -190,13 +210,14 @@ pub fn validate(
     Ok(())
 }
 
-/// Fires `hook` for `event`, with the summary a resolved arrival carries.
+/// Fires `hook` for `event`, with the summary a resolved arrival carries,
+/// handing back the reactions that failed.
 pub fn run(
     hook: Hook<'_>,
     event: &WatchEvent,
     collection: HookCollection<'_>,
     summary: Option<&ItemSummary>,
-) {
+) -> Vec<HookFailure> {
     trace!("dispatch event: {event:?}");
 
     match hook {
@@ -208,21 +229,29 @@ pub fn run(
             }
             // NOTE: unreachable by construction, a flag hook being what
             // only a flag event resolves to.
-            event => warn!("flag hook resolved for {event:?}, skipping"),
+            event => {
+                warn!("flag hook resolved for {event:?}, skipping");
+                Vec::new()
+            }
         },
     }
 }
 
 /// Fires an item-level hook.
-fn run_item_hook(hook: &ItemHook, vars: BTreeMap<&'static str, String>) {
-    fire(hook.notify.as_ref(), hook.command.as_ref(), &vars);
+fn run_item_hook(hook: &ItemHook, vars: BTreeMap<&'static str, String>) -> Vec<HookFailure> {
+    fire(hook.notify.as_ref(), hook.command.as_ref(), &vars)
 }
 
 /// Fires a flag-level hook for the flag that moved, through its filter.
-fn run_flag_hook(hook: &FlagHook, id: &str, collection: HookCollection<'_>, flag: &str) {
+fn run_flag_hook(
+    hook: &FlagHook,
+    id: &str,
+    collection: HookCollection<'_>,
+    flag: &str,
+) -> Vec<HookFailure> {
     if !hook.flags.is_empty() && !matches_filter(hook, flag) {
         trace!("flag hook skipped: `{flag}` is not in the filter");
-        return;
+        return Vec::new();
     }
 
     let mut vars = seeded(Vocabulary::flag(collection.name));
@@ -231,7 +260,7 @@ fn run_flag_hook(hook: &FlagHook, id: &str, collection: HookCollection<'_>, flag
     vars.insert(collection.name, collection.value.to_string());
     vars.insert(FLAG_VAR, flag.to_string());
 
-    fire(hook.notify.as_ref(), hook.command.as_ref(), &vars);
+    fire(hook.notify.as_ref(), hook.command.as_ref(), &vars)
 }
 
 /// The variables an item-level hook templates against.
@@ -316,9 +345,14 @@ fn insert_party(
 /// Fires `on-alarm-trigger` for one firing of an alarm of `collection`.
 ///
 /// Times reach the hook as RFC 3339 in the system's zone, and an `AUDIO`
-/// alarm's notification asks for the freedesktop alarm sound.
+/// alarm's notification asks for the freedesktop alarm sound. Hands back
+/// the reactions that failed.
 #[cfg(alarm)]
-pub fn run_alarm(hook: &ItemHook, collection: HookCollection<'_>, firing: &AlarmFiring) {
+pub fn run_alarm(
+    hook: &ItemHook,
+    collection: HookCollection<'_>,
+    firing: &AlarmFiring,
+) -> Vec<HookFailure> {
     let zone = TimeZone::system();
     let mut vars = seeded(Vocabulary::alarm(collection.name));
 
@@ -347,13 +381,13 @@ pub fn run_alarm(hook: &ItemHook, collection: HookCollection<'_>, firing: &Alarm
     #[cfg(not(feature = "notify"))]
     let sound = None;
 
-    fire_with(hook.notify.as_ref(), hook.command.as_ref(), &vars, sound);
+    fire_with(hook.notify.as_ref(), hook.command.as_ref(), &vars, sound)
 }
 
 /// An instant as RFC 3339 with the offset `zone` has then, empty when it
 /// is out of range.
 #[cfg(alarm)]
-fn rfc3339(instant: i64, zone: &TimeZone) -> String {
+pub fn rfc3339(instant: i64, zone: &TimeZone) -> String {
     match Timestamp::from_second(instant) {
         Ok(at) => at
             .to_zoned(zone.clone())
@@ -363,34 +397,40 @@ fn rfc3339(instant: i64, zone: &TimeZone) -> String {
     }
 }
 
-/// Runs the two reactions a hook can carry, logging either failure.
+/// Runs the two reactions a hook can carry, handing back either failure.
 fn fire(
     notify: Option<&NotificationTemplate>,
     command: Option<&CommandConfig>,
     vars: &BTreeMap<&'static str, String>,
-) {
-    fire_with(notify, command, vars, None);
+) -> Vec<HookFailure> {
+    fire_with(notify, command, vars, None)
 }
 
 /// Runs the two reactions a hook can carry, the notification asking for
-/// `sound` when one is given, logging either failure.
+/// `sound` when one is given, handing back either failure.
 fn fire_with(
     notify: Option<&NotificationTemplate>,
     command: Option<&CommandConfig>,
     vars: &BTreeMap<&'static str, String>,
     sound: Option<&'static str>,
-) {
+) -> Vec<HookFailure> {
+    let mut failures = Vec::new();
+
     if let Some(notify) = notify
-        && let Err(err) = fire_notification(notify, vars, sound)
+        && let Err(error) = fire_notification(notify, vars, sound)
     {
-        warn!("notify hook failed: {err:#}");
+        let reaction = HookReaction::Notify;
+        failures.push(HookFailure { reaction, error });
     }
 
     if let Some(command) = command
-        && let Err(err) = run_command(command, vars)
+        && let Err(error) = run_command(command, vars)
     {
-        warn!("command hook failed: {err:#}");
+        let reaction = HookReaction::Command;
+        failures.push(HookFailure { reaction, error });
     }
+
+    failures
 }
 
 /// Expands the template and shows the desktop notification.
@@ -421,15 +461,17 @@ fn fire_notification(
 ///
 /// Both TOML shapes, a string handed to the platform shell and a list
 /// spawned directly, become one [`std::process::Command`] here, so there
-/// is one runtime path.
+/// is one runtime path. Its stdout is carillon's stderr, the watch's
+/// stdout holding its events and result alone.
 fn run_command(command: &CommandConfig, vars: &BTreeMap<&'static str, String>) -> Result<()> {
     let status = command
         .to_command()
         .envs(vars.iter().map(|(key, value)| (*key, value.as_str())))
+        .stdout(io::stderr())
         .status()?;
 
     if !status.success() {
-        warn!("command hook exited with {status}");
+        bail!("Hook command exited with {status}");
     }
 
     Ok(())
@@ -451,6 +493,39 @@ mod tests {
 
     fn notified(body: &str) -> NotificationTemplate {
         NotificationTemplate::new("something happened", body).expect("build the template")
+    }
+
+    /// A command exiting non-zero is handed back, for the watch to
+    /// report, where a notification-less hook used to only log it.
+    #[cfg(unix)]
+    #[test]
+    fn a_failing_command_is_handed_back() {
+        let hook = ItemHook {
+            notify: None,
+            command: Some(CommandConfig::Shell(String::from("exit 3"))),
+            ..Default::default()
+        };
+        let event = WatchEvent::ItemAdded {
+            domain: crate::event::WatchDomain::Message,
+            id: String::from("1"),
+        };
+        let collection = HookCollection {
+            name: "mailbox",
+            value: "INBOX",
+        };
+
+        let failures = run(Hook::Item(&hook), &event, collection, None);
+
+        assert_eq!(1, failures.len());
+        assert_eq!(HookReaction::Command, failures[0].reaction);
+        let error = failures[0].error.to_string();
+        assert!(error.contains("exited with"), "{error}");
+
+        let hook = ItemHook {
+            command: Some(CommandConfig::Shell(String::from("true"))),
+            ..hook
+        };
+        assert!(run(Hook::Item(&hook), &event, collection, None).is_empty());
     }
 
     /// The regression this validation exists for: a removal whose body

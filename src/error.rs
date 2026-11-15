@@ -4,9 +4,14 @@
 //! to act on, printed as `code` beside the message under `--json` and in a
 //! `check` row. The message stays for humans and may be reworded at any
 //! time; the code is the contract. A failure with no code prints `"code":
-//! null`. The mechanism (`CodedError`, `code_of`, the report) lives in
-//! `pimalaya_cli::error`, which also raises `usage-invalid` for a command
-//! line the grammar refuses; only the vocabulary is carillon's.
+//! null`. The mechanism (`CodedError`, `code_of`, `with_code`, the report)
+//! lives in `pimalaya_cli::error`, which also raises `usage-invalid` for a
+//! command line the grammar refuses; only the vocabulary and its readers
+//! are carillon's.
+//!
+//! The account `-a` could not take is coded from pimalaya-config's
+//! `AccountError`, and a backend the build leaves out is coded
+//! `backend-not-built` when a command reaches it.
 //!
 //! A server's refusal takes a code of the vocabulary the family shares,
 //! `permission-denied`, `quota-exceeded` and `rate-limited`, read from the
@@ -21,7 +26,8 @@ use std::fmt;
 use anyhow::Error;
 #[cfg(feature = "pimdir")]
 use io_pimdir::client::PimdirError;
-use pimalaya_cli::error::{CodedError, code_of};
+use pimalaya_cli::error::code_of;
+use pimalaya_config::toml::AccountError;
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -79,6 +85,29 @@ pub enum ErrorCode {
     /// Another sync engine version wrote the pimdir store's sync state.
     #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
     SyncVersion,
+    /// No account carries the name `-a` gave.
+    AccountMissing,
+    /// No account is marked default, and `-a` named none.
+    AccountDefaultMissing,
+    /// Several accounts are marked default, and `-a` named none.
+    AccountDefaultSeveral,
+    /// The account declares a backend this build leaves out, which a
+    /// command reached: a build with its cargo feature serves it.
+    #[cfg_attr(
+        all(
+            feature = "imap",
+            feature = "jmap",
+            feature = "maildir",
+            feature = "dav",
+            feature = "msgraph",
+            feature = "gmail",
+            feature = "gcal",
+            feature = "gpeople",
+            feature = "pimdir"
+        ),
+        allow(dead_code)
+    )]
+    BackendNotBuilt,
 }
 
 /// The store codes carillon relays, by io-pimdir's spelling, which
@@ -118,9 +147,26 @@ impl fmt::Display for ErrorCode {
     }
 }
 
-/// A failure carrying `code`, with its own message.
-pub fn coded(code: ErrorCode, message: impl Into<String>) -> Error {
-    CodedError::new(code, message).into()
+/// The failure of a command reaching the `backend` block of an account,
+/// which this build leaves out with its cargo `feature`.
+#[cfg(not(all(
+    feature = "imap",
+    feature = "jmap",
+    feature = "maildir",
+    feature = "dav",
+    feature = "msgraph",
+    feature = "gmail",
+    feature = "gcal",
+    feature = "gpeople",
+    feature = "pimdir"
+)))]
+pub fn backend_not_built(backend: &str, feature: &str) -> Error {
+    let message = format!(
+        "This build leaves out the `{backend}` backend, rebuild with \
+         `--features {feature}`"
+    );
+
+    pimalaya_cli::error::CodedError::new(ErrorCode::BackendNotBuilt, message).into()
 }
 
 /// The code of `err`: the one a coded error in its chain carries, else
@@ -136,6 +182,7 @@ type Reader = fn(&(dyn std::error::Error + 'static)) -> Option<ErrorCode>;
 /// carries: the first cause of `err`'s chain a reader codes.
 fn typed_code(err: &Error) -> Option<ErrorCode> {
     let readers: &[Reader] = &[
+        account_code,
         #[cfg(feature = "dav")]
         crate::dav::refusal_code,
         #[cfg(feature = "gcal")]
@@ -156,6 +203,15 @@ fn typed_code(err: &Error) -> Option<ErrorCode> {
 
     err.chain()
         .find_map(|cause| readers.iter().find_map(|read| read(cause)))
+}
+
+/// The code of the account `-a` could not take.
+fn account_code(cause: &(dyn std::error::Error + 'static)) -> Option<ErrorCode> {
+    match cause.downcast_ref::<AccountError>()? {
+        AccountError::Missing { .. } => Some(ErrorCode::AccountMissing),
+        AccountError::NoDefault => Some(ErrorCode::AccountDefaultMissing),
+        AccountError::SeveralDefaults(_) => Some(ErrorCode::AccountDefaultSeveral),
+    }
 }
 
 /// A Google API error as io-gmail, io-gcal and io-gpeople keep it.
@@ -220,36 +276,6 @@ fn names_rate_limit(answer: &GoogleAnswer<'_>) -> bool {
         || squeezed.contains("perminute")
         || squeezed.contains("per100seconds")
         || (daily && !squeezed.contains("unauthenticated"))
-}
-
-/// The failure as it is reported: `err` itself when the report reads its
-/// code already, else its messages over a coded innermost one, so the
-/// code a protocol's typed error names reaches the failure object.
-pub fn with_code(err: Error) -> Error {
-    if code_of::<ErrorCode>(&err).is_some() {
-        return err;
-    }
-
-    let Some(code) = code(&err) else {
-        return err;
-    };
-
-    chained(Some(code), err.chain().map(ToString::to_string).collect())
-}
-
-/// The failure reading `messages`, outermost first, its innermost one
-/// carrying `code`.
-fn chained(code: Option<ErrorCode>, mut messages: Vec<String>) -> Error {
-    let innermost = messages.pop().unwrap_or_default();
-    let err = match code {
-        Some(code) => coded(code, innermost),
-        None => Error::msg(innermost),
-    };
-
-    messages
-        .into_iter()
-        .rev()
-        .fold(err, |err, message| err.context(message))
 }
 
 #[cfg(all(test, feature = "pimdir"))]

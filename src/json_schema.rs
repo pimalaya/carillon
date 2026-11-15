@@ -5,9 +5,10 @@
 //! payload. [`JsonSchemaCommand`] writes one file per entry. The
 //! `carillon-error` key describes the failure object instead.
 //!
-//! Every runnable command appears but `watch`, which reports its changes
-//! through the hooks and prints nothing; pimalaya-cli registers its own
-//! `completion`, `manual` and `json-schema`.
+//! Every runnable command appears, `watch` twice: its result under
+//! `carillon-watch` and the events it prints before it under
+//! `carillon-watch.events`. pimalaya-cli registers its own `completion`,
+//! `manual` and `json-schema`.
 //!
 //! [`JsonSchemaCommand`]: pimalaya_cli::clap::commands::json_schema::JsonSchemaCommand
 
@@ -24,6 +25,8 @@ pub fn registry() -> JsonSchemaRegistry {
     let mut registry = JsonSchemaRegistry::new("carillon", env!("CARGO_PKG_VERSION"));
 
     registry.insert::<crate::check::CheckOutput>("carillon-check");
+    registry.insert::<crate::stream::WatchOutput>("carillon-watch");
+    registry.insert_events::<crate::stream::WatchStreamEvent>("carillon-watch");
     registry.insert::<ErrorReport<ErrorCode>>("carillon-error");
 
     registry
@@ -39,9 +42,8 @@ mod tests {
     use crate::{check::CheckOutput, cli::Cli, error::ErrorCode};
 
     /// The runnable commands printing nothing, so described by no schema:
-    /// the bare binary prints its help, and `watch` reports through its
-    /// hooks.
-    const SILENT: &[&str] = &["carillon", "carillon-watch"];
+    /// the bare binary prints its help.
+    const SILENT: &[&str] = &["carillon"];
 
     /// Every command that prints is described, and no schema names a
     /// command that is gone.
@@ -62,8 +64,37 @@ mod tests {
     fn the_failure_code_is_typed_by_both_vocabularies() {
         let schema = output_schema::<ErrorReport<ErrorCode>>().to_string();
 
-        for code in ["usage-invalid", "permission-denied", "store-version"] {
+        for code in [
+            "usage-invalid",
+            "permission-denied",
+            "store-version",
+            "account-missing",
+            "account-default-missing",
+            "account-default-several",
+            "backend-not-built",
+        ] {
             assert!(schema.contains(&format!("\"{code}\"")), "{code}: {schema}");
+        }
+    }
+
+    /// Each event `watch` prints is described, tagged by `event`.
+    #[test]
+    fn the_watch_events_are_described() {
+        let events = registry().events["carillon-watch"].to_string();
+
+        for event in [
+            "session-opened",
+            "session-lost",
+            "changed",
+            "hook-failed",
+            "alarm-fired",
+            "item-added",
+            "flag-removed",
+        ] {
+            assert!(
+                events.contains(&format!("\"{event}\"")),
+                "{event}: {events}"
+            );
         }
     }
 

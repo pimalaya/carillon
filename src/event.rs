@@ -11,6 +11,14 @@
 //! talking rather than a gap: mail is immutable, so nothing mail reports
 //! an edit, and a WebDAV poll reads etags, so flags are unknown to it
 //! rather than empty.
+//!
+//! A change is also what `watch` prints, as the `change` of its `changed`
+//! event, tagged by `kind`.
+
+use std::fmt;
+
+use schemars::JsonSchema;
+use serde::Serialize;
 
 /// What a change is about, which is the noun its hook is named after.
 ///
@@ -20,7 +28,8 @@
 // NOTE: which domains can be constructed depends on the backends
 // compiled in, so a reduced feature set leaves some unused.
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum WatchDomain {
     /// A mail message, whichever of IMAP, JMAP and Maildir carries it.
     Message,
@@ -47,10 +56,12 @@ impl WatchDomain {
     }
 }
 
-/// A change in a watched collection, keyed by the backend's own id.
+/// A change in a watched collection, keyed by the backend's own id, as
+/// a hook receives it and a watch prints it, tagged by `kind`.
 // NOTE: same reason as above, for the variants.
 #[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WatchEvent {
     /// An item appeared in the collection.
     ItemAdded {
@@ -126,6 +137,36 @@ impl WatchEvent {
             | Self::ItemChanged { domain, .. }
             | Self::FlagAdded { domain, .. }
             | Self::FlagRemoved { domain, .. } => *domain,
+        }
+    }
+}
+
+/// The noun of the domain, as a hook is named after it.
+impl fmt::Display for WatchDomain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Message => f.write_str("message"),
+            Self::Card => f.write_str("card"),
+            Self::Event => f.write_str("event"),
+            Self::Task => f.write_str("task"),
+        }
+    }
+}
+
+/// The change in words: `message 42 added`, `flag Seen added on message
+/// 42`.
+impl fmt::Display for WatchEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ItemAdded { domain, id } => write!(f, "{domain} {id} added"),
+            Self::ItemRemoved { domain, id } => write!(f, "{domain} {id} removed"),
+            Self::ItemChanged { domain, id } => write!(f, "{domain} {id} changed"),
+            Self::FlagAdded { domain, id, flag } => {
+                write!(f, "flag {flag} added on {domain} {id}")
+            }
+            Self::FlagRemoved { domain, id, flag } => {
+                write!(f, "flag {flag} removed from {domain} {id}")
+            }
         }
     }
 }

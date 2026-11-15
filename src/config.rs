@@ -8,6 +8,8 @@
 //! active one. Every table refuses a key it does not read, the root and
 //! the account included, so a file is not shared with the himalaya
 //! binaries; a key carillon used to read is refused naming where it went.
+//! A backend the build leaves out is no unknown key: its block loads
+//! unread, and a command reaching it fails naming the cargo feature.
 //!
 //! Everything a backend needs lives under it: the collection it watches,
 //! under its own domain's name, how it watches, and the hooks it fires.
@@ -133,6 +135,10 @@ impl Config {
 }
 
 /// Per-account configuration.
+///
+/// A block of a backend the build leaves out is read as anything and kept
+/// as present, so one file serves every build: a command reaching it
+/// fails coded `backend-not-built`, naming the cargo feature.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AccountConfig {
@@ -144,36 +150,71 @@ pub struct AccountConfig {
     #[cfg(network)]
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
+    /// Read and unused: this build has no network backend.
+    #[cfg(not(network))]
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub proxy: Option<de::IgnoredAny>,
     #[cfg(feature = "imap")]
     #[serde(default)]
     pub imap: Option<ImapConfig>,
+    #[cfg(not(feature = "imap"))]
+    #[serde(default)]
+    pub imap: Option<de::IgnoredAny>,
     #[cfg(feature = "jmap")]
     #[serde(default)]
     pub jmap: Option<JmapConfig>,
+    #[cfg(not(feature = "jmap"))]
+    #[serde(default)]
+    pub jmap: Option<de::IgnoredAny>,
     #[cfg(feature = "maildir")]
     #[serde(default)]
     pub maildir: Option<MaildirConfig>,
+    #[cfg(not(feature = "maildir"))]
+    #[serde(default)]
+    pub maildir: Option<de::IgnoredAny>,
     #[cfg(feature = "dav")]
     #[serde(default)]
     pub caldav: Option<CaldavConfig>,
+    #[cfg(not(feature = "dav"))]
+    #[serde(default)]
+    pub caldav: Option<de::IgnoredAny>,
     #[cfg(feature = "dav")]
     #[serde(default)]
     pub carddav: Option<CarddavConfig>,
+    #[cfg(not(feature = "dav"))]
+    #[serde(default)]
+    pub carddav: Option<de::IgnoredAny>,
     #[cfg(feature = "msgraph")]
     #[serde(default)]
     pub msgraph: Option<MsgraphConfig>,
+    #[cfg(not(feature = "msgraph"))]
+    #[serde(default)]
+    pub msgraph: Option<de::IgnoredAny>,
     #[cfg(feature = "gmail")]
     #[serde(default)]
     pub gmail: Option<GmailConfig>,
+    #[cfg(not(feature = "gmail"))]
+    #[serde(default)]
+    pub gmail: Option<de::IgnoredAny>,
     #[cfg(feature = "gcal")]
     #[serde(default)]
     pub gcal: Option<GcalConfig>,
+    #[cfg(not(feature = "gcal"))]
+    #[serde(default)]
+    pub gcal: Option<de::IgnoredAny>,
     #[cfg(feature = "gpeople")]
     #[serde(default)]
     pub gpeople: Option<GpeopleConfig>,
+    #[cfg(not(feature = "gpeople"))]
+    #[serde(default)]
+    pub gpeople: Option<de::IgnoredAny>,
     #[cfg(feature = "pimdir")]
     #[serde(default)]
     pub pimdir: Option<PimdirConfig>,
+    #[cfg(not(feature = "pimdir"))]
+    #[serde(default)]
+    pub pimdir: Option<de::IgnoredAny>,
     /// Refused: the mirador `folder`, now the backend's collection key.
     #[serde(default, deserialize_with = "refuse_folder")]
     #[allow(dead_code)]

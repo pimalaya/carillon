@@ -14,10 +14,10 @@
 //! error the stable codes a failure carries, each backend reading its own
 //! protocol's refusals into them.
 //!
-//! A command exits 0 on success, 1 on a failure, printed under `--json`
-//! as the failure object with its code, 2 on a command line the grammar
-//! refuses (`usage-invalid`), and 3 on a `check` that printed its report
-//! with a failed backend.
+//! A command exits 0 on success, a watch stopped by a signal included, 1
+//! on a failure, printed under `--json` as the failure object with its
+//! code, 2 on a command line the grammar refuses (`usage-invalid`), and 3
+//! on a `check` that printed its report with a failed backend.
 //! No configuration is ever written: an account is written by hand from
 //! config.sample.toml, which a person at a terminal missing one is
 //! welcomed to by pimalaya-cli's welcome, a script or a JSON caller
@@ -28,7 +28,8 @@
 //! forwards what it reports to the hooks, and reopens it after a capped
 //! backoff, resolving the credential again on every attempt. What a lost
 //! IMAP or Gmail session knew is handed to the next one, which reports
-//! what moved meanwhile.
+//! what moved meanwhile. stream holds what it prints: one event per thing
+//! a session observed, then one result once a signal stopped it.
 //!
 //! The backends: imap, jmap, maildir, dav, msgraph, gmail, gcal, gpeople
 //! and pimdir, each behind its cargo feature, learning about changes its
@@ -102,6 +103,7 @@ mod pimdir;
 mod poll;
 #[cfg(all(test, api))]
 mod scripted;
+mod stream;
 mod watch;
 
 use std::{path::PathBuf, process};
@@ -110,7 +112,7 @@ use anyhow::Result;
 use clap::CommandFactory;
 use pimalaya_cli::{
     clap::{args::LogFlags, parse},
-    error::{EXIT_FAILURE, ErrorReport},
+    error::{EXIT_FAILURE, ErrorReport, with_code},
     log::Logger,
     printer::StdoutPrinter,
     welcome::{is_wanted, shipped_sample},
@@ -126,6 +128,12 @@ use crate::{
 fn main() {
     let cli = parse::<Cli>();
     let mut printer = StdoutPrinter::new(&cli.json);
+
+    // NOTE: a watch prints its events to a pipe too, a status bar reading
+    // them as they come.
+    if matches!(cli.command, Some(Command::Watch(_))) {
+        printer = printer.streaming();
+    }
     let config_paths = &cli.config.paths;
     let account_name = cli.account.name.as_deref();
 
@@ -150,7 +158,10 @@ fn main() {
         process::exit(EXIT_FAILURE);
     }
 
-    ErrorReport::<ErrorCode>::eval_coded(&mut printer, result.map_err(error::with_code));
+    ErrorReport::<ErrorCode>::eval_coded(
+        &mut printer,
+        result.map_err(|err| with_code(err, error::code)),
+    );
 }
 
 /// Runs the parsed command, or meets a bare `carillon` with the help,

@@ -85,6 +85,12 @@ impl CheckCommand {
             report.backends.push(check_imap(imap_config, &mut resolver));
         }
 
+        #[cfg(not(feature = "imap"))]
+        if backend.allows_imap() && account_config.imap.is_some() {
+            let err = error::backend_not_built("imap", "imap");
+            report.backends.push(BackendCheck::from("imap", Err(err)));
+        }
+
         #[cfg(feature = "jmap")]
         if backend.allows_jmap()
             && let Some(jmap_config) = account_config.jmap.clone()
@@ -92,11 +98,25 @@ impl CheckCommand {
             report.backends.push(check_jmap(jmap_config, &mut resolver));
         }
 
+        #[cfg(not(feature = "jmap"))]
+        if backend.allows_jmap() && account_config.jmap.is_some() {
+            let err = error::backend_not_built("jmap", "jmap");
+            report.backends.push(BackendCheck::from("jmap", Err(err)));
+        }
+
         #[cfg(feature = "maildir")]
         if backend.allows_maildir()
             && let Some(maildir_config) = account_config.maildir.clone()
         {
             report.backends.push(check_maildir(maildir_config));
+        }
+
+        #[cfg(not(feature = "maildir"))]
+        if backend.allows_maildir() && account_config.maildir.is_some() {
+            let err = error::backend_not_built("maildir", "maildir");
+            report
+                .backends
+                .push(BackendCheck::from("maildir", Err(err)));
         }
 
         #[cfg(feature = "dav")]
@@ -112,6 +132,12 @@ impl CheckCommand {
             ));
         }
 
+        #[cfg(not(feature = "dav"))]
+        if backend.allows_caldav() && account_config.caldav.is_some() {
+            let err = error::backend_not_built("caldav", "dav");
+            report.backends.push(BackendCheck::from("caldav", Err(err)));
+        }
+
         #[cfg(feature = "dav")]
         if backend.allows_carddav()
             && let Some(carddav_config) = account_config.carddav.clone()
@@ -125,12 +151,28 @@ impl CheckCommand {
             ));
         }
 
+        #[cfg(not(feature = "dav"))]
+        if backend.allows_carddav() && account_config.carddav.is_some() {
+            let err = error::backend_not_built("carddav", "dav");
+            report
+                .backends
+                .push(BackendCheck::from("carddav", Err(err)));
+        }
+
         #[cfg(feature = "msgraph")]
         if backend.allows_msgraph()
             && let Some(msgraph_config) = account_config.msgraph.clone()
         {
             let result = msgraph::probe(&msgraph_config, &mut resolver);
             report.backends.push(BackendCheck::from("msgraph", result));
+        }
+
+        #[cfg(not(feature = "msgraph"))]
+        if backend.allows_msgraph() && account_config.msgraph.is_some() {
+            let err = error::backend_not_built("msgraph", "msgraph");
+            report
+                .backends
+                .push(BackendCheck::from("msgraph", Err(err)));
         }
 
         #[cfg(feature = "gmail")]
@@ -141,12 +183,24 @@ impl CheckCommand {
             report.backends.push(BackendCheck::from("gmail", result));
         }
 
+        #[cfg(not(feature = "gmail"))]
+        if backend.allows_gmail() && account_config.gmail.is_some() {
+            let err = error::backend_not_built("gmail", "gmail");
+            report.backends.push(BackendCheck::from("gmail", Err(err)));
+        }
+
         #[cfg(feature = "gcal")]
         if backend.allows_gcal()
             && let Some(gcal_config) = account_config.gcal.clone()
         {
             let result = gcal::probe(&gcal_config, &mut resolver);
             report.backends.push(BackendCheck::from("gcal", result));
+        }
+
+        #[cfg(not(feature = "gcal"))]
+        if backend.allows_gcal() && account_config.gcal.is_some() {
+            let err = error::backend_not_built("gcal", "gcal");
+            report.backends.push(BackendCheck::from("gcal", Err(err)));
         }
 
         #[cfg(feature = "gpeople")]
@@ -157,12 +211,26 @@ impl CheckCommand {
             report.backends.push(BackendCheck::from("gpeople", result));
         }
 
+        #[cfg(not(feature = "gpeople"))]
+        if backend.allows_gpeople() && account_config.gpeople.is_some() {
+            let err = error::backend_not_built("gpeople", "gpeople");
+            report
+                .backends
+                .push(BackendCheck::from("gpeople", Err(err)));
+        }
+
         #[cfg(feature = "pimdir")]
         if backend.allows_pimdir()
             && let Some(pimdir_config) = account_config.pimdir.clone()
         {
             let result = pimdir::probe(&pimdir_config);
             report.backends.push(BackendCheck::from("pimdir", result));
+        }
+
+        #[cfg(not(feature = "pimdir"))]
+        if backend.allows_pimdir() && account_config.pimdir.is_some() {
+            let err = error::backend_not_built("pimdir", "pimdir");
+            report.backends.push(BackendCheck::from("pimdir", Err(err)));
         }
 
         if report.backends.is_empty() {

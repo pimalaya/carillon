@@ -33,11 +33,13 @@ default = true
 # --------------------------------------------------------------------------------
 
 # Declare one or more backend blocks below; `-b/--backend` picks one, the first
-# declared by default. Each block names the collection it watches (JMAP and
-# Graph take one per domain) and its hooks under `<backend>.hooks`, each named
-# `on-<subject>-<verb>` (`on-message-add`, `on-flag-remove`, `on-card-change`)
-# and firing a `notify` notification, a `command` (shell string or [program,
-# args...] list), or both. Hooks template against $id, $collection,
+# declared by default. A block of a backend the build leaves out loads, and a
+# command reaching it fails naming the cargo feature to build with. Each block
+# names the collection it watches (JMAP and Graph take one per domain) and its
+# hooks under `<backend>.hooks`, each named `on-<subject>-<verb>`
+# (`on-message-add`, `on-flag-remove`, `on-card-change`) and firing a `notify`
+# notification, a `command` (shell string or [program, args...] list), or both.
+# Hooks template against $id, $collection,
 # $mailbox/$calendar/$addressbook, $flag for flag hooks and envelope variables
 # ($subject, $sender…) for message arrivals, camelCase ($senderName);
 # `${name:-default}` covers an empty value. A secret is `raw = "..."` or
