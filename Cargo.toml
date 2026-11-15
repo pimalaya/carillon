@@ -49,7 +49,6 @@ anyhow = "1"
 base64 = { version = "0.23", optional = true }
 ceichas = { version = "0.1", optional = true }
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
-ctrlc = { version = "3", features = ["termination"] }
 io-http = { version = "0.8", default-features = false, optional = true }
 io-gcal = { version = "0.4", default-features = false, optional = true }
 io-gmail = { version = "0.8", default-features = false, optional = true }
@@ -64,7 +63,7 @@ io-sasl = { version = "0.2", default-features = false, features = ["scram"] }
 io-webdav = { version = "0.8", default-features = false, optional = true }
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"], optional = true }
 log = "0.4"
-pimalaya-cli = { version = "0.4", default-features = false, features = ["terminal"] }
+pimalaya-cli = { version = "0.4", default-features = false, features = ["signal", "terminal"] }
 pimalaya-config = { version = "0.4", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.4", default-features = false, features = ["std"] }
 schemars = "1"
@@ -78,4 +77,5 @@ ceichas = { git = "https://github.com/pimalaya/ceichas", rev = "661be05e8dba827e
 io-gcal = { git = "https://github.com/pimalaya/io-gcal", rev = "dbb4481cd77ef65ca451420cb4e087fdccfe6fdb" }
 io-gpeople = { git = "https://github.com/pimalaya/io-gpeople", rev = "e4a9cac80d023688118dbae88f8535145e8d2c9b" }
 io-webdav = { git = "https://github.com/pimalaya/io-webdav", rev = "185ab63be5859c5ef6115bef97e4df5cb1187973" }
-pimalaya-cli = { git = "https://github.com/pimalaya/cli", rev = "3bada992cde034a6aa9474c169b6e2f892776db1" }
+pimalaya-cli = { git = "https://github.com/pimalaya/cli", rev = "8190dc544e277aeeba6acc43817100179f19643b" }
+pimalaya-config = { git = "https://github.com/pimalaya/config", rev = "d5a33cba3fe9826b82f15a479043a7f79ca742ce" }

@@ -213,7 +213,6 @@ dependencies = [
  "base64",
  "ceichas",
  "clap",
- "ctrlc",
  "ical-rs",
  "io-gcal",
  "io-gmail",
@@ -1658,13 +1657,14 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "pimalaya-cli"
 version = "0.4.0"
-source = "git+https://github.com/pimalaya/cli?rev=3bada992cde034a6aa9474c169b6e2f892776db1#3bada992cde034a6aa9474c169b6e2f892776db1"
+source = "git+https://github.com/pimalaya/cli?rev=8190dc544e277aeeba6acc43817100179f19643b#8190dc544e277aeeba6acc43817100179f19643b"
 dependencies = [
  "anyhow",
  "base64-codec",
  "clap",
  "clap_complete",
  "clap_mangen",
+ "ctrlc",
  "dirs",
  "env_logger",
  "log",
@@ -1679,8 +1679,7 @@ dependencies = [
 [[package]]
 name = "pimalaya-config"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10789cb95e1f226e0f85b2f52eed57c75a88fac1008f371e383f4aa05d2311ba"
+source = "git+https://github.com/pimalaya/config?rev=d5a33cba3fe9826b82f15a479043a7f79ca742ce#d5a33cba3fe9826b82f15a479043a7f79ca742ce"
 dependencies = [
  "anyhow",
  "dirs",
