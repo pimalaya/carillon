@@ -75,7 +75,7 @@ use crate::{
 #[cfg(feature = "dav")]
 use crate::{
     config::DavWatchConfig,
-    dav::{self, DavKind},
+    dav::{self, DavKind, DavTarget},
 };
 #[cfg(feature = "maildir")]
 use crate::{config::MaildirWatchConfig, maildir};
@@ -338,30 +338,28 @@ fn watch_session(
             };
 
             return match &imap_config.watch {
-                Some(ImapWatchConfig::Poll(poll)) => {
-                    events.opened("imap", WatchMethod::Poll, vec![collection]);
-                    imap::watch_poll(
-                        imap_config,
-                        collection.value,
-                        poll.interval(),
-                        &mut resume.imap,
-                        shutdown,
-                        &mut on_event,
-                    )
-                }
+                Some(ImapWatchConfig::Poll(poll)) => imap::watch_poll(
+                    imap_config,
+                    collection.value,
+                    poll.interval(),
+                    &mut resume.imap,
+                    shutdown,
+                    || events.opened("imap", WatchMethod::Poll, vec![collection]),
+                    &mut on_event,
+                ),
                 watch => {
                     let idle = match watch {
                         Some(ImapWatchConfig::Idle(idle)) => idle.clone(),
                         _ => IdleWatchConfig::default(),
                     };
 
-                    events.opened("imap", WatchMethod::Idle, vec![collection]);
                     imap::watch_idle(
                         imap_config,
                         collection.value,
                         idle.timeout(),
                         &mut resume.imap,
                         shutdown,
+                        || events.opened("imap", WatchMethod::Idle, vec![collection]),
                         &mut on_event,
                     )
                 }
@@ -398,23 +396,21 @@ fn watch_session(
             };
 
             return match &jmap_config.watch {
-                Some(JmapWatchConfig::Poll(poll)) => {
-                    events.opened("jmap", WatchMethod::Poll, collections);
-                    jmap::watch_poll(
-                        jmap_config,
-                        poll.interval(),
-                        resolve,
-                        shutdown,
-                        &mut on_event,
-                    )
-                }
+                Some(JmapWatchConfig::Poll(poll)) => jmap::watch_poll(
+                    jmap_config,
+                    poll.interval(),
+                    resolve,
+                    shutdown,
+                    || events.opened("jmap", WatchMethod::Poll, collections),
+                    &mut on_event,
+                ),
                 watch => {
                     let ping = match watch {
                         Some(JmapWatchConfig::Push(push)) => push.ping,
                         _ => PushWatchConfig::default().ping,
                     };
-                    events.opened("jmap", WatchMethod::Push, collections);
-                    jmap::watch_push(jmap_config, ping, resolve, shutdown, &mut on_event)
+                    let on_open = || events.opened("jmap", WatchMethod::Push, collections);
+                    jmap::watch_push(jmap_config, ping, resolve, shutdown, on_open, &mut on_event)
                 }
             };
         }
@@ -438,7 +434,6 @@ fn watch_session(
                 .clone()
                 .unwrap_or(MaildirWatchConfig::Poll(Default::default()));
 
-            events.opened("maildir", WatchMethod::Poll, vec![collection]);
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
                 let hook = maildir_config.hooks.get(&event);
                 events.react(hook, &event, maildir_config.collection(), None);
@@ -448,6 +443,7 @@ fn watch_session(
                 collection.value,
                 poll.interval(),
                 shutdown,
+                || events.opened("maildir", WatchMethod::Poll, vec![collection]),
                 &mut on_event,
             );
         }
@@ -466,7 +462,6 @@ fn watch_session(
     if backend.allows_caldav() {
         if let Some(caldav_config) = &config.caldav {
             let collection = caldav_config.collection();
-            events.opened("caldav", WatchMethod::Poll, vec![collection]);
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
                 let hook = caldav_config.hooks.get(&event);
                 events.react(hook, &event, caldav_config.collection(), None);
@@ -477,11 +472,14 @@ fn watch_session(
             };
             return dav::watch(
                 caldav_config.server(),
-                DavKind::Calendar(caldav_config.hooks.domains()),
-                collection.value,
+                DavTarget {
+                    collection: collection.value,
+                    kind: DavKind::Calendar(caldav_config.hooks.domains()),
+                },
                 dav_interval(&caldav_config.watch),
                 shutdown,
                 shared,
+                || events.opened("caldav", WatchMethod::Poll, vec![collection]),
                 &mut on_event,
             );
         }
@@ -500,18 +498,20 @@ fn watch_session(
     if backend.allows_carddav() {
         if let Some(carddav_config) = &config.carddav {
             let collection = carddav_config.collection();
-            events.opened("carddav", WatchMethod::Poll, vec![collection]);
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
                 let hook = carddav_config.hooks.get(&event);
                 events.react(hook, &event, carddav_config.collection(), None);
             };
             return dav::watch(
                 carddav_config.server(),
-                DavKind::Addressbook,
-                collection.value,
+                DavTarget {
+                    collection: collection.value,
+                    kind: DavKind::Addressbook,
+                },
                 dav_interval(&carddav_config.watch),
                 shutdown,
                 None,
+                || events.opened("carddav", WatchMethod::Poll, vec![collection]),
                 &mut on_event,
             );
         }
@@ -545,12 +545,12 @@ fn watch_session(
                 }
             };
 
-            events.opened("msgraph", WatchMethod::Poll, collections);
             return msgraph::watch(
                 msgraph_config,
                 ApiWatchConfig::interval(&msgraph_config.watch),
                 resolve,
                 shutdown,
+                || events.opened("msgraph", WatchMethod::Poll, collections),
                 &mut on_event,
             );
         }
@@ -575,13 +575,13 @@ fn watch_session(
                 events.react(hook, &event, gmail_config.collection(), summary.as_ref());
             };
 
-            events.opened("gmail", WatchMethod::Poll, vec![collection]);
             return gmail::watch(
                 gmail_config,
                 ApiWatchConfig::interval(&gmail_config.watch),
                 resolve,
                 &mut resume.gmail,
                 shutdown,
+                || events.opened("gmail", WatchMethod::Poll, vec![collection]),
                 &mut on_event,
             );
         }
@@ -605,11 +605,11 @@ fn watch_session(
                 events.react(hook, &event, gcal_config.collection(), None);
             };
 
-            events.opened("gcal", WatchMethod::Poll, vec![collection]);
             return gcal::watch(
                 gcal_config,
                 ApiWatchConfig::interval(&gcal_config.watch),
                 shutdown,
+                || events.opened("gcal", WatchMethod::Poll, vec![collection]),
                 &mut on_event,
             );
         }
@@ -633,11 +633,11 @@ fn watch_session(
                 events.react(hook, &event, gpeople_config.collection(), None);
             };
 
-            events.opened("gpeople", WatchMethod::Poll, vec![collection]);
             return gpeople::watch(
                 gpeople_config,
                 ApiWatchConfig::interval(&gpeople_config.watch),
                 shutdown,
+                || events.opened("gpeople", WatchMethod::Poll, vec![collection]),
                 &mut on_event,
             );
         }
@@ -660,9 +660,9 @@ fn watch_session(
                 bail!("Account has no `pimdir.hooks.on-alarm-trigger`, so nothing to watch for");
             };
 
-            events.opened("pimdir", WatchMethod::Poll, vec![collection]);
             let shared = alarms.ensure(account, hook, collection, shutdown, events)?;
-            return pimdir::watch(pimdir_config, shutdown, shared);
+            let on_open = || events.opened("pimdir", WatchMethod::Poll, vec![collection]);
+            return pimdir::watch(pimdir_config, shutdown, shared, on_open);
         }
 
         if backend == Backend::Pimdir {

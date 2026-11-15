@@ -145,15 +145,20 @@ pub fn parse_server(server: &str) -> Result<Url> {
 /// Every round asks each domain's `/changes` what moved since the state
 /// it last saw; a round that finds the states unmoved costs one request
 /// per domain.
+///
+/// `on_open` is called once the session is up and its collections read,
+/// right before the first wait.
 pub fn watch_poll(
     config: &JmapConfig,
     interval: Option<Duration>,
     resolve: bool,
     shutdown: &Arc<AtomicBool>,
+    on_open: impl FnOnce(),
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let interval = interval.unwrap_or(POLL_INTERVAL);
     let (mut client, mut watched) = arm(config)?;
+    on_open();
 
     while !shutdown.load(Ordering::SeqCst) {
         if !poll::sleep(interval, shutdown) {
@@ -173,14 +178,19 @@ pub fn watch_poll(
 /// hold, then dropped for a round, which leaves the loop looking like an
 /// IMAP IDLE. It holds its own connection, the client's being the
 /// round's.
+///
+/// `on_open` is called once the session is up and its collections read,
+/// right before the first wait.
 pub fn watch_push(
     config: &JmapConfig,
     ping: u64,
     resolve: bool,
     shutdown: &Arc<AtomicBool>,
+    on_open: impl FnOnce(),
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let (mut client, mut watched) = arm(config)?;
+    on_open();
     let mut last_event_id = None;
 
     while !shutdown.load(Ordering::SeqCst) {

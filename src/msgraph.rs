@@ -111,11 +111,15 @@ pub fn probe(config: &MsgraphConfig, resolver: &mut SecretResolver) -> Result<()
 
 /// Watches every configured collection by polling, until `shutdown` is
 /// set.
+///
+/// `on_open` is called once the session is up and its collections read,
+/// right before the first wait.
 pub fn watch(
     config: &MsgraphConfig,
     interval: Option<Duration>,
     resolve: bool,
     shutdown: &Arc<AtomicBool>,
+    on_open: impl FnOnce(),
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let interval = interval.unwrap_or(POLL_INTERVAL);
@@ -130,6 +134,8 @@ pub fn watch(
             resolve,
         )?);
     }
+
+    on_open();
 
     while !shutdown.load(Ordering::SeqCst) {
         if !poll::sleep(interval, shutdown) {

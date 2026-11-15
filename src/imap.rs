@@ -127,16 +127,26 @@ pub fn open(
 ///
 /// `resume` holds what the previous watch of the account knew, taken to
 /// resume from and left for the next one when the connection is lost.
+///
+/// `on_open` is called once the session is authenticated and its watch
+/// started, the mailbox being examined after it.
 pub fn watch_idle(
     config: &ImapConfig,
     collection: &str,
     timeout: Option<Duration>,
     resume: &mut Option<ImapMailboxWatchState>,
     shutdown: &Arc<AtomicBool>,
+    on_open: impl FnOnce(),
     on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     watch(
-        config, collection, timeout, None, resume, shutdown, on_event,
+        config,
+        collection,
+        Wait::Idle(timeout),
+        resume,
+        shutdown,
+        on_open,
+        on_event,
     )
 }
 
@@ -146,29 +156,51 @@ pub fn watch_idle(
 /// For a server whose IDLE cannot be trusted: it costs a re-read per
 /// interval and notices a change that much later, which is why it is
 /// asked for rather than fallen back on.
+///
+/// `on_open` is called once the session is authenticated and its watch
+/// started, the mailbox being examined after it.
 pub fn watch_poll(
     config: &ImapConfig,
     collection: &str,
     interval: Option<Duration>,
     resume: &mut Option<ImapMailboxWatchState>,
     shutdown: &Arc<AtomicBool>,
+    on_open: impl FnOnce(),
     on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
-    let interval = Some(interval.unwrap_or(POLL_INTERVAL));
+    let interval = interval.unwrap_or(POLL_INTERVAL);
 
     watch(
-        config, collection, None, interval, resume, shutdown, on_event,
+        config,
+        collection,
+        Wait::Poll(interval),
+        resume,
+        shutdown,
+        on_open,
+        on_event,
     )
 }
 
+/// How a watch waits for the server between two reads of its mailbox.
+enum Wait {
+    /// Holds IDLE, re-issued after the timeout given, io-imap's own
+    /// default when `None`.
+    Idle(Option<Duration>),
+    /// Re-reads the mailbox on the interval given.
+    Poll(Duration),
+}
+
 /// Opens the session, drains its watch stream, and closes it either way.
+///
+/// `on_open` is called once the session is connected and authenticated
+/// and its watch handed to io-imap, before the first wait.
 fn watch(
     config: &ImapConfig,
     collection: &str,
-    idle_timeout: Option<Duration>,
-    poll: Option<Duration>,
+    wait: Wait,
     resume: &mut Option<ImapMailboxWatchState>,
     shutdown: &Arc<AtomicBool>,
+    on_open: impl FnOnce(),
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let (client, capability) = open(config, &mut SecretResolver::new())?;
@@ -179,6 +211,10 @@ fn watch(
         debug!("resuming the imap watch from what the last one knew");
     }
 
+    let (idle_timeout, poll) = match wait {
+        Wait::Idle(timeout) => (timeout, None),
+        Wait::Poll(interval) => (None, Some(interval)),
+    };
     let opts = ImapMailboxWatchStreamOptions {
         resume_from: resume.take(),
         shutdown_poll: READ_TIMEOUT,
@@ -186,6 +222,10 @@ fn watch(
         poll,
     };
     let stream = client.watch_mailbox(watched, &capability, opts)?;
+
+    // NOTE: io-imap examines the mailbox on its worker and reports no
+    // readiness, so a refused EXAMINE still comes after this.
+    on_open();
 
     let result = drain(&stream, shutdown, &mut on_event);
     // NOTE: this winds the worker down cleanly, whether the exit is a
@@ -480,6 +520,7 @@ pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::{Cell, RefCell},
         io::{BufRead, BufReader},
         net::{TcpListener, TcpStream},
         thread,
@@ -551,20 +592,28 @@ mod tests {
         }
     }
 
+    /// Runs one polling watch until its first event, answering what it
+    /// ended on, the events it reported, and how many of them came before
+    /// the session was reported open, `None` when it never was.
     fn poll(
         config: &ImapConfig,
         resume: &mut Option<ImapMailboxWatchState>,
-    ) -> (Result<()>, Vec<WatchEvent>) {
+    ) -> (Result<()>, Vec<WatchEvent>, Option<usize>) {
         let shutdown = Arc::new(AtomicBool::new(false));
-        let mut events = Vec::new();
+        let events = RefCell::new(Vec::new());
+        let opened = Cell::new(None);
         let interval = Some(Duration::from_millis(10));
 
-        let result = watch_poll(config, "INBOX", interval, resume, &shutdown, |event, _| {
-            events.push(event);
+        let on_open = || opened.set(Some(events.borrow().len()));
+        let on_event = |event, _| {
+            events.borrow_mut().push(event);
             shutdown.store(true, Ordering::SeqCst);
-        });
+        };
+        let result = watch_poll(
+            config, "INBOX", interval, resume, &shutdown, on_open, on_event,
+        );
 
-        (result, events)
+        (result, events.into_inner(), opened.get())
     }
 
     #[test]
@@ -572,12 +621,13 @@ mod tests {
         let config = serve(vec![(1, vec![1]), (1, vec![1, 2])]);
         let mut resume = None;
 
-        let (lost, events) = poll(&config, &mut resume);
+        let (lost, events, _) = poll(&config, &mut resume);
         assert!(lost.is_err());
         assert!(events.is_empty(), "got {events:?}");
         assert!(resume.is_some());
 
-        let (_, events) = poll(&config, &mut resume);
+        let (_, events, opened) = poll(&config, &mut resume);
+        assert_eq!(Some(0), opened, "the session opens before it reports");
         assert_eq!(
             vec![WatchEvent::ItemAdded {
                 domain: WatchDomain::Message,
@@ -592,14 +642,72 @@ mod tests {
         let config = serve(vec![(1, vec![1]), (2, vec![1, 2])]);
         let mut resume = None;
 
-        let (lost, _) = poll(&config, &mut resume);
+        let (lost, _, _) = poll(&config, &mut resume);
         assert!(lost.is_err());
         assert!(resume.is_some());
 
-        let (refused, events) = poll(&config, &mut resume);
+        let (refused, events, _) = poll(&config, &mut resume);
         assert!(refused.is_err());
         assert!(events.is_empty(), "got {events:?}");
         assert!(resume.is_none());
+    }
+
+    /// Starts a server refusing every authentication, taking one
+    /// connection.
+    fn refuse_auth() -> ImapConfig {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+
+            stream
+                .write_all(b"* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] ready\r\n")
+                .unwrap();
+
+            loop {
+                let mut line = String::new();
+
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    return;
+                }
+
+                let mut words = line.split_whitespace();
+                let tag = words.next().unwrap_or_default();
+                let answer = match words.next().unwrap_or_default() {
+                    "AUTHENTICATE" | "LOGIN" => {
+                        format!("{tag} NO [AUTHENTICATIONFAILED] refused\r\n")
+                    }
+                    _ => format!("{tag} OK done\r\n"),
+                };
+
+                if stream.write_all(answer.as_bytes()).is_err() {
+                    return;
+                }
+            }
+        });
+
+        from_str(&format!(
+            "mailbox = \"INBOX\"\nserver = \"imap://{addr}\"\n\
+             sasl.plain.username = \"alice\"\n\
+             sasl.plain.password.raw = \"wrong\"\n"
+        ))
+        .unwrap()
+    }
+
+    /// A session the server refuses to authenticate is never reported
+    /// open, only lost.
+    #[test]
+    fn a_refused_authentication_never_opens_the_session() {
+        let config = refuse_auth();
+
+        let (result, events, opened) = poll(&config, &mut None);
+        assert!(result.is_err());
+        assert!(events.is_empty(), "got {events:?}");
+        assert_eq!(None, opened);
     }
 
     /// Starts a server refusing every EXAMINE with the response code
@@ -650,7 +758,7 @@ mod tests {
     fn a_watch_refused_with_noperm_is_permission_denied() {
         let config = refuse("NOPERM");
 
-        let (result, _) = poll(&config, &mut None);
+        let (result, _, _) = poll(&config, &mut None);
         let err = result.unwrap_err();
         assert_eq!(
             Some(ErrorCode::PermissionDenied),

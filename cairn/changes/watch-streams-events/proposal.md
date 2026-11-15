@@ -24,4 +24,4 @@ pimalaya-cli 51ce8b1 (pushed) adds the family requirement "A long-lived command 
 
 ## Open
 
-- `session-opened` is printed when a session starts, before its connection is proven: a server refusing it prints `session-opened` then `session-lost`.
+- Resolved the same day (cairn/log/2026-11-15-session-opened-once-established.md): `session-opened` waits until the session is established, so a server refusing it prints `session-lost` alone. Still open: an IMAP mailbox the server refuses to EXAMINE prints `session-opened` then `session-lost`, io-imap examining it on its worker without reporting readiness.

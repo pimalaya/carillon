@@ -94,7 +94,8 @@ pub enum WatchMethod {
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum WatchStreamEvent {
-    /// A session of an account opened and watches its collections.
+    /// A session of an account is established and about to wait for
+    /// changes: connected, authenticated and its collections read.
     #[serde(rename_all = "camelCase")]
     SessionOpened {
         /// The account.
@@ -279,7 +280,7 @@ impl WatchEvents {
         let _ = self.sender.send(event);
     }
 
-    /// A session opened over `backend`, watching `collections`.
+    /// A session over `backend` is established and watches `collections`.
     pub fn opened(
         &self,
         backend: &'static str,

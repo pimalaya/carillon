@@ -88,12 +88,16 @@ pub fn probe(config: &GmailConfig, resolver: &mut SecretResolver) -> Result<()> 
 ///
 /// `cursor` is how far the previous watch of the account read, which
 /// this one reads from at once, and where it leaves its own.
+///
+/// `on_open` is called once the session is up and its collection read,
+/// right before the first wait.
 pub fn watch(
     config: &GmailConfig,
     interval: Option<Duration>,
     resolve: bool,
     cursor: &mut Option<String>,
     shutdown: &Arc<AtomicBool>,
+    on_open: impl FnOnce(),
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let interval = interval.unwrap_or(POLL_INTERVAL);
@@ -102,6 +106,7 @@ pub fn watch(
     let mut wait = cursor.is_none();
 
     *cursor = Some(watched.history.clone());
+    on_open();
 
     while !shutdown.load(Ordering::SeqCst) {
         if wait && !poll::sleep(interval, shutdown) {

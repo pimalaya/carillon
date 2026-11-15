@@ -97,15 +97,20 @@ pub fn probe(config: &GpeopleConfig, resolver: &mut SecretResolver) -> Result<()
 
 /// Watches the configured group by polling the sync token, until
 /// `shutdown` is set.
+///
+/// `on_open` is called once the session is up and its collection read,
+/// right before the first wait.
 pub fn watch(
     config: &GpeopleConfig,
     interval: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
+    on_open: impl FnOnce(),
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let interval = interval.unwrap_or(POLL_INTERVAL);
     let mut client = open(config, &mut SecretResolver::new())?;
     let mut watched = Watched::arm(&mut client, &config.addressbook)?;
+    on_open();
 
     while !shutdown.load(Ordering::SeqCst) {
         if !poll::sleep(interval, shutdown) {

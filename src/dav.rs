@@ -105,6 +105,15 @@ impl DavKind {
     }
 }
 
+/// The collection a watch watches: its name, as the account configured
+/// it, and what it holds.
+pub struct DavTarget<'a> {
+    /// The collection, by name or by id.
+    pub collection: &'a str,
+    /// What it holds.
+    pub kind: DavKind,
+}
+
 /// The home set a collection named by its id is looked up under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DavHome {
@@ -181,16 +190,20 @@ pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<Webd
 /// read again rather than lost, then the members each round reports
 /// added or changed. A body that cannot be read ends the session, the
 /// next one reading every alarm again.
+///
+/// `on_open` is called once the session is up and its collection read,
+/// right before the first wait.
 pub fn watch(
     config: DavServer<'_>,
-    kind: DavKind,
-    collection: &str,
+    target: DavTarget<'_>,
     interval: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
     alarms: Option<&AlarmShared>,
+    on_open: impl FnOnce(),
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let mut client = open(config, &mut SecretResolver::new())?;
+    let DavTarget { collection, kind } = target;
     let collection = locate(&mut client, kind.home(), collection, shutdown)?;
     let interval = interval.unwrap_or(POLL_INTERVAL);
     let domains = Domains::resolve(&mut client, &collection, kind, shutdown)?;
@@ -199,6 +212,8 @@ pub fn watch(
     if let Some(alarms) = alarms {
         alarms.replace(read_alarms(&mut client, &watched.collection, shutdown)?);
     }
+
+    on_open();
 
     while !shutdown.load(Ordering::SeqCst) {
         if !poll::sleep(interval, shutdown) {

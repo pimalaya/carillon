@@ -52,14 +52,19 @@ enum Moved {
 
 /// Watches the configured calendar until `shutdown` is set, keeping
 /// `alarms` current.
+///
+/// `on_open` is called once the session is up and its collection read,
+/// right before the first wait.
 pub fn watch(
     config: &PimdirConfig,
     shutdown: &Arc<AtomicBool>,
     alarms: &AlarmShared,
+    on_open: impl FnOnce(),
 ) -> Result<()> {
     let reader = open(config)?;
     let interval = config.interval().unwrap_or(POLL_INTERVAL);
     let mut cursor = load(&reader, &config.calendar, alarms)?;
+    on_open();
 
     while !shutdown.load(Ordering::SeqCst) {
         if !poll::sleep(interval, shutdown) {
@@ -384,6 +389,21 @@ mod tests {
     }
 
     #[test]
+    fn a_watch_of_a_store_not_created_is_never_reported_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let timer = CeichasTimer::new(Default::default()).unwrap();
+        let alarms = AlarmShared::new(timer.waker());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut opened = false;
+
+        let result = watch(&config(dir.path(), CAL), &shutdown, &alarms, || {
+            opened = true
+        });
+        assert!(result.is_err());
+        assert!(!opened);
+    }
+
+    #[test]
     fn a_collection_holding_no_calendars_is_refused() {
         let dir = scratch();
 
@@ -468,7 +488,7 @@ mod tests {
         let mut fired = Vec::new();
 
         thread::scope(|scope| {
-            let watch = scope.spawn(|| watch(&config, &shutdown, &alarms));
+            let watch = scope.spawn(|| watch(&config, &shutdown, &alarms, || ()));
 
             // Ends the test should the alarm never fire.
             scope.spawn(|| {

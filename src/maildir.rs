@@ -42,11 +42,15 @@ const POLL_INTERVAL: Duration = Duration::from_secs(2);
 ///
 /// The first listing is the baseline and reports nothing, a message
 /// already there not being news.
+///
+/// `on_open` is called once the session is up and its collection read,
+/// right before the first wait.
 pub fn watch(
     config: &MaildirConfig,
     collection: &str,
     interval: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
+    on_open: impl FnOnce(),
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     let client = MaildirClient::new(config.root.clone());
@@ -55,6 +59,7 @@ pub fn watch(
 
     let mut seen = list(&client, &maildir)?;
     debug!("watching maildir with {} entries", seen.len());
+    on_open();
 
     while !shutdown.load(Ordering::SeqCst) {
         if !poll::sleep(interval, shutdown) {

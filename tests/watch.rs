@@ -189,3 +189,30 @@ fn a_hook_printing_to_stdout_reaches_stderr() {
     let stderr = fs::read_to_string(home.path().join("stderr")).unwrap();
     assert!(stderr.contains("hook-said-hi"), "{stderr}");
 }
+
+/// A session failing before it watches anything, here a mailbox the
+/// Maildir does not hold, is reported lost and never open.
+#[test]
+fn a_session_that_cannot_open_is_lost_and_never_opened() {
+    let home = TempDir::new().unwrap();
+    let root = maildir(home.path());
+    let toml = format!("[accounts.a]\nmaildir.mailbox = \"missing\"\nmaildir.root = {root:?}\n");
+    let watch = Watch::start(home.path(), &toml, &["--json"]);
+
+    let lost = watch.json();
+    assert_eq!(lost["event"], "session-lost", "{lost}");
+    assert_eq!(lost["account"], "a", "{lost}");
+    assert!(
+        lost["error"].as_str().unwrap().contains("missing"),
+        "{lost}"
+    );
+
+    // NOTE: past the first backoff, so the reopening is refused too.
+    thread::sleep(Duration::from_secs(3));
+    let (rest, status) = watch.interrupt();
+    assert_eq!(status, Some(0), "{rest:?}");
+    assert!(
+        !rest.iter().any(|line| line.contains("session-opened")),
+        "{rest:?}"
+    );
+}
