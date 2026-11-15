@@ -80,9 +80,9 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 #imap.sasl.login.password.raw = "REPLACE_ME"
 #imap.sasl.anonymous.message = "carillon"
 #imap.sasl.oauthbearer.username = "user@example.org"
-#imap.sasl.oauthbearer.token.command = ["ortie", "token", "read", "example"]
+#imap.sasl.oauthbearer.token.command = ["ortie", "token", "show", "-a", "example"]
 #imap.sasl.xoauth2.username = "user@example.org"
-#imap.sasl.xoauth2.token.command = "ortie token read gmail"
+#imap.sasl.xoauth2.token.command = "ortie token show -a gmail"
 #imap.sasl.scram-sha-256.username = "user@example.org"
 #imap.sasl.scram-sha-256.password.raw = "REPLACE_ME"
 
@@ -146,7 +146,7 @@ imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
 
 # Exactly one of `header`, whose value is sent verbatim, `bearer` or `basic`.
 #jmap.auth.header.command = "pass show carillon/fastmail-token"
-#jmap.auth.bearer.token.command = ["ortie", "token", "read", "fastmail"]
+#jmap.auth.bearer.token.command = ["ortie", "token", "show", "-a", "fastmail"]
 #jmap.auth.basic.username = "user@example.org"
 #jmap.auth.basic.password.command = "pass show carillon/example"
 
@@ -211,7 +211,7 @@ imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
 # Omit for a calendar readable without authentication.
 #caldav.auth.basic.username = "alice"
 #caldav.auth.basic.password.command = "pass show dav/example"
-#caldav.auth.bearer.token.command = "ortie token read example"
+#caldav.auth.bearer.token.command = "ortie token show -a example"
 
 # TLS options, same shape as `imap.tls`.
 #caldav.tls.provider = "rustls"
@@ -285,7 +285,7 @@ imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
 
 # Microsoft Graph, Gmail, Google Calendar and Google People take an OAuth 2.0
 # bearer token alone, which expires: read it from a broker such as Ortie.
-#msgraph.auth.token.command = ["ortie", "token", "read", "microsoft"]
+#msgraph.auth.token.command = ["ortie", "token", "show", "-a", "microsoft"]
 
 # TLS, ALPN and proxy, read as under `imap`.
 #msgraph.alpn = ["http/1.1"]
@@ -311,7 +311,7 @@ imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
 # The label this account watches, by name or id. Required.
 #gmail.mailbox = "INBOX"
 
-#gmail.auth.token.command = ["ortie", "token", "read", "google"]
+#gmail.auth.token.command = ["ortie", "token", "show", "-a", "google"]
 #gmail.watch.poll.interval = 60
 
 # Same events as IMAP: a cleared `UNREAD` arrives as `Seen`, `STARRED` as
@@ -327,7 +327,7 @@ imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
 # account's own. Required.
 #gcal.calendar = "primary"
 
-#gcal.auth.token.command = ["ortie", "token", "read", "google"]
+#gcal.auth.token.command = ["ortie", "token", "show", "-a", "google"]
 #gcal.watch.poll.interval = 60
 
 # Events alone, the API having no task type. A recurring series is one event.
@@ -341,7 +341,7 @@ imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
 # `contacts` for every contact the account owns, whatever its groups. Required.
 #gpeople.addressbook = "contacts"
 
-#gpeople.auth.token.command = ["ortie", "token", "read", "google"]
+#gpeople.auth.token.command = ["ortie", "token", "show", "-a", "google"]
 #gpeople.watch.poll.interval = 60
 
 # A contact leaving the group arrives as a removal, as a deleted one does.
