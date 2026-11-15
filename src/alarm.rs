@@ -583,7 +583,7 @@ impl AlarmShared {
     }
 
     /// The item and the trigger of every firing over `[from, until)`.
-    #[cfg(all(test, feature = "pimdir"))]
+    #[cfg(test)]
     pub fn triggers(&self, from: i64, until: i64) -> Vec<(String, i64)> {
         let book = self.book.lock().unwrap_or_else(PoisonError::into_inner);
 

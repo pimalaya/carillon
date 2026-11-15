@@ -9,7 +9,7 @@ change: the-family-line
 
 - Read first: this change's proposal.md and delta.md; the family's wizard removals (himalaya/cairn/log/2026-11-11-the-wizard-leaves.md, comodoro/cairn/log/2026-11-12-the-wizard-leaves.md, neverest/cairn/log/2026-11-13-wizard-removed.md); himalaya/src/main.rs (the welcome, :20, :41-49); pimalaya-cli's CHANGELOG (0.4.0 and Unreleased) and pimalaya-config's (0.4.0, 0.4.1); io-pimdir's CHANGELOG from 0.10.0 to 0.12.0; neverest commit c1837c5 (its dependency bump, `TomlConfig` and `Tls`).
 - Every cargo command runs as `nix develop --command cargo ...`. `cargo fmt` after each phase.
-- An agent edits, builds and tests; it runs no git write command. The session owning the repository commits each phase with the message given here, no AI trailer. The untracked cairn/changes/cli-alignment-leftovers is not touched.
+- An agent edits, builds and tests; it runs no git write command. The session owning the repository commits each phase with the message given here, no AI trailer. The untracked cairn/changes/archive/cli-alignment-leftovers is not touched.
 - Never adjust production code to fit a test. A regression test must fail against the code before the phase.
 - No em dashes; code comments wrap at 80 columns; markdown is never hard-wrapped.
 - Phase checks, each one: `cargo test --all-features`; `cargo clippy --all-targets -- -D warnings` over the default set, `--all-features`, `--no-default-features`, and `--no-default-features --features rustls-ring,<b>` for each backend of CONTRIBUTING.md:28-31 (imap, jmap, maildir, dav, msgraph, gmail, gcal, gpeople, pimdir); `sh cairn/verify.sh`.

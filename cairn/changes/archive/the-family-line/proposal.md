@@ -61,7 +61,7 @@ Two phases, each one commit, in this order. Neither needs anything outside this 
 ## Scope / non-goals
 
 - The configuration sample's test and its shipping in share/doc (the family's the-sample-is-tested-and-shipped) are another change.
-- cairn/changes/cli-alignment-leftovers (untracked, `status: active`, 2026-10-18) is mostly answered here: F2 by pimalaya-config 0.4's `take_account`, F6 by the move to src/main.rs, H1 and A2 obsolete (no wizard, no io-webdav pin left of its own). G2 (a fresh secret resolver per reconnect) stays open. The owner decides whether to mark it abandoned, pointing at this change; the agent does not edit that untracked folder.
+- cairn/changes/archive/cli-alignment-leftovers (untracked, `status: active`, 2026-10-18) is mostly answered here: F2 by pimalaya-config 0.4's `take_account`, F6 by the move to src/main.rs, H1 and A2 obsolete (no wizard, no io-webdav pin left of its own). G2 (a fresh secret resolver per reconnect) stays open. The owner decides whether to mark it abandoned, pointing at this change; the agent does not edit that untracked folder.
 - The active change hook-shape-follows-siblings is untouched.
 - No version bump; no release.
 

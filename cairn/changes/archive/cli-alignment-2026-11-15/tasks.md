@@ -10,5 +10,5 @@ change: cli-alignment-2026-11-15
 - [x] R6: `caldav.home`, `carddav.home` (src/config.rs, src/dav.rs `open` and `locate`), `pimdir.account` (src/pimdir.rs `check_calendar`); config.sample.toml
 - [x] R7: src/check.rs on `Fields`, compared at runtime with himalaya's `account check` on a scratch Maildir
 - [x] R8: the abouts and himalaya's order (src/cli.rs), `vendored` in the defaults (Cargo.toml, package.nix), the spec sentence on `repl` and `mcp`
-- [x] Fold the delta into cairn/spec/daemon.md, log entry, CHANGELOG under Unreleased, MIGRATION.md under "From 0.2 to 1.0" for R2 and the reversed R3 line
+- [x] Fold the delta into cairn/spec/daemon.md, log entry, CHANGELOG under Unreleased, MIGRATION.md under "From v0.2 to v1.0" for R2 and the reversed R3 line
 - [x] `cargo fmt --check`, `cargo test --all-features`, clippy `--all-targets -D warnings` over the all, default and reduced feature sets, `cargo deny check`, `sh cairn/verify.sh`

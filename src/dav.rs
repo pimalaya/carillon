@@ -42,7 +42,7 @@ use io_webdav::{
     rfc4918::{
         DAV, GETETAG, WebdavAuth, WebdavMultistatus, WebdavProperty, check_collection_id,
         collection_path, coroutine::WebdavRedirectYield,
-        follow_redirects::WebdavFollowRedirectsError, propfind::WebdavPropfind,
+        follow_redirects::WebdavFollowRedirectsError, id_from_location, propfind::WebdavPropfind,
         send::WebdavSendError, typed::WebdavUnreadableEntry,
     },
     rfc5397::current_user_principal::WebdavCurrentUserPrincipal,
@@ -313,10 +313,15 @@ fn refresh_alarms(
     moved: BTreeMap<String, bool>,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<()> {
-    let wanted: Vec<&str> = moved
+    let named: Vec<(String, &str, bool)> = moved
         .iter()
-        .filter(|(_, removed)| !**removed)
-        .map(|(href, _)| resource(href))
+        .map(|(href, removed)| (resource(href), href.as_str(), *removed))
+        .collect();
+
+    let wanted: Vec<&str> = named
+        .iter()
+        .filter(|(_, _, removed)| !removed)
+        .map(|(name, _, _)| name.as_str())
         .collect();
 
     let entries = match wanted.is_empty() {
@@ -325,9 +330,8 @@ fn refresh_alarms(
     };
 
     alarms.update(|book| {
-        for (href, removed) in &moved {
-            let name = resource(href);
-            let entry = entries.iter().find(|entry| entry.id == name);
+        for (name, href, removed) in &named {
+            let entry = entries.iter().find(|entry| entry.id == *name);
 
             match entry {
                 Some(entry) if !removed => {
@@ -341,13 +345,11 @@ fn refresh_alarms(
     Ok(())
 }
 
-/// The resource name an href ends with, which a member is keyed by
-/// whichever report named it.
-fn resource(href: &str) -> &str {
-    href.trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or(href)
+/// The id of the member at `href`, which it is keyed by whichever report
+/// named it: its last segment read as io-webdav reads a listed one
+/// (`id_from_location`), decoded when the decoding encodes back to it.
+fn resource(href: &str) -> String {
+    id_from_location(href).unwrap_or_default()
 }
 
 /// Runs one `calendar-query` report for the members `filter` matches,
@@ -1350,6 +1352,9 @@ fn names_precondition(body: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use ceichas::timer::CeichasTimer;
+    use jiff::Timestamp;
+
     use crate::dav::*;
 
     #[test]
@@ -1532,10 +1537,12 @@ mod tests {
     }
 
     /// Scripted DAV servers: one answering discovery, holding one calendar
-    /// at `/cal/alice/work` and implementing no `sync-collection`, and one
-    /// refusing every request.
+    /// at `/cal/alice/work`, implementing no `sync-collection` but serving
+    /// its members' bodies by `calendar-query` and `calendar-multiget`, and
+    /// one refusing every request.
     mod fake {
         use std::{
+            collections::BTreeMap,
             io::{BufRead, BufReader, Read, Write},
             net::{TcpListener, TcpStream},
             sync::{Arc, Mutex},
@@ -1544,22 +1551,30 @@ mod tests {
 
         /// The members the calendar lists, as href and etag.
         pub type Members = Arc<Mutex<Vec<(String, String)>>>;
+        /// The body of each member holding one, by href.
+        pub type Bodies = Arc<Mutex<BTreeMap<String, String>>>;
         /// The requests the server answered, as method and path.
         pub type Seen = Arc<Mutex<Vec<String>>>;
 
-        /// Starts the server, returning its address.
+        /// Starts the server with no member body, returning its address.
         pub fn start(members: Members, seen: Seen) -> String {
+            holding(members, Default::default(), seen)
+        }
+
+        /// Starts the server, returning its address.
+        pub fn holding(members: Members, bodies: Bodies, seen: Seen) -> String {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let addr = listener.local_addr().unwrap().to_string();
 
             thread::spawn(move || {
                 for stream in listener.incoming() {
                     let Ok(stream) = stream else { return };
-                    let (members, seen) = (members.clone(), seen.clone());
+                    let (members, bodies) = (members.clone(), bodies.clone());
+                    let seen = seen.clone();
                     thread::spawn(move || {
                         serve(stream, |method, path, body| {
                             seen.lock().unwrap().push(format!("{method} {path}"));
-                            answer(method, path, body, &members)
+                            answer(method, path, body, &members, &bodies)
                         })
                     });
                 }
@@ -1630,6 +1645,7 @@ mod tests {
             path: &str,
             body: &str,
             members: &Members,
+            bodies: &Bodies,
         ) -> (&'static str, String) {
             const OPEN: &str = r#"<?xml version="1.0" encoding="utf-8"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">"#;
             const CLOSE: &str = "</d:multistatus>";
@@ -1640,7 +1656,47 @@ mod tests {
                 )
             };
 
+            // NOTE: the filter of a query is not read, every member holding
+            // a body matching it.
+            let read = |hrefs: Vec<String>| {
+                let members = members.lock().unwrap();
+                let bodies = bodies.lock().unwrap();
+                let mut xml = String::from(OPEN);
+
+                for href in hrefs {
+                    let etag = members.iter().find(|(member, _)| *member == href);
+                    match (etag, bodies.get(&href)) {
+                        (Some((_, etag)), Some(data)) => {
+                            let data = data.replace('\r', "&#13;");
+                            xml.push_str(&format!(
+                                "<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:getetag>\"{etag}\"</d:getetag><c:calendar-data>{data}</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+                            ));
+                        }
+                        _ => xml.push_str(&format!(
+                            "<d:response><d:href>{href}</d:href><d:status>HTTP/1.1 404 Not Found</d:status></d:response>"
+                        )),
+                    }
+                }
+
+                xml.push_str(CLOSE);
+                ("207 Multi-Status", xml)
+            };
+
             match method {
+                "REPORT" if body.contains("calendar-query") => {
+                    let held = bodies.lock().unwrap().keys().cloned().collect();
+                    read(held)
+                }
+                "REPORT" if body.contains("calendar-multiget") => {
+                    let asked = body
+                        .split("href>")
+                        .skip(1)
+                        .step_by(2)
+                        .filter_map(|rest| rest.split_once('<'))
+                        .map(|(href, _)| href.to_string())
+                        .collect();
+                    read(asked)
+                }
                 "REPORT" => ("501 Not Implemented", String::new()),
                 "PROPFIND" if body.contains("current-user-principal") => (
                     "207 Multi-Status",
@@ -1752,6 +1808,103 @@ mod tests {
             seen.contains(&String::from("PROPFIND /principals/alice/")),
             "{seen:?}"
         );
+    }
+
+    /// An instant of 2026-11-05 written in UTC, in seconds.
+    fn at(time: &str) -> i64 {
+        format!("2026-11-05T{time}Z")
+            .parse::<Timestamp>()
+            .unwrap()
+            .as_second()
+    }
+
+    /// An event starting on 2026-11-05 at `start` (UTC, `HHMMSS`), with one
+    /// `-PT15M` display alarm.
+    fn alarmed(start: &str) -> String {
+        format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nBEGIN:VEVENT\r\nUID:standup\r\nDTSTAMP:20261101T000000Z\r\nDTSTART:20261105T{start}Z\r\nDURATION:PT30M\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:x\r\nTRIGGER:-PT15M\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+    }
+
+    /// Runs one round of `watched`, then moves the alarms by what it
+    /// reported, as the watch does, returning the events.
+    fn follow(
+        client: &mut WebdavClientStd,
+        watched: &mut Watched,
+        alarms: &AlarmShared,
+        shutdown: &Arc<AtomicBool>,
+    ) -> Vec<WatchEvent> {
+        let mut events = Vec::new();
+        watched
+            .round(client, shutdown, &mut |event, _| events.push(event))
+            .unwrap();
+
+        let moved = events
+            .iter()
+            .map(|event| {
+                let removed = matches!(event, WatchEvent::ItemRemoved { .. });
+                (event.id().to_owned(), removed)
+            })
+            .collect();
+        refresh_alarms(client, &watched.collection, alarms, moved, shutdown).unwrap();
+
+        events
+    }
+
+    /// A member whose href holds an escape is named as the query and the
+    /// multiget name it, by the id io-webdav reads from the href: its
+    /// alarm moves with a change and goes with a removal, and a hook still
+    /// names it by its href as served.
+    #[test]
+    fn an_alarm_follows_a_member_whose_href_holds_an_escape() {
+        let href = String::from("/cal/alice/work/Daily%20standup.ics");
+        let members: fake::Members = Default::default();
+        let bodies: fake::Bodies = Default::default();
+        members
+            .lock()
+            .unwrap()
+            .push((href.clone(), String::from("1")));
+        bodies
+            .lock()
+            .unwrap()
+            .insert(href.clone(), alarmed("090000"));
+        let addr = fake::holding(members.clone(), bodies.clone(), Default::default());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut client = client(&addr);
+        let timer = CeichasTimer::new(Default::default()).unwrap();
+        let alarms = AlarmShared::new(timer.waker());
+        let day = || alarms.triggers(at("00:00:00"), at("23:00:00"));
+
+        let collection = locate(&mut client, None, DavHome::Calendars, "work", &shutdown).unwrap();
+        let kind = DavKind::Calendar(vec![WatchDomain::Event]);
+        let domains = Domains::resolve(&mut client, &collection, kind, &shutdown).unwrap();
+        let mut watched = Watched::arm(&mut client, collection, domains, &shutdown).unwrap();
+        let book = read_alarms(&mut client, &watched.collection, &shutdown).unwrap();
+        alarms.replace(book);
+        assert_eq!(vec![(href.clone(), at("08:45:00"))], day());
+
+        members.lock().unwrap()[0].1 = String::from("2");
+        bodies
+            .lock()
+            .unwrap()
+            .insert(href.clone(), alarmed("100000"));
+        let events = follow(&mut client, &mut watched, &alarms, &shutdown);
+        let changed = WatchEvent::ItemChanged {
+            domain: WatchDomain::Event,
+            id: href.clone(),
+        };
+        assert_eq!(vec![changed], events);
+        assert_eq!(vec![(href.clone(), at("09:45:00"))], day());
+
+        members.lock().unwrap().clear();
+        bodies.lock().unwrap().clear();
+        let events = follow(&mut client, &mut watched, &alarms, &shutdown);
+        let removed = WatchEvent::ItemRemoved {
+            domain: WatchDomain::Event,
+            id: href,
+        };
+        assert_eq!(vec![removed], events);
+        assert_eq!(Vec::<(String, i64)>::new(), day());
     }
 
     /// The failure a watch of `kind` meets on a server answering every

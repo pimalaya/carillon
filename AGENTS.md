@@ -24,7 +24,7 @@ Let the human review intent **before** you write code. Trivial fixes may skip th
 
 - Fold the change's delta into `cairn/spec/<capability>.md` so the spec always reflects current truth (append ADDED, replace MODIFIED, delete REMOVED). A spec file holds current truth only, no history and no rationale.
 - Append a dated entry `cairn/log/YYYY-MM-DD-<change-id>.md` describing what landed and which capabilities moved. Log entries are immutable.
-- Set the change `status: landed`.
+- Set the change `status: landed` and move its folder to `cairn/changes/archive/`.
 
 > **The forcing rule:** a change that affects behaviour is not *done* until the spec is updated and the log entry is written.
 

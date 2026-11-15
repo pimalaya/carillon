@@ -2,7 +2,7 @@
 
 One section per major version, the newest first: what to change in a configuration, a script and a JSON consumer when upgrading. The full configuration schema lives in [config.sample.toml](./config.sample.toml), and the exhaustive list of changes in [CHANGELOG.md](./CHANGELOG.md); these are the ones to act on.
 
-## From 0.2 to 1.0
+## From v0.2 to v1.0
 
 1.0 brings Carillon onto the standard the Pimalaya CLIs share: no wizard, a configuration refusing what it does not read, hooks shaped as Comodoro's, one path per `-c`, and a failure contract (exit codes and stable error codes) a script can rely on. A 0.2 configuration does not load as it is: its hooks at least need renaming. Every refusal names the key, its line and what replaced it, so running `carillon account check` after each edit walks you through the file.
 
@@ -178,7 +178,7 @@ carillon watch
 {"stoppedBy":"signal"}
 ```
 
-## From 0.1 to 0.2
+## From v0.1 to v0.2
 
 Nothing to change: a 0.1 configuration loads as it is, every key it read is still read, and the new backends and keys are additions.
 
