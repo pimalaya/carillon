@@ -1,11 +1,14 @@
 //! Live tests against Google: Gmail, Calendar and People, on the
 //! Pimalaya Workspace user. Ignored by default.
 //!
-//! Each watches one throwaway label, calendar or contact group and checks
-//! every hook a change to it should fire (see tests/common). Every
-//! resource a run creates is named `carillon-live-<millis>` and deleted
-//! however the run ends. Run with a service account key holding
-//! domain-wide delegation for the scopes below:
+//! Each watches one label, calendar or contact group and checks every hook
+//! a change to it should fire (see tests/common). Every label, message,
+//! contact group, contact and event a run creates is named
+//! `carillon-live-<millis>` and deleted however the run ends. The calendar
+//! is long-lived, `pimalaya-live-carillon-hooks`, created when absent and
+//! never deleted, since Google caps the calendars a user may create a day.
+//! Run with a service account key holding domain-wide delegation for the
+//! scopes below:
 //!
 //! ```sh
 //! GOOGLE_SERVICE_ACCOUNT_KEY_FILE=key.json \
@@ -54,7 +57,7 @@ use crate::common::*;
 #[cfg(feature = "gmail")]
 const GMAIL_SCOPES: &[&str] = &["https://mail.google.com/"];
 /// The events and the calendar list the gcal source reads, plus the
-/// throwaway calendars the test creates and deletes. The delegation
+/// calendar the test creates when absent. The delegation
 /// refuses the full `calendar` scope, and one refused scope fails the
 /// whole token request.
 #[cfg(feature = "gcal")]
@@ -178,15 +181,8 @@ fn a_google_calendar_fires_its_hooks() {
             .expect("connect to Calendar")
     };
     let tag = tag();
-    let calendar = connect()
-        .calendar_insert(&GcalCalendar {
-            summary: Some(tag.clone()),
-            ..Default::default()
-        })
-        .expect("create the calendar")
-        .response
-        .id
-        .expect("the calendar has an id");
+    let calendar = google_calendar(&mut connect(), "hooks");
+    clear_google_calendar(&mut connect(), &calendar);
 
     with_cleanup(
         || {
@@ -241,12 +237,82 @@ fn a_google_calendar_fires_its_hooks() {
                 .expect("delete the event");
             watcher.wait_for("on-event-remove", "the removal fires");
         },
-        || {
-            if let Err(err) = connect().calendar_delete(&calendar) {
-                eprintln!("WARNING: leftover calendar {tag}: {err:?}");
-            }
-        },
+        || clear_google_calendar(&mut connect(), &calendar),
     );
+}
+
+/// The id of the long-lived calendar `pimalaya-live-carillon-<purpose>`,
+/// created when the calendar list holds none, never deleted.
+#[cfg(feature = "gcal")]
+fn google_calendar(client: &mut GcalClientStd, purpose: &str) -> String {
+    use io_gcal::v3::rest::calendar_list::list::GcalCalendarListListParams;
+
+    let summary = format!("pimalaya-live-carillon-{purpose}");
+
+    let mut page = None;
+    loop {
+        let params = GcalCalendarListListParams {
+            page_token: page.as_deref(),
+            ..Default::default()
+        };
+        let list = client
+            .calendar_list_list(&params)
+            .expect("list the calendars")
+            .response;
+        let found = list
+            .items
+            .into_iter()
+            .find(|entry| entry.summary.as_deref() == Some(summary.as_str()));
+        if let Some(id) = found.and_then(|entry| entry.id) {
+            return id;
+        }
+        match list.next_page_token {
+            Some(token) => page = Some(token),
+            None => break,
+        }
+    }
+
+    client
+        .calendar_insert(&GcalCalendar {
+            summary: Some(summary),
+            ..Default::default()
+        })
+        .expect("create the calendar")
+        .response
+        .id
+        .expect("the calendar has an id")
+}
+
+/// Deletes every event of the test's own `calendar`, the leftovers of an
+/// earlier run at the start, the run's own at the end.
+#[cfg(feature = "gcal")]
+fn clear_google_calendar(client: &mut GcalClientStd, calendar: &str) {
+    use io_gcal::v3::rest::events::{GcalSendUpdates, list::GcalEventsListParams};
+
+    let mut ids = Vec::new();
+    let mut page = None;
+    loop {
+        let params = GcalEventsListParams {
+            page_token: page.as_deref(),
+            ..Default::default()
+        };
+        let events = client
+            .events_list(calendar, &params)
+            .expect("list the calendar's events")
+            .response;
+        ids.extend(events.items.into_iter().filter_map(|event| event.id));
+        match events.next_page_token {
+            Some(token) => page = Some(token),
+            None => break,
+        }
+    }
+
+    for id in ids {
+        let none = Some(GcalSendUpdates::None);
+        if let Err(err) = client.event_delete(calendar, &id, none, None) {
+            eprintln!("WARNING: leftover event {id} in {calendar}: {err:?}");
+        }
+    }
 }
 
 /// A contact joining the watched group, edited, then leaving it fires the
