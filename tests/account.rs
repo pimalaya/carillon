@@ -205,3 +205,32 @@ fn check_runs_account_check_unlisted() {
     assert!(help.contains("\n  account "), "{help}");
     assert!(!help.contains("\n  check "), "{help}");
 }
+
+/// The group and its list read himalaya's abouts, carillon's own
+/// paragraph kept under the group's, and `ls` lists as `list`.
+#[test]
+fn the_account_abouts_are_the_familys() {
+    let toml = "[accounts.perso]\ndefault = true\n";
+
+    let help = run(toml, &["account", "--help"]);
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        help.starts_with(
+            "Manage accounts defined in the TOML configuration file.\n\n\
+             An account is a named group of backend settings"
+        ),
+        "{help}"
+    );
+
+    let help = run(toml, &["account", "-h"]);
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        help.contains("\n  list   List all accounts declared in the configuration [alias: ls]\n"),
+        "{help}"
+    );
+
+    let list = run(toml, &["account", "list"]);
+    let ls = run(toml, &["account", "ls"]);
+    assert_eq!(ls.status.code(), Some(0));
+    assert_eq!(ls.stdout, list.stdout);
+}

@@ -575,6 +575,14 @@ The command line SHALL be parsed through pimalaya-cli's `clap::parse`: help and 
 - **WHEN** `carillon --json watch --nope` runs
 - **THEN** it prints one failure object coded `usage-invalid`, its `error` naming `--nope`, on stdout and exits 2
 
+### Requirement: Help is plain text
+`--help` and `-h` SHALL print without colour, each paragraph on one line, never wrapped to the terminal width, the top-level help ending with the Pimalaya footer (where to report bugs, how to sponsor). clap SHALL be built with himalaya's features, its defaults off: `derive`, `error-context`, `help`, `std`, `suggestions` and `usage`, neither `color` nor `wrap_help` (pimalaya-cli terminal.md, "Help is printed as written").
+
+#### Scenario: A narrow terminal asking for colour
+- **GIVEN** `COLUMNS=60` and `CLICOLOR_FORCE=1`
+- **WHEN** `carillon --help` prints
+- **THEN** the help of `-b` prints its second paragraph on one line, longer than 60 columns, and no escape sequence
+
 ### Requirement: A failure carries a stable code
 A failure a caller is expected to act on SHALL carry a stable code, printed under `--json` as a `code` string beside `error`, `sources` and `backtrace`, and in an `account check` row beside `backend`, `ok` and `error`. The code SHALL be found anywhere in the error chain or read from the typed error of the protocol that refused or of the store that failed. A failure with no code SHALL print `"code": null`; the text output SHALL stay unchanged. Codes are kebab-case and never renamed; `error` stays free wording. Every code SHALL be declared in every build.
 

@@ -14,7 +14,7 @@ use pimalaya_cli::{
 
 use crate::config::Config;
 
-/// List the accounts declared in the configuration.
+/// List all accounts declared in the configuration.
 ///
 /// Each row shows the account name, the backends it carries a block
 /// for, and `default` on the default account. A backend this build

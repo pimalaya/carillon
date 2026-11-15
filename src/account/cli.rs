@@ -13,7 +13,7 @@ use crate::{
     backend::Backend,
 };
 
-/// Inspect the accounts the configuration declares.
+/// Manage accounts defined in the TOML configuration file.
 ///
 /// An account is a named group of backend settings (imap, caldav,
 /// pimdir…). Accounts are written by hand, from the sample; these

@@ -205,21 +205,19 @@ mod tests {
     fn the_backend_flag_lists_every_backend() {
         let values = "[possible values: auto, imap, jmap, maildir, caldav, \
                       carddav, msgraph, gmail, gcal, gpeople, pimdir]";
-        // NOTE: the help wraps at the terminal width.
-        let flat = |text: String| text.split_whitespace().collect::<Vec<_>>().join(" ");
 
         let cli = Cli::try_parse_from(["carillon", "-b", "pimdir", "watch"]).unwrap();
         assert_eq!(Backend::Pimdir, cli.backend);
 
         let err = Cli::try_parse_from(["carillon", "-b", "nope", "watch"]).unwrap_err();
-        let refused = flat(err.render().to_string());
+        let refused = err.render().to_string();
         assert!(refused.contains(values), "{refused}");
 
-        let help = flat(Cli::command().render_help().to_string());
+        let help = Cli::command().render_help().to_string();
         assert!(help.contains(values), "{help}");
-        let long_help = flat(Cli::command().render_long_help().to_string());
+        let long_help = Cli::command().render_long_help().to_string();
         assert!(long_help.contains("Google People, pimdir."), "{long_help}");
-        assert!(long_help.contains("- pimdir: Force pimdir"), "{long_help}");
+        assert!(long_help.contains("- pimdir:  Force pimdir"), "{long_help}");
     }
 
     #[test]
