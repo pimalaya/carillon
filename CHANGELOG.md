@@ -48,11 +48,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Changed `gpeople.addressbook = "contacts"` to watch every contact the account owns, and `msgraph.addressbook = "contacts"` to name the default contact folder first; a Graph contact folder or calendar is also found by id beyond the first listing page, nested contact folders included.
 
-- Bumped pimalaya-stream to 0.4, io-gcal to 0.5, io-gmail to 0.9, io-gpeople to 0.8, io-http to 0.8, io-imap to 0.11, io-jmap to 0.10, io-maildir to 0.5, io-msgraph to 0.9, io-pimdir to 0.13, io-sasl to 0.2, io-webdav to 0.10 and pimalaya-cli to 0.5.
+- Bumped pimalaya-stream to 0.4, io-gcal to 0.5, io-gmail to 0.9, io-gpeople to 0.8, io-http to 0.8, io-imap to 0.11, io-jmap to 0.10, io-maildir to 0.5, io-msgraph to 0.9, io-pimdir to 0.13, io-sasl to 0.2, io-webdav to 0.11 and pimalaya-cli to 0.5.
 
   A WebDAV multistatus is parsed 3.4 to 9 times faster, and an answer that is not one whole multistatus fails the round instead of reading as a shorter listing. `json-schema` now also describes `completion`, `manual` and `json-schema`.
 
-  io-webdav 0.10 reads a listed id percent-decoded, so the family's DAV listings print `My Book` where they printed `My%20Book`: `caldav.calendar` and `carddav.addressbook` take either. A DAV hook's `$id` keeps the spelling of the href the server serves, `%20` included.
+  io-webdav 0.10 and later read a listed id percent-decoded, so the family's DAV listings print `My Book` where they printed `My%20Book`: `caldav.calendar` and `carddav.addressbook` take either. A DAV hook's `$id` keeps the spelling of the href the server serves, `%20` included.
 
 - Bumped pimalaya-config to 0.5.2: an unknown key's error lists no removed key.
 
