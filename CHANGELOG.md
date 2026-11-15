@@ -26,7 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **BREAKING**: Changed a command line the grammar refuses under `--json` to print the failure object coded `usage-invalid` on stdout, nothing on stderr, still exiting 2; without `--json`, clap's message stays on stderr.
 - **BREAKING**: Changed `check` to exit 3 when a backend failed, once its report is printed, and each of its rows to carry `code` beside `backend`, `ok` and `error` (pimalaya-cli's backend check row).
 - **BREAKING**: Changed `-c` to take one path per flag, as pimalaya-cli's `ConfigFlags` do: repeat it to merge several files. A value is never split on `:`, so `-c a:b` now names one file called `a:b`, and the `CARILLON_CONFIG` environment variable is no longer read.
-- **BREAKING**: Changed `-a` to resolve one way in `watch` and `check`, through pimalaya-config 0.4 (git d5a33cb): `-a default` names the account called `default` like any other name, where `check` took the account marked default (omit `-a` for that), `check` naming an unknown account lists the ones the configuration holds, and several accounts marked default are refused naming them, where one of them was picked.
+- **BREAKING**: Changed `-a` to resolve one way in `watch` and `check`, through pimalaya-config 0.5: `-a default` names the account called `default` like any other name, where `check` took the account marked default (omit `-a` for that), `check` naming an unknown account lists the ones the configuration holds, and several accounts marked default are refused naming them, where one of them was picked.
 - **BREAKING**: Changed hook notifications to pimalaya-config's templates, in the shell's syntax shared with hook commands.
 
   `${name:default}` becomes `${name:-default}`, and the envelope variables become camelCase: `$sender_name`, `$sender_address`, `$recipient_name` and `$recipient_address` become `$senderName`, `$senderAddress`, `$recipientName` and `$recipientAddress`, in notifications and in the environment of commands alike. A notification in the former spelling is refused when the configuration is read, naming what to rewrite. A default no longer excuses a variable the hook does not have.
@@ -36,7 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Changed `gpeople.addressbook = "contacts"` to watch every contact the account owns, and `msgraph.addressbook = "contacts"` to name the default contact folder first; a Graph contact folder or calendar is also found by id beyond the first listing page, nested contact folders included.
 
-- Bumped pimalaya-stream to 0.4, io-gmail to 0.8, io-http to 0.8, io-imap to 0.10, io-jmap to 0.9, io-maildir to 0.4, io-msgraph to 0.9, io-pimdir to 0.12, io-sasl to 0.2, pimalaya-cli to 0.4 (git 51ce8b1) and pimalaya-config to 0.4.1 (git d5a33cb), and io-gcal 0.4 (git dbb4481), io-gpeople 0.7 (git e4a9cac) and io-webdav 0.8 (git 185ab63) to their pimalaya-stream 0.4 commits until they release.
+- Bumped pimalaya-stream to 0.4, io-gcal to 0.5, io-gmail to 0.9, io-gpeople to 0.8, io-http to 0.8, io-imap to 0.11, io-jmap to 0.10, io-maildir to 0.5, io-msgraph to 0.9, io-pimdir to 0.12, io-sasl to 0.2, io-webdav to 0.9, pimalaya-cli to 0.5 and pimalaya-config to 0.5.
 
   A WebDAV multistatus is parsed 3.4 to 9 times faster, and an answer that is not one whole multistatus fails the round instead of reading as a shorter listing. `json-schema` now also describes `completion`, `manual` and `json-schema`.
 

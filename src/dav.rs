@@ -42,7 +42,7 @@ use io_webdav::{
     rfc4918::{
         DAV, GETETAG, WebdavAuth, WebdavMultistatus, WebdavProperty,
         coroutine::WebdavRedirectYield, follow_redirects::WebdavFollowRedirectsError,
-        propfind::WebdavPropfind, send::WebdavSendError,
+        propfind::WebdavPropfind, send::WebdavSendError, typed::WebdavUnreadableEntry,
     },
     rfc5397::current_user_principal::WebdavCurrentUserPrincipal,
     rfc6352::addressbook::home_set::CarddavAddressbookHomeSet,
@@ -356,9 +356,14 @@ fn query(
         filter,
     );
 
-    Ok(pump(client, &mut coroutine, shutdown)?
-        .into_iter()
-        .collect())
+    let listing = pump(client, &mut coroutine, shutdown)?;
+
+    if listing.truncated {
+        warn!("dav server truncated the calendar query of {collection}");
+    }
+
+    skip_unreadable(&listing.unreadable);
+    Ok(listing.items.into_iter().collect())
 }
 
 /// Runs one `calendar-multiget` report for the members named, with their
@@ -377,9 +382,21 @@ fn multiget(
         names,
     );
 
-    Ok(pump(client, &mut coroutine, shutdown)?
-        .into_iter()
-        .collect())
+    let found = pump(client, &mut coroutine, shutdown)?;
+    skip_unreadable(&found.unreadable);
+    Ok(found.items)
+}
+
+/// Warns of each member a report could not read, which the watch leaves
+/// out as it did before the server named them.
+fn skip_unreadable(unreadable: &[WebdavUnreadableEntry]) {
+    for entry in unreadable {
+        let status = entry.status.map_or(String::new(), |s| format!(" ({s})"));
+        warn!(
+            "cannot read dav member `{}`{status}, skipping it",
+            entry.href
+        );
+    }
 }
 
 /// The collection the watch holds a picture of, and how it reads it.
