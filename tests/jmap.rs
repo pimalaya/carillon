@@ -183,24 +183,24 @@ fn mail_fires_its_hooks(jmap: &mut Jmap, watcher: &Watcher, mailbox: &str, tag: 
     let to = jmap.username();
     let message = jmap.create("Email/set", email(mailbox, &to, tag));
 
-    let line = watcher.wait_for("on-message-added", "the arrival fires");
+    let line = watcher.wait_for("on-message-add", "the arrival fires");
     assert!(line.contains(tag), "with its subject: {line}");
 
     let patch = json!({ "keywords/$seen": true, "keywords/$flagged": true });
     jmap.update("Email/set", &message, patch);
 
-    let first = watcher.wait_for("on-flag-added", "a flag fires");
-    let second = watcher.wait_for("on-flag-added", "the other flag fires");
+    let first = watcher.wait_for("on-flag-add", "a flag fires");
+    let second = watcher.wait_for("on-flag-add", "the other flag fires");
     let both = format!("{first}\n{second}");
     assert!(both.contains("Seen"), "$seen is Seen: {both}");
     assert!(both.contains("Flagged"), "$flagged is Flagged: {both}");
 
     jmap.destroy("Email/set", &message, json!({}));
-    watcher.wait_for("on-message-removed", "the removal fires");
+    watcher.wait_for("on-message-remove", "the removal fires");
 }
 
 /// The mail hooks the mail tests arm.
-const MAIL_HOOKS: &[&str] = &["on-message-added", "on-flag-added", "on-message-removed"];
+const MAIL_HOOKS: &[&str] = &["on-message-add", "on-flag-add", "on-message-remove"];
 
 /// One account watching a mailbox, an addressbook and a calendar at once,
 /// polled over one connection, fires the hooks of all three domains.
@@ -223,8 +223,8 @@ fn stalwart_mail_contacts_and_calendar_fire_their_hooks() {
             );
             let hooks = [
                 MAIL_HOOKS,
-                &["on-card-added", "on-card-changed", "on-card-removed"],
-                &["on-event-added", "on-event-changed", "on-event-removed"],
+                &["on-card-add", "on-card-change", "on-card-remove"],
+                &["on-event-add", "on-event-change", "on-event-remove"],
             ]
             .concat();
             let watcher = Watcher::start_with(
@@ -244,14 +244,14 @@ fn stalwart_mail_contacts_and_calendar_fire_their_hooks() {
                 "name": { "full": tag },
             });
             let card = jmap.create("ContactCard/set", card);
-            watcher.wait_for("on-card-added", "the card arrival fires");
+            watcher.wait_for("on-card-add", "the card arrival fires");
 
             let edited = json!({ "name": { "full": format!("{tag} edited") } });
             jmap.update("ContactCard/set", &card, edited);
-            watcher.wait_for("on-card-changed", "the card edit fires");
+            watcher.wait_for("on-card-change", "the card edit fires");
 
             jmap.destroy("ContactCard/set", &card, json!({}));
-            watcher.wait_for("on-card-removed", "the card removal fires");
+            watcher.wait_for("on-card-remove", "the card removal fires");
 
             let event = json!({
                 "@type": "Event",
@@ -262,14 +262,14 @@ fn stalwart_mail_contacts_and_calendar_fire_their_hooks() {
                 "duration": "PT1H",
             });
             let event = jmap.create("CalendarEvent/set", event);
-            watcher.wait_for("on-event-added", "the event arrival fires");
+            watcher.wait_for("on-event-add", "the event arrival fires");
 
             let edited = json!({ "title": format!("{tag} edited") });
             jmap.update("CalendarEvent/set", &event, edited);
-            watcher.wait_for("on-event-changed", "the event edit fires");
+            watcher.wait_for("on-event-change", "the event edit fires");
 
             jmap.destroy("CalendarEvent/set", &event, json!({}));
-            watcher.wait_for("on-event-removed", "the event removal fires");
+            watcher.wait_for("on-event-remove", "the event removal fires");
         },
         || {
             let mut jmap = Jmap::open(STALWART_SERVER, &stalwart_auth());

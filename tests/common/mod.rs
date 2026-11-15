@@ -117,7 +117,7 @@ impl Watcher {
             .iter()
             .map(|hook| {
                 format!(
-                    "{backend}.hook.{hook}.cmd = 'echo \"{hook} $id $subject $flag\" >> {}'\n",
+                    "{backend}.hooks.{hook}.command = 'echo \"{hook} $id $subject $flag\" >> {}'\n",
                     events.display(),
                 )
             })

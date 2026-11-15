@@ -34,12 +34,14 @@ default = true
 
 # Declare one or more backend blocks below; `-b/--backend` picks one, the first
 # declared by default. Each block names the collection it watches (JMAP and
-# Graph take one per domain) and its hooks under `<backend>.hook`, which fire a
-# `notify` notification, a `cmd` (shell string or [program, args...] list), or
-# both. Hooks template against $id, $collection, $mailbox/$calendar/$addressbook,
-# $flag for flag hooks and envelope variables ($subject, $sender…) for message
-# arrivals, camelCase ($senderName); `${name:-default}` covers an empty value.
-# A secret is `raw = "..."` or `command = "..."`.
+# Graph take one per domain) and its hooks under `<backend>.hooks`, each named
+# `on-<subject>-<verb>` (`on-message-add`, `on-flag-remove`, `on-card-change`)
+# and firing a `notify` notification, a `command` (shell string or [program,
+# args...] list), or both. Hooks template against $id, $collection,
+# $mailbox/$calendar/$addressbook, $flag for flag hooks and envelope variables
+# ($subject, $sender…) for message arrivals, camelCase ($senderName);
+# `${name:-default}` covers an empty value. A secret is `raw = "..."` or
+# `command = "..."`.
 
 # ---- IMAP: an idle connection (RFC 2177) ---------------------------------------
 
@@ -108,14 +110,14 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 # edit. A flag hook fires once per flag that moved, so `$flag` always names the
 # one it fired for; `flags = [...]` narrows it, matching with or without the
 # leading `\` or `$` and whatever the case.
-imap.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
-imap.hook.on-message-added.notify.body = "$subject"
-imap.hook.on-message-added.cmd = 'echo "$id arrived" >> ~/.local/state/carillon.log'
-#imap.hook.on-message-removed.notify.summary = "Mail $id deleted from ${mailbox:-the inbox}"
-#imap.hook.on-message-removed.cmd = 'echo "$id left" >> ~/.local/state/carillon.log'
-imap.hook.on-flag-added.flags = ["Seen"]
-imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
-#imap.hook.on-flag-removed.notify.summary = "$flag cleared on $id"
+imap.hooks.on-message-add.notify.summary = "New mail in $mailbox from $sender"
+imap.hooks.on-message-add.notify.body = "$subject"
+imap.hooks.on-message-add.command = 'echo "$id arrived" >> ~/.local/state/carillon.log'
+#imap.hooks.on-message-remove.notify.summary = "Mail $id deleted from ${mailbox:-the inbox}"
+#imap.hooks.on-message-remove.command = 'echo "$id left" >> ~/.local/state/carillon.log'
+imap.hooks.on-flag-add.flags = ["Seen"]
+imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
+#imap.hooks.on-flag-remove.notify.summary = "$flag cleared on $id"
 
 
 # ---- JMAP: a changes poll (RFC 8621, RFC 9610, JMAP for Calendars) -------------
@@ -158,19 +160,19 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 # Same events as IMAP, JMAP keywords arriving under the same flag names. The
 # envelope comes from the request the poll already makes, so an arrival hook
 # names $subject and $sender at no extra cost.
-#jmap.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
-#jmap.hook.on-message-added.notify.body = "$subject"
-#jmap.hook.on-message-removed.cmd = "true"
-#jmap.hook.on-flag-added.flags = ["Seen"]
-#jmap.hook.on-flag-removed.cmd = "true"
+#jmap.hooks.on-message-add.notify.summary = "New mail in $mailbox from $sender"
+#jmap.hooks.on-message-add.notify.body = "$subject"
+#jmap.hooks.on-message-remove.command = "true"
+#jmap.hooks.on-flag-add.flags = ["Seen"]
+#jmap.hooks.on-flag-remove.command = "true"
 
 # Contacts and calendar events are edited where they stand, which is what
-# `on-card-changed` and `on-event-changed` report. A hook for a domain whose
+# `on-card-change` and `on-event-change` report. A hook for a domain whose
 # collection is not configured is refused. There is no `on-task-*`, JMAP
 # calendars having no task type.
-#jmap.hook.on-card-added.notify.summary = "New contact in $addressbook"
-#jmap.hook.on-card-changed.cmd = "true"
-#jmap.hook.on-event-changed.notify.summary = "Event $id changed in $calendar"
+#jmap.hooks.on-card-add.notify.summary = "New contact in $addressbook"
+#jmap.hooks.on-card-change.command = "true"
+#jmap.hooks.on-event-change.notify.summary = "Event $id changed in $calendar"
 
 
 # ---- Maildir: a listing poll ---------------------------------------------------
@@ -189,10 +191,10 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 
 # Same events again, the Maildir flag letters arriving under the same names.
-#maildir.hook.on-message-added.notify.summary = "$id arrived"
-#maildir.hook.on-message-removed.cmd = "true"
-#maildir.hook.on-flag-added.flags = ["Seen"]
-#maildir.hook.on-flag-removed.cmd = "true"
+#maildir.hooks.on-message-add.notify.summary = "$id arrived"
+#maildir.hooks.on-message-remove.command = "true"
+#maildir.hooks.on-flag-add.flags = ["Seen"]
+#maildir.hooks.on-flag-remove.command = "true"
 
 
 # ---- CalDAV: a sync-collection poll over a calendar (RFC 6578) ------------------
@@ -230,12 +232,12 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 # both costs one property read per member the watch has not seen, which reads
 # its content type and never the event itself; a content type naming no
 # component is taken for the one the hooks name, an event when they name both.
-#caldav.hook.on-event-added.notify.summary = "New event"
-#caldav.hook.on-event-changed.cmd = "true"
-#caldav.hook.on-event-removed.cmd = "true"
-#caldav.hook.on-task-added.notify.summary = "New task"
-#caldav.hook.on-task-changed.cmd = "true"
-#caldav.hook.on-task-removed.cmd = "true"
+#caldav.hooks.on-event-add.notify.summary = "New event"
+#caldav.hooks.on-event-change.command = "true"
+#caldav.hooks.on-event-remove.command = "true"
+#caldav.hooks.on-task-add.notify.summary = "New task"
+#caldav.hooks.on-task-change.command = "true"
+#caldav.hooks.on-task-remove.command = "true"
 
 # The alarms of its events and tasks fire when the wall clock reaches them,
 # their bodies read only when this hook is set. Beyond `$id` and `$calendar` it
@@ -243,8 +245,8 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 # due time, RFC 3339), `$uid`, `$etag`, `$recurrenceId`, `$alarm`, `$alarmUid`
 # and `$action` (display or audio). An alarm reached more than 15 minutes late
 # is dropped, and one due while carillon was not running never fires.
-#caldav.hook.on-alarm-trigger.notify.summary = "$summary"
-#caldav.hook.on-alarm-trigger.notify.body = "${kind} at $at"
+#caldav.hooks.on-alarm-trigger.notify.summary = "$summary"
+#caldav.hooks.on-alarm-trigger.notify.body = "${kind} at $at"
 
 
 # ---- CardDAV: the same poll over an addressbook --------------------------------
@@ -260,11 +262,11 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #carddav.auth.basic.password.command = "pass show dav/example"
 #carddav.watch.poll.interval = 60
 
-# A vCard is edited where it stands, which is what `on-card-changed` reports and
+# A vCard is edited where it stands, which is what `on-card-change` reports and
 # no mail backend has: its etag moved, the poll never reading the card itself.
-#carddav.hook.on-card-added.notify.summary = "New contact"
-#carddav.hook.on-card-changed.cmd = "true"
-#carddav.hook.on-card-removed.cmd = "true"
+#carddav.hooks.on-card-add.notify.summary = "New contact"
+#carddav.hooks.on-card-change.command = "true"
+#carddav.hooks.on-card-remove.command = "true"
 
 
 
@@ -295,13 +297,13 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 # Same events as JMAP: `isRead` arrives as `Seen`, a follow-up flag as `Flagged`.
 # The calendar is listed on every poll and its `changeKey` compared, an event
 # being edited where it stands whatever its date. A draft edited in place fires
-# `on-message-changed`, unless a flag moved in the same edit.
-#msgraph.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
-#msgraph.hook.on-message-added.notify.body = "$subject"
-#msgraph.hook.on-message-changed.cmd = "true"
-#msgraph.hook.on-flag-added.flags = ["Flagged"]
-#msgraph.hook.on-card-changed.cmd = "true"
-#msgraph.hook.on-event-changed.notify.summary = "Event $id changed in $calendar"
+# `on-message-change`, unless a flag moved in the same edit.
+#msgraph.hooks.on-message-add.notify.summary = "New mail in $mailbox from $sender"
+#msgraph.hooks.on-message-add.notify.body = "$subject"
+#msgraph.hooks.on-message-change.command = "true"
+#msgraph.hooks.on-flag-add.flags = ["Flagged"]
+#msgraph.hooks.on-card-change.command = "true"
+#msgraph.hooks.on-event-change.notify.summary = "Event $id changed in $calendar"
 
 
 # ---- Gmail: a history poll -----------------------------------------------------
@@ -314,9 +316,9 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 # Same events as IMAP: a cleared `UNREAD` arrives as `Seen`, `STARRED` as
 # `Flagged`. The envelope is read from the arrival's headers.
-#gmail.hook.on-message-added.notify.summary = "New mail in $mailbox from $sender"
-#gmail.hook.on-message-added.notify.body = "$subject"
-#gmail.hook.on-flag-added.flags = ["Seen"]
+#gmail.hooks.on-message-add.notify.summary = "New mail in $mailbox from $sender"
+#gmail.hooks.on-message-add.notify.body = "$subject"
+#gmail.hooks.on-flag-add.flags = ["Seen"]
 
 
 # ---- Google Calendar: a sync token poll ----------------------------------------
@@ -329,8 +331,8 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #gcal.watch.poll.interval = 60
 
 # Events alone, the API having no task type. A recurring series is one event.
-#gcal.hook.on-event-added.notify.summary = "New event in $calendar"
-#gcal.hook.on-event-changed.cmd = "true"
+#gcal.hooks.on-event-add.notify.summary = "New event in $calendar"
+#gcal.hooks.on-event-change.command = "true"
 
 
 # ---- Google People: a sync token poll over a contact group ---------------------
@@ -343,8 +345,8 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 #gpeople.watch.poll.interval = 60
 
 # A contact leaving the group arrives as a removal, as a deleted one does.
-#gpeople.hook.on-card-added.notify.summary = "New contact in $addressbook"
-#gpeople.hook.on-card-removed.cmd = "true"
+#gpeople.hooks.on-card-add.notify.summary = "New contact in $addressbook"
+#gpeople.hooks.on-card-remove.command = "true"
 
 
 # ---- pimdir: a change feed poll over a local calendar --------------------------
@@ -362,5 +364,5 @@ imap.hook.on-flag-added.cmd = ["notify-send", "$flag set on $id"]
 
 #pimdir.watch.poll.interval = 30
 
-#pimdir.hook.on-alarm-trigger.notify.summary = "$summary"
-#pimdir.hook.on-alarm-trigger.cmd = 'echo "$uid fired at $trigger" >> ~/.local/state/carillon.log'
+#pimdir.hooks.on-alarm-trigger.notify.summary = "$summary"
+#pimdir.hooks.on-alarm-trigger.command = 'echo "$uid fired at $trigger" >> ~/.local/state/carillon.log'

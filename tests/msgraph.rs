@@ -71,10 +71,10 @@ fn a_graph_mail_folder_fires_its_hooks() {
                 "msgraph",
                 &block("mailbox", &folder),
                 &[
-                    "on-message-added",
-                    "on-message-changed",
-                    "on-flag-added",
-                    "on-message-removed",
+                    "on-message-add",
+                    "on-message-change",
+                    "on-flag-add",
+                    "on-message-remove",
                 ],
                 &token,
             );
@@ -86,7 +86,7 @@ fn a_graph_mail_folder_fires_its_hooks() {
                 .response
                 .id;
 
-            let line = watcher.wait_for("on-message-added", "the arrival fires");
+            let line = watcher.wait_for("on-message-add", "the arrival fires");
             assert!(line.contains(&tag), "with its subject: {line}");
 
             let edit = MsgraphMessage {
@@ -96,19 +96,19 @@ fn a_graph_mail_folder_fires_its_hooks() {
             client
                 .message_update(&message, &edit)
                 .expect("edit the draft");
-            watcher.wait_for("on-message-changed", "the edit fires");
+            watcher.wait_for("on-message-change", "the edit fires");
 
             let attachment = client
                 .attachment_create(&message, "note.txt", b"carillon", Some("text/plain"))
                 .expect("attach a file to the draft")
                 .response
                 .id;
-            watcher.wait_for("on-message-changed", "the attachment fires");
+            watcher.wait_for("on-message-change", "the attachment fires");
 
             client
                 .attachment_delete(&message, &attachment)
                 .expect("detach the file");
-            watcher.wait_for("on-message-changed", "the detachment fires");
+            watcher.wait_for("on-message-change", "the detachment fires");
 
             // NOTE: a message filed through MIME is a draft, which Graph
             // may already count as read, so it is made unread first and
@@ -133,14 +133,14 @@ fn a_graph_mail_folder_fires_its_hooks() {
                 .message_update(&message, &patch)
                 .expect("read and flag the message");
 
-            let first = watcher.wait_for("on-flag-added", "a flag fires");
-            let second = watcher.wait_for("on-flag-added", "the other flag fires");
+            let first = watcher.wait_for("on-flag-add", "a flag fires");
+            let second = watcher.wait_for("on-flag-add", "the other flag fires");
             let both = format!("{first}\n{second}");
             assert!(both.contains("Seen"), "read is Seen: {both}");
             assert!(both.contains("Flagged"), "a follow-up is Flagged: {both}");
 
             client.message_delete(&message).expect("delete the message");
-            watcher.wait_for("on-message-removed", "the removal fires");
+            watcher.wait_for("on-message-remove", "the removal fires");
         },
         || {
             if let Err(err) = connect(&token).mail_folder_delete(&folder) {
@@ -171,7 +171,7 @@ fn a_graph_contact_folder_fires_its_hooks() {
             let watcher = Watcher::start(
                 "msgraph",
                 &block("addressbook", &folder),
-                &["on-card-added", "on-card-changed", "on-card-removed"],
+                &["on-card-add", "on-card-change", "on-card-remove"],
                 &token,
             );
 
@@ -187,7 +187,7 @@ fn a_graph_contact_folder_fires_its_hooks() {
                 .expect("create the contact")
                 .response
                 .id;
-            watcher.wait_for("on-card-added", "the arrival fires");
+            watcher.wait_for("on-card-add", "the arrival fires");
 
             client
                 .contact_update(
@@ -198,10 +198,10 @@ fn a_graph_contact_folder_fires_its_hooks() {
                     },
                 )
                 .expect("edit the contact");
-            watcher.wait_for("on-card-changed", "the edit fires");
+            watcher.wait_for("on-card-change", "the edit fires");
 
             client.contact_delete(&contact).expect("delete the contact");
-            watcher.wait_for("on-card-removed", "the removal fires");
+            watcher.wait_for("on-card-remove", "the removal fires");
         },
         || {
             if let Err(err) = connect(&token).contact_folder_delete(&folder) {
@@ -232,7 +232,7 @@ fn a_graph_calendar_fires_its_hooks() {
             let watcher = Watcher::start(
                 "msgraph",
                 &block("calendar", &calendar),
-                &["on-event-added", "on-event-changed", "on-event-removed"],
+                &["on-event-add", "on-event-change", "on-event-remove"],
                 &token,
             );
 
@@ -258,7 +258,7 @@ fn a_graph_calendar_fires_its_hooks() {
                 .expect("create the event")
                 .response
                 .id;
-            watcher.wait_for("on-event-added", "the arrival fires");
+            watcher.wait_for("on-event-add", "the arrival fires");
 
             client
                 .event_update(
@@ -269,10 +269,10 @@ fn a_graph_calendar_fires_its_hooks() {
                     },
                 )
                 .expect("edit the event");
-            watcher.wait_for("on-event-changed", "the edit fires");
+            watcher.wait_for("on-event-change", "the edit fires");
 
             client.event_delete(&event).expect("delete the event");
-            watcher.wait_for("on-event-removed", "the removal fires");
+            watcher.wait_for("on-event-remove", "the removal fires");
         },
         || {
             if let Err(err) = connect(&token).calendar_delete(&calendar) {

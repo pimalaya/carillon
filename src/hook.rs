@@ -21,14 +21,14 @@ use anyhow::{Result, bail};
 #[cfg(alarm)]
 use jiff::{Timestamp, tz::TimeZone};
 use log::{trace, warn};
-use pimalaya_config::notify::NotificationTemplate;
+use pimalaya_config::{command::CommandConfig, notify::NotificationTemplate};
 
 #[cfg(all(alarm, feature = "notify"))]
 use crate::alarm::AlarmAction;
 #[cfg(alarm)]
 use crate::alarm::AlarmFiring;
 use crate::{
-    config::{FlagHook, Hook, HookCmd, ItemHook},
+    config::{FlagHook, Hook, ItemHook},
     event::{ItemSummary, WatchEvent},
 };
 
@@ -215,7 +215,7 @@ pub fn run(
 
 /// Fires an item-level hook.
 fn run_item_hook(hook: &ItemHook, vars: BTreeMap<&'static str, String>) {
-    fire(hook.notify.as_ref(), hook.cmd.as_ref(), &vars);
+    fire(hook.notify.as_ref(), hook.command.as_ref(), &vars);
 }
 
 /// Fires a flag-level hook for the flag that moved, through its filter.
@@ -231,7 +231,7 @@ fn run_flag_hook(hook: &FlagHook, id: &str, collection: HookCollection<'_>, flag
     vars.insert(collection.name, collection.value.to_string());
     vars.insert(FLAG_VAR, flag.to_string());
 
-    fire(hook.notify.as_ref(), hook.cmd.as_ref(), &vars);
+    fire(hook.notify.as_ref(), hook.command.as_ref(), &vars);
 }
 
 /// The variables an item-level hook templates against.
@@ -347,7 +347,7 @@ pub fn run_alarm(hook: &ItemHook, collection: HookCollection<'_>, firing: &Alarm
     #[cfg(not(feature = "notify"))]
     let sound = None;
 
-    fire_with(hook.notify.as_ref(), hook.cmd.as_ref(), &vars, sound);
+    fire_with(hook.notify.as_ref(), hook.command.as_ref(), &vars, sound);
 }
 
 /// An instant as RFC 3339 with the offset `zone` has then, empty when it
@@ -366,17 +366,17 @@ fn rfc3339(instant: i64, zone: &TimeZone) -> String {
 /// Runs the two reactions a hook can carry, logging either failure.
 fn fire(
     notify: Option<&NotificationTemplate>,
-    cmd: Option<&HookCmd>,
+    command: Option<&CommandConfig>,
     vars: &BTreeMap<&'static str, String>,
 ) {
-    fire_with(notify, cmd, vars, None);
+    fire_with(notify, command, vars, None);
 }
 
 /// Runs the two reactions a hook can carry, the notification asking for
 /// `sound` when one is given, logging either failure.
 fn fire_with(
     notify: Option<&NotificationTemplate>,
-    cmd: Option<&HookCmd>,
+    command: Option<&CommandConfig>,
     vars: &BTreeMap<&'static str, String>,
     sound: Option<&'static str>,
 ) {
@@ -386,10 +386,10 @@ fn fire_with(
         warn!("notify hook failed: {err:#}");
     }
 
-    if let Some(cmd) = cmd
-        && let Err(err) = run_command(cmd, vars)
+    if let Some(command) = command
+        && let Err(err) = run_command(command, vars)
     {
-        warn!("cmd hook failed: {err:#}");
+        warn!("command hook failed: {err:#}");
     }
 }
 
@@ -420,17 +420,16 @@ fn fire_notification(
 /// Spawns the hook command with the variables in its environment.
 ///
 /// Both TOML shapes, a string handed to the platform shell and a list
-/// spawned directly, are flattened into one [`std::process::Command`] at
-/// deserialization time, so there is one runtime path here.
-fn run_command(cmd: &HookCmd, vars: &BTreeMap<&'static str, String>) -> Result<()> {
-    let status = cmd
-        .clone()
-        .0
+/// spawned directly, become one [`std::process::Command`] here, so there
+/// is one runtime path.
+fn run_command(command: &CommandConfig, vars: &BTreeMap<&'static str, String>) -> Result<()> {
+    let status = command
+        .to_command()
         .envs(vars.iter().map(|(key, value)| (*key, value.as_str())))
         .status()?;
 
     if !status.success() {
-        warn!("cmd hook exited with {status}");
+        warn!("command hook exited with {status}");
     }
 
     Ok(())
@@ -462,12 +461,12 @@ mod tests {
         let err = validate(
             Some(&notify),
             Vocabulary::item("mailbox"),
-            "imap.hook.on-message-removed",
+            "imap.hooks.on-message-remove",
         )
         .expect_err("an envelope name is refused");
         let err = format!("{err:#}");
 
-        assert!(err.contains("on-message-removed.notify"), "got {err}");
+        assert!(err.contains("on-message-remove.notify"), "got {err}");
         assert!(err.contains("`subject`"), "got {err}");
         assert!(err.contains("$id, $collection, $mailbox"), "got {err}");
     }
@@ -478,7 +477,7 @@ mod tests {
         validate(
             Some(&notify),
             Vocabulary::resolved("mailbox"),
-            "imap.hook.on-message-added",
+            "imap.hooks.on-message-add",
         )
         .expect("an arrival resolves an envelope");
 
@@ -486,7 +485,7 @@ mod tests {
         validate(
             Some(&notify),
             Vocabulary::flag("mailbox"),
-            "imap.hook.on-flag-added",
+            "imap.hooks.on-flag-add",
         )
         .expect("a flag hook has its flag");
 
@@ -494,7 +493,7 @@ mod tests {
         validate(
             Some(&notify),
             Vocabulary::item("calendar"),
-            "caldav.hook.on-event-added",
+            "caldav.hooks.on-event-add",
         )
         .expect_err("an item hook has no flag");
     }
@@ -507,7 +506,7 @@ mod tests {
         validate(
             Some(&notify),
             Vocabulary::item("addressbook"),
-            "carddav.hook.on-card-removed",
+            "carddav.hooks.on-card-remove",
         )
         .expect_err("a card removal has no subject");
 
@@ -515,7 +514,7 @@ mod tests {
         validate(
             Some(&notify),
             Vocabulary::resolved("mailbox"),
-            "imap.hook.on-message-added",
+            "imap.hooks.on-message-add",
         )
         .expect("an arrival has a subject");
     }
@@ -574,7 +573,7 @@ mod tests {
         validate(
             Some(&notify),
             Vocabulary::item("addressbook"),
-            "gpeople.hook.on-card-added",
+            "gpeople.hooks.on-card-add",
         )
         .expect("every hook has its collection");
     }
@@ -595,7 +594,7 @@ mod tests {
     #[test]
     fn an_alarm_hook_templates_against_its_firing() {
         let alarm = Vocabulary::alarm("calendar");
-        let hook = "caldav.hook.on-alarm-trigger";
+        let hook = "caldav.hooks.on-alarm-trigger";
 
         validate(
             Some(&notified("$summary at $at ($kind, $action)")),
@@ -607,7 +606,7 @@ mod tests {
         validate(
             Some(&notified("$summary")),
             Vocabulary::item("calendar"),
-            "caldav.hook.on-event-added",
+            "caldav.hooks.on-event-add",
         )
         .expect_err("an event addition has no summary");
     }
@@ -622,7 +621,8 @@ mod tests {
         let line = format!("printf '%s %s' \"$uid\" \"$trigger\" > '{}'", out.display());
         let hook = ItemHook {
             notify: None,
-            cmd: Some(HookCmd(pimalaya_config::command::shell(&line))),
+            command: Some(CommandConfig::Shell(line)),
+            ..Default::default()
         };
 
         let trigger = "2026-11-05T07:45:00Z"

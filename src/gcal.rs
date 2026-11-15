@@ -341,7 +341,52 @@ pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<
 
 #[cfg(test)]
 mod tests {
-    use crate::gcal::*;
+    use crate::{gcal::*, scripted::Scripted};
+
+    /// The failure a watch meets arming on a named calendar, whose
+    /// listing is answered `status` and `body`.
+    fn refused(status: &'static str, body: &'static str) -> anyhow::Error {
+        let stream = Scripted::answering(&[(status, body)]);
+        let mut client = GcalClientStd::new(stream, "token");
+        Watched::arm(&mut client, "work").err().unwrap()
+    }
+
+    #[test]
+    fn a_403_refusing_the_calendar_is_permission_denied() {
+        let err = refused(
+            "403 Forbidden",
+            r#"{"error":{"code":403,"message":"The caller does not have permission","errors":[{"message":"The caller does not have permission","domain":"global","reason":"forbidden"}],"status":"PERMISSION_DENIED"}}"#,
+        );
+
+        assert_eq!(
+            Some(ErrorCode::PermissionDenied),
+            crate::error::code(&err),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn a_429_or_a_403_naming_a_rate_limit_is_rate_limited() {
+        let throttled = refused(
+            "429 Too Many Requests",
+            r#"{"error":{"code":429,"message":"Rate Limit Exceeded","errors":[{"message":"Rate Limit Exceeded","domain":"usageLimits","reason":"rateLimitExceeded"}]}}"#,
+        );
+        let limited = refused(
+            "403 Forbidden",
+            r#"{"error":{"code":403,"message":"Calendar usage limits exceeded.","errors":[{"message":"Calendar usage limits exceeded.","domain":"usageLimits","reason":"quotaExceeded"}]}}"#,
+        );
+
+        assert_eq!(
+            Some(ErrorCode::RateLimited),
+            crate::error::code(&throttled),
+            "{throttled:#}"
+        );
+        assert_eq!(
+            Some(ErrorCode::RateLimited),
+            crate::error::code(&limited),
+            "{limited:#}"
+        );
+    }
 
     fn event(id: &str, etag: &str, status: Option<GcalEventStatus>) -> GcalEvent {
         GcalEvent {

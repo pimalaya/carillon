@@ -92,7 +92,7 @@ fn a_gmail_label_fires_its_hooks() {
             let watcher = Watcher::start(
                 "gmail",
                 &format!("gmail.mailbox = \"{tag}\""),
-                &["on-message-added", "on-flag-added", "on-message-removed"],
+                &["on-message-add", "on-flag-add", "on-message-remove"],
                 &token,
             );
 
@@ -117,7 +117,7 @@ fn a_gmail_label_fires_its_hooks() {
             .expect("prepare the insertion");
             let message = client.run(insert).expect("insert the message").response.id;
 
-            let line = watcher.wait_for("on-message-added", "the arrival fires");
+            let line = watcher.wait_for("on-message-add", "the arrival fires");
             assert!(line.contains(&tag), "with its subject: {line}");
 
             client
@@ -128,8 +128,8 @@ fn a_gmail_label_fires_its_hooks() {
                 )
                 .expect("read and star the message");
 
-            let first = watcher.wait_for("on-flag-added", "a flag fires");
-            let second = watcher.wait_for("on-flag-added", "the other flag fires");
+            let first = watcher.wait_for("on-flag-add", "a flag fires");
+            let second = watcher.wait_for("on-flag-add", "the other flag fires");
             let both = format!("{first}\n{second}");
             assert!(both.contains("Seen"), "read is Seen: {both}");
             assert!(both.contains("Flagged"), "starred is Flagged: {both}");
@@ -137,7 +137,7 @@ fn a_gmail_label_fires_its_hooks() {
             client
                 .message_modify(&message, &[], slice::from_ref(&label))
                 .expect("take the label off");
-            watcher.wait_for("on-message-removed", "losing the label fires");
+            watcher.wait_for("on-message-remove", "losing the label fires");
         },
         || {
             // NOTE: an inserted message can be answered under an id that
@@ -193,7 +193,7 @@ fn a_google_calendar_fires_its_hooks() {
             let watcher = Watcher::start(
                 "gcal",
                 &format!("gcal.calendar = \"{calendar}\""),
-                &["on-event-added", "on-event-changed", "on-event-removed"],
+                &["on-event-add", "on-event-change", "on-event-remove"],
                 &token,
             );
 
@@ -220,7 +220,7 @@ fn a_google_calendar_fires_its_hooks() {
                 .response
                 .id
                 .expect("the event has an id");
-            watcher.wait_for("on-event-added", "the arrival fires");
+            watcher.wait_for("on-event-add", "the arrival fires");
 
             client
                 .event_patch(
@@ -234,12 +234,12 @@ fn a_google_calendar_fires_its_hooks() {
                     None,
                 )
                 .expect("edit the event");
-            watcher.wait_for("on-event-changed", "the edit fires");
+            watcher.wait_for("on-event-change", "the edit fires");
 
             client
                 .event_delete(&calendar, &event, None, None)
                 .expect("delete the event");
-            watcher.wait_for("on-event-removed", "the removal fires");
+            watcher.wait_for("on-event-remove", "the removal fires");
         },
         || {
             if let Err(err) = connect().calendar_delete(&calendar) {
@@ -296,7 +296,7 @@ fn a_google_contact_group_fires_its_hooks() {
             let watcher = Watcher::start(
                 "gpeople",
                 &format!("gpeople.addressbook = \"{tag}\""),
-                &["on-card-added", "on-card-changed", "on-card-removed"],
+                &["on-card-add", "on-card-change", "on-card-remove"],
                 &token,
             );
 
@@ -304,7 +304,7 @@ fn a_google_contact_group_fires_its_hooks() {
             client
                 .contact_group_members_modify(&group, slice::from_ref(&person), &[])
                 .expect("add the contact to the group");
-            watcher.wait_for("on-card-added", "joining the group fires");
+            watcher.wait_for("on-card-add", "joining the group fires");
 
             // NOTE: an update must name the current etag, which joining
             // the group moved.
@@ -330,12 +330,12 @@ fn a_google_contact_group_fires_its_hooks() {
                     &[],
                 )
                 .expect("edit the contact");
-            watcher.wait_for("on-card-changed", "the edit fires");
+            watcher.wait_for("on-card-change", "the edit fires");
 
             client
                 .contact_group_members_modify(&group, &[], slice::from_ref(&person))
                 .expect("take the contact out of the group");
-            watcher.wait_for("on-card-removed", "leaving the group fires");
+            watcher.wait_for("on-card-remove", "leaving the group fires");
         },
         || {
             let mut client = connect();

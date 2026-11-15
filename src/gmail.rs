@@ -392,59 +392,12 @@ pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::VecDeque,
-        io::{self, Cursor, Read, Write},
-        mem,
-    };
-
     use io_gmail::v1::rest::history::{GmailHistoryLabel, GmailHistoryMessage};
 
-    use crate::gmail::*;
-
-    /// A stream answering each request with the next of its answers, a
-    /// status and a body, and keeping the request lines it was sent.
-    #[derive(Default)]
-    struct Scripted {
-        answers: VecDeque<(&'static str, &'static str)>,
-        answer: Cursor<Vec<u8>>,
-        request: Vec<u8>,
-        seen: Vec<String>,
-    }
-
-    impl Write for Scripted {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.request.extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl Read for Scripted {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            if !self.request.is_empty() {
-                let request = mem::take(&mut self.request);
-                let request = String::from_utf8_lossy(&request);
-                let line = request.lines().next().unwrap_or_default();
-                self.seen.push(line.to_string());
-
-                let (status, body) = self.answers.pop_front().unwrap_or((OK, ""));
-                let length = body.len();
-                let answer = format!(
-                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n{body}"
-                );
-                self.answer = Cursor::new(answer.into_bytes());
-            }
-
-            self.answer.read(buf)
-        }
-    }
-
-    /// The status of an answer that went through.
-    const OK: &str = "200 OK";
+    use crate::{
+        gmail::*,
+        scripted::{OK, Scripted},
+    };
 
     fn client(bodies: &[&'static str]) -> GmailClientStd {
         let answers: Vec<_> = bodies.iter().map(|body| (OK, *body)).collect();
@@ -452,10 +405,7 @@ mod tests {
     }
 
     fn answering(answers: &[(&'static str, &'static str)]) -> GmailClientStd {
-        let stream = Scripted {
-            answers: answers.iter().copied().collect(),
-            ..Default::default()
-        };
+        let stream = Scripted::answering(answers);
 
         GmailClientStd::new(stream, "token", Default::default())
     }

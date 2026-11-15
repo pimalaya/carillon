@@ -20,7 +20,6 @@
 use std::{
     collections::{BTreeSet, HashMap},
     path::PathBuf,
-    process::Command,
     time::Duration,
 };
 
@@ -46,7 +45,7 @@ use log::warn;
 use pimalaya_config::secret::{Secret, SecretResolver};
 #[cfg(network)]
 use pimalaya_config::toml::opt_shell_expanded_path;
-use pimalaya_config::{command, notify::NotificationTemplate, toml::TomlConfig};
+use pimalaya_config::{command::CommandConfig, notify::NotificationTemplate, toml::TomlConfig};
 #[cfg(network)]
 use pimalaya_stream::{
     proxy::{Proxy, ProxyAuth},
@@ -191,7 +190,7 @@ pub struct AccountConfig {
     #[serde(default, deserialize_with = "refuse_watch")]
     #[allow(dead_code)]
     pub watch: Option<RemovedKeyConfig>,
-    /// Refused: the account-level `hooks`, now `<backend>.hook`.
+    /// Refused: the account-level `hooks`, now `<backend>.hooks`.
     #[serde(default, deserialize_with = "refuse_hooks")]
     #[allow(dead_code)]
     pub hooks: Option<RemovedKeyConfig>,
@@ -201,8 +200,8 @@ pub struct AccountConfig {
     pub dav: Option<RemovedKeyConfig>,
 }
 
-/// An account key carillon no longer reads, which no configuration holds:
-/// present, it fails the load naming where it went.
+/// A key carillon no longer reads, which no configuration holds: present,
+/// it fails the load naming where it went.
 #[derive(Clone, Debug)]
 pub enum RemovedKeyConfig {}
 
@@ -242,7 +241,7 @@ fn refuse_watch<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConf
 }
 
 fn refuse_hooks<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
-    Err(moved("hooks", "`<backend>.hook` (`imap.hook`)"))
+    Err(moved("hooks", "`<backend>.hooks` (`imap.hooks`)"))
 }
 
 fn refuse_dav<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
@@ -250,6 +249,55 @@ fn refuse_dav<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig
         "The `dav` backend is removed: watch a calendar with `caldav` or an \
          addressbook with `carddav`, see MIGRATION.md",
     ))
+}
+
+/// The error of a hook spelling renamed for 1.0, `what` naming the kind
+/// of key it is.
+fn renamed<E: de::Error>(what: &str, old: &str, new: &str) -> E {
+    E::custom(format!(
+        "The {what} `{old}` is now `{new}`, see MIGRATION.md"
+    ))
+}
+
+#[cfg_attr(not(any(backend, feature = "pimdir")), allow(dead_code))]
+fn refuse_hook<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
+    Err(renamed("hook table", "hook", "hooks"))
+}
+
+fn refuse_cmd<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
+    Err(renamed("hook key", "cmd", "command"))
+}
+
+/// Declares one refuser per hook name before 1.0, serde handing the key
+/// it read to no function.
+macro_rules! refuse_renamed_hooks {
+    ($($refuse:ident: $old:literal => $new:literal,)*) => {$(
+        // NOTE: a build leaving out every backend that fired the hook
+        // leaves its refuser unused.
+        #[allow(dead_code)]
+        fn $refuse<'de, D: Deserializer<'de>>(
+            _: D,
+        ) -> Result<Option<RemovedKeyConfig>, D::Error> {
+            Err(renamed("hook", $old, $new))
+        }
+    )*};
+}
+
+refuse_renamed_hooks! {
+    refuse_on_message_added: "on-message-added" => "on-message-add",
+    refuse_on_message_removed: "on-message-removed" => "on-message-remove",
+    refuse_on_message_changed: "on-message-changed" => "on-message-change",
+    refuse_on_flag_added: "on-flag-added" => "on-flag-add",
+    refuse_on_flag_removed: "on-flag-removed" => "on-flag-remove",
+    refuse_on_card_added: "on-card-added" => "on-card-add",
+    refuse_on_card_removed: "on-card-removed" => "on-card-remove",
+    refuse_on_card_changed: "on-card-changed" => "on-card-change",
+    refuse_on_event_added: "on-event-added" => "on-event-add",
+    refuse_on_event_removed: "on-event-removed" => "on-event-remove",
+    refuse_on_event_changed: "on-event-changed" => "on-event-change",
+    refuse_on_task_added: "on-task-added" => "on-task-add",
+    refuse_on_task_removed: "on-task-removed" => "on-task-remove",
+    refuse_on_task_changed: "on-task-changed" => "on-task-change",
 }
 
 impl AccountConfig {
@@ -290,7 +338,7 @@ impl AccountConfig {
     pub fn validate(&self) -> Result<()> {
         #[cfg(feature = "imap")]
         if let Some(imap) = &self.imap {
-            imap.hook.validate()?;
+            imap.hooks.validate()?;
         }
 
         #[cfg(feature = "jmap")]
@@ -300,17 +348,17 @@ impl AccountConfig {
 
         #[cfg(feature = "maildir")]
         if let Some(maildir) = &self.maildir {
-            maildir.hook.validate()?;
+            maildir.hooks.validate()?;
         }
 
         #[cfg(feature = "dav")]
         if let Some(caldav) = &self.caldav {
-            caldav.hook.validate()?;
+            caldav.hooks.validate()?;
         }
 
         #[cfg(feature = "dav")]
         if let Some(carddav) = &self.carddav {
-            carddav.hook.validate()?;
+            carddav.hooks.validate()?;
         }
 
         #[cfg(feature = "msgraph")]
@@ -320,22 +368,22 @@ impl AccountConfig {
 
         #[cfg(feature = "gmail")]
         if let Some(gmail) = &self.gmail {
-            gmail.hook.validate()?;
+            gmail.hooks.validate()?;
         }
 
         #[cfg(feature = "gcal")]
         if let Some(gcal) = &self.gcal {
-            gcal.hook.validate()?;
+            gcal.hooks.validate()?;
         }
 
         #[cfg(feature = "gpeople")]
         if let Some(gpeople) = &self.gpeople {
-            gpeople.hook.validate()?;
+            gpeople.hooks.validate()?;
         }
 
         #[cfg(feature = "pimdir")]
         if let Some(pimdir) = &self.pimdir {
-            pimdir.hook.validate()?;
+            pimdir.hooks.validate()?;
         }
 
         Ok(())
@@ -389,8 +437,12 @@ pub struct ImapConfig {
     #[serde(default)]
     pub watch: Option<ImapWatchConfig>,
     /// The hooks this backend fires.
-    #[serde(default, alias = "hooks")]
-    pub hook: ImapHookConfig,
+    #[serde(default)]
+    pub hooks: ImapHookConfig,
+    /// Refused: the table before 1.0, now `hooks`.
+    #[serde(default, deserialize_with = "refuse_hook")]
+    #[allow(dead_code)]
+    pub hook: Option<RemovedKeyConfig>,
 }
 
 /// Per-account `imap.id.*` quirks.
@@ -507,8 +559,12 @@ pub struct JmapConfig {
     #[serde(default)]
     pub watch: Option<JmapWatchConfig>,
     /// The hooks this backend fires.
-    #[serde(default, alias = "hooks")]
-    pub hook: DomainsHookConfig,
+    #[serde(default)]
+    pub hooks: DomainsHookConfig,
+    /// Refused: the table before 1.0, now `hooks`.
+    #[serde(default, deserialize_with = "refuse_hook")]
+    #[allow(dead_code)]
+    pub hook: Option<RemovedKeyConfig>,
 }
 
 #[cfg(feature = "jmap")]
@@ -539,8 +595,12 @@ pub struct MaildirConfig {
     #[serde(default)]
     pub watch: Option<MaildirWatchConfig>,
     /// The hooks this backend fires.
-    #[serde(default, alias = "hooks")]
-    pub hook: MaildirHookConfig,
+    #[serde(default)]
+    pub hooks: MaildirHookConfig,
+    /// Refused: the table before 1.0, now `hooks`.
+    #[serde(default, deserialize_with = "refuse_hook")]
+    #[allow(dead_code)]
+    pub hook: Option<RemovedKeyConfig>,
 }
 
 /// pimdir configuration: one calendar collection of a local pimdir store,
@@ -559,8 +619,12 @@ pub struct PimdirConfig {
     #[serde(default)]
     pub watch: Option<PimdirWatchConfig>,
     /// The hooks this backend fires.
-    #[serde(default, alias = "hooks")]
-    pub hook: PimdirHookConfig,
+    #[serde(default)]
+    pub hooks: PimdirHookConfig,
+    /// Refused: the table before 1.0, now `hooks`.
+    #[serde(default, deserialize_with = "refuse_hook")]
+    #[allow(dead_code)]
+    pub hook: Option<RemovedKeyConfig>,
 }
 
 /// Proxy configuration.
@@ -870,7 +934,7 @@ fn refuse_unwatched(
         if !collection(domain) {
             let key = domain.collection_name();
             bail!(
-                "Hook `{backend}.hook.{name}` needs `{backend}.{key}`, which this account does not configure"
+                "Hook `{backend}.hooks.{name}` needs `{backend}.{key}`, which this account does not configure"
             );
         }
     }
@@ -897,13 +961,13 @@ impl JmapConfig {
     /// Refuses a block watching nothing, a hook whose domain has no
     /// collection, and a notification naming what its event cannot fill.
     pub fn validate(&self) -> Result<()> {
-        if self.hook.on_message_changed.is_some() {
-            bail!("Hook `jmap.hook.on-message-changed` never fires: a JMAP email is immutable");
+        if self.hooks.on_message_change.is_some() {
+            bail!("Hook `jmap.hooks.on-message-change` never fires: a JMAP email is immutable");
         }
 
         let collection = |domain| self.collection(domain).is_some();
-        refuse_unwatched("jmap", collection, self.hook.configured())?;
-        self.hook.validate("jmap")
+        refuse_unwatched("jmap", collection, self.hooks.configured())?;
+        self.hooks.validate("jmap")
     }
 }
 
@@ -984,13 +1048,26 @@ impl CarddavConfig {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ImapHookConfig {
     /// Fires when a message arrives in the watched mailbox.
-    pub on_message_added: Option<ItemHook>,
+    pub on_message_add: Option<ItemHook>,
     /// Fires when a message leaves it, expunged or moved away.
-    pub on_message_removed: Option<ItemHook>,
+    pub on_message_remove: Option<ItemHook>,
     /// Fires once for each flag set on a message.
-    pub on_flag_added: Option<FlagHook>,
+    pub on_flag_add: Option<FlagHook>,
     /// Fires once for each flag cleared on a message.
-    pub on_flag_removed: Option<FlagHook>,
+    pub on_flag_remove: Option<FlagHook>,
+    /// Refused: the hook names before 1.0, each pointing at its successor.
+    #[serde(default, deserialize_with = "refuse_on_message_added")]
+    #[allow(dead_code)]
+    pub on_message_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_message_removed")]
+    #[allow(dead_code)]
+    pub on_message_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_flag_added")]
+    #[allow(dead_code)]
+    pub on_flag_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_flag_removed")]
+    #[allow(dead_code)]
+    pub on_flag_removed: Option<RemovedKeyConfig>,
 }
 
 /// Hooks a JMAP or a Microsoft Graph watch fires, one set per domain.
@@ -999,28 +1076,62 @@ pub struct ImapHookConfig {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DomainsHookConfig {
     /// Fires when a message arrives in the watched mailbox.
-    pub on_message_added: Option<ItemHook>,
+    pub on_message_add: Option<ItemHook>,
     /// Fires when a message leaves it.
-    pub on_message_removed: Option<ItemHook>,
+    pub on_message_remove: Option<ItemHook>,
     /// Fires when a message is edited where it stands, which only a
     /// Microsoft Graph draft is.
-    pub on_message_changed: Option<ItemHook>,
+    pub on_message_change: Option<ItemHook>,
     /// Fires once for each keyword set on a message.
-    pub on_flag_added: Option<FlagHook>,
+    pub on_flag_add: Option<FlagHook>,
     /// Fires once for each keyword cleared on a message.
-    pub on_flag_removed: Option<FlagHook>,
+    pub on_flag_remove: Option<FlagHook>,
     /// Fires when a contact appears in the watched addressbook.
-    pub on_card_added: Option<ItemHook>,
+    pub on_card_add: Option<ItemHook>,
     /// Fires when a contact leaves it.
-    pub on_card_removed: Option<ItemHook>,
+    pub on_card_remove: Option<ItemHook>,
     /// Fires when a contact is edited where it stands.
-    pub on_card_changed: Option<ItemHook>,
+    pub on_card_change: Option<ItemHook>,
     /// Fires when an event appears in the watched calendar.
-    pub on_event_added: Option<ItemHook>,
+    pub on_event_add: Option<ItemHook>,
     /// Fires when an event leaves it.
-    pub on_event_removed: Option<ItemHook>,
+    pub on_event_remove: Option<ItemHook>,
     /// Fires when an event is edited where it stands.
-    pub on_event_changed: Option<ItemHook>,
+    pub on_event_change: Option<ItemHook>,
+    /// Refused: the hook names before 1.0, each pointing at its successor.
+    #[serde(default, deserialize_with = "refuse_on_message_added")]
+    #[allow(dead_code)]
+    pub on_message_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_message_removed")]
+    #[allow(dead_code)]
+    pub on_message_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_message_changed")]
+    #[allow(dead_code)]
+    pub on_message_changed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_flag_added")]
+    #[allow(dead_code)]
+    pub on_flag_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_flag_removed")]
+    #[allow(dead_code)]
+    pub on_flag_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_card_added")]
+    #[allow(dead_code)]
+    pub on_card_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_card_removed")]
+    #[allow(dead_code)]
+    pub on_card_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_card_changed")]
+    #[allow(dead_code)]
+    pub on_card_changed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_event_added")]
+    #[allow(dead_code)]
+    pub on_event_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_event_removed")]
+    #[allow(dead_code)]
+    pub on_event_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_event_changed")]
+    #[allow(dead_code)]
+    pub on_event_changed: Option<RemovedKeyConfig>,
 }
 
 /// Hooks a Maildir watch fires.
@@ -1029,13 +1140,26 @@ pub struct DomainsHookConfig {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct MaildirHookConfig {
     /// Fires when a message file appears in the watched maildir.
-    pub on_message_added: Option<ItemHook>,
+    pub on_message_add: Option<ItemHook>,
     /// Fires when one disappears from it.
-    pub on_message_removed: Option<ItemHook>,
+    pub on_message_remove: Option<ItemHook>,
     /// Fires once for each flag letter added to a message.
-    pub on_flag_added: Option<FlagHook>,
+    pub on_flag_add: Option<FlagHook>,
     /// Fires once for each flag letter removed from one.
-    pub on_flag_removed: Option<FlagHook>,
+    pub on_flag_remove: Option<FlagHook>,
+    /// Refused: the hook names before 1.0, each pointing at its successor.
+    #[serde(default, deserialize_with = "refuse_on_message_added")]
+    #[allow(dead_code)]
+    pub on_message_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_message_removed")]
+    #[allow(dead_code)]
+    pub on_message_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_flag_added")]
+    #[allow(dead_code)]
+    pub on_flag_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_flag_removed")]
+    #[allow(dead_code)]
+    pub on_flag_removed: Option<RemovedKeyConfig>,
 }
 
 /// Hooks a pimdir watch fires.
@@ -1053,19 +1177,38 @@ pub struct PimdirHookConfig {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CaldavHookConfig {
     /// Fires when a VEVENT appears in the watched calendar.
-    pub on_event_added: Option<ItemHook>,
+    pub on_event_add: Option<ItemHook>,
     /// Fires when a VEVENT leaves it.
-    pub on_event_removed: Option<ItemHook>,
+    pub on_event_remove: Option<ItemHook>,
     /// Fires when a VEVENT is edited where it stands.
-    pub on_event_changed: Option<ItemHook>,
+    pub on_event_change: Option<ItemHook>,
     /// Fires when a VTODO appears in the watched calendar.
-    pub on_task_added: Option<ItemHook>,
+    pub on_task_add: Option<ItemHook>,
     /// Fires when a VTODO leaves it.
-    pub on_task_removed: Option<ItemHook>,
+    pub on_task_remove: Option<ItemHook>,
     /// Fires when a VTODO is edited where it stands.
-    pub on_task_changed: Option<ItemHook>,
+    pub on_task_change: Option<ItemHook>,
     /// Fires when an alarm of a VEVENT or a VTODO reaches its trigger.
     pub on_alarm_trigger: Option<ItemHook>,
+    /// Refused: the hook names before 1.0, each pointing at its successor.
+    #[serde(default, deserialize_with = "refuse_on_event_added")]
+    #[allow(dead_code)]
+    pub on_event_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_event_removed")]
+    #[allow(dead_code)]
+    pub on_event_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_event_changed")]
+    #[allow(dead_code)]
+    pub on_event_changed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_task_added")]
+    #[allow(dead_code)]
+    pub on_task_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_task_removed")]
+    #[allow(dead_code)]
+    pub on_task_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_task_changed")]
+    #[allow(dead_code)]
+    pub on_task_changed: Option<RemovedKeyConfig>,
 }
 
 /// Hooks a CardDAV watch fires.
@@ -1074,11 +1217,21 @@ pub struct CaldavHookConfig {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CarddavHookConfig {
     /// Fires when a vCard appears in the watched addressbook.
-    pub on_card_added: Option<ItemHook>,
+    pub on_card_add: Option<ItemHook>,
     /// Fires when a vCard leaves it.
-    pub on_card_removed: Option<ItemHook>,
+    pub on_card_remove: Option<ItemHook>,
     /// Fires when a vCard is edited where it stands.
-    pub on_card_changed: Option<ItemHook>,
+    pub on_card_change: Option<ItemHook>,
+    /// Refused: the hook names before 1.0, each pointing at its successor.
+    #[serde(default, deserialize_with = "refuse_on_card_added")]
+    #[allow(dead_code)]
+    pub on_card_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_card_removed")]
+    #[allow(dead_code)]
+    pub on_card_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_card_changed")]
+    #[allow(dead_code)]
+    pub on_card_changed: Option<RemovedKeyConfig>,
 }
 
 /// The hook one event resolved to, in either of the two shapes a hook is
@@ -1101,11 +1254,11 @@ impl ImapHookConfig {
     /// The hook `event` calls for, when one is configured.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
         match event {
-            WatchEvent::ItemAdded { .. } => self.on_message_added.as_ref().map(Hook::Item),
-            WatchEvent::ItemRemoved { .. } => self.on_message_removed.as_ref().map(Hook::Item),
+            WatchEvent::ItemAdded { .. } => self.on_message_add.as_ref().map(Hook::Item),
+            WatchEvent::ItemRemoved { .. } => self.on_message_remove.as_ref().map(Hook::Item),
             WatchEvent::ItemChanged { .. } => None,
-            WatchEvent::FlagAdded { .. } => self.on_flag_added.as_ref().map(Hook::Flag),
-            WatchEvent::FlagRemoved { .. } => self.on_flag_removed.as_ref().map(Hook::Flag),
+            WatchEvent::FlagAdded { .. } => self.on_flag_add.as_ref().map(Hook::Flag),
+            WatchEvent::FlagRemoved { .. } => self.on_flag_remove.as_ref().map(Hook::Flag),
         }
     }
 }
@@ -1117,20 +1270,20 @@ impl DomainsHookConfig {
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
         let hook = match (event.domain(), event) {
             (WatchDomain::Message, WatchEvent::FlagAdded { .. }) => {
-                return self.on_flag_added.as_ref().map(Hook::Flag);
+                return self.on_flag_add.as_ref().map(Hook::Flag);
             }
             (WatchDomain::Message, WatchEvent::FlagRemoved { .. }) => {
-                return self.on_flag_removed.as_ref().map(Hook::Flag);
+                return self.on_flag_remove.as_ref().map(Hook::Flag);
             }
-            (WatchDomain::Message, WatchEvent::ItemAdded { .. }) => &self.on_message_added,
-            (WatchDomain::Message, WatchEvent::ItemRemoved { .. }) => &self.on_message_removed,
-            (WatchDomain::Message, WatchEvent::ItemChanged { .. }) => &self.on_message_changed,
-            (WatchDomain::Card, WatchEvent::ItemAdded { .. }) => &self.on_card_added,
-            (WatchDomain::Card, WatchEvent::ItemRemoved { .. }) => &self.on_card_removed,
-            (WatchDomain::Card, WatchEvent::ItemChanged { .. }) => &self.on_card_changed,
-            (WatchDomain::Event, WatchEvent::ItemAdded { .. }) => &self.on_event_added,
-            (WatchDomain::Event, WatchEvent::ItemRemoved { .. }) => &self.on_event_removed,
-            (WatchDomain::Event, WatchEvent::ItemChanged { .. }) => &self.on_event_changed,
+            (WatchDomain::Message, WatchEvent::ItemAdded { .. }) => &self.on_message_add,
+            (WatchDomain::Message, WatchEvent::ItemRemoved { .. }) => &self.on_message_remove,
+            (WatchDomain::Message, WatchEvent::ItemChanged { .. }) => &self.on_message_change,
+            (WatchDomain::Card, WatchEvent::ItemAdded { .. }) => &self.on_card_add,
+            (WatchDomain::Card, WatchEvent::ItemRemoved { .. }) => &self.on_card_remove,
+            (WatchDomain::Card, WatchEvent::ItemChanged { .. }) => &self.on_card_change,
+            (WatchDomain::Event, WatchEvent::ItemAdded { .. }) => &self.on_event_add,
+            (WatchDomain::Event, WatchEvent::ItemRemoved { .. }) => &self.on_event_remove,
+            (WatchDomain::Event, WatchEvent::ItemChanged { .. }) => &self.on_event_change,
             _ => return None,
         };
 
@@ -1142,59 +1295,55 @@ impl DomainsHookConfig {
     fn configured(&self) -> impl Iterator<Item = (&'static str, WatchDomain)> {
         [
             (
-                "on-message-added",
+                "on-message-add",
                 WatchDomain::Message,
-                self.on_message_added.is_some(),
+                self.on_message_add.is_some(),
             ),
             (
-                "on-message-removed",
+                "on-message-remove",
                 WatchDomain::Message,
-                self.on_message_removed.is_some(),
+                self.on_message_remove.is_some(),
             ),
             (
-                "on-message-changed",
+                "on-message-change",
                 WatchDomain::Message,
-                self.on_message_changed.is_some(),
+                self.on_message_change.is_some(),
             ),
             (
-                "on-flag-added",
+                "on-flag-add",
                 WatchDomain::Message,
-                self.on_flag_added.is_some(),
+                self.on_flag_add.is_some(),
             ),
             (
-                "on-flag-removed",
+                "on-flag-remove",
                 WatchDomain::Message,
-                self.on_flag_removed.is_some(),
+                self.on_flag_remove.is_some(),
             ),
+            ("on-card-add", WatchDomain::Card, self.on_card_add.is_some()),
             (
-                "on-card-added",
+                "on-card-remove",
                 WatchDomain::Card,
-                self.on_card_added.is_some(),
+                self.on_card_remove.is_some(),
             ),
             (
-                "on-card-removed",
+                "on-card-change",
                 WatchDomain::Card,
-                self.on_card_removed.is_some(),
+                self.on_card_change.is_some(),
             ),
             (
-                "on-card-changed",
-                WatchDomain::Card,
-                self.on_card_changed.is_some(),
-            ),
-            (
-                "on-event-added",
+                "on-event-add",
                 WatchDomain::Event,
-                self.on_event_added.is_some(),
+                self.on_event_add.is_some(),
             ),
             (
-                "on-event-removed",
+                "on-event-remove",
                 WatchDomain::Event,
-                self.on_event_removed.is_some(),
+                self.on_event_remove.is_some(),
             ),
             (
-                "on-event-changed",
+                "on-event-change",
                 WatchDomain::Event,
-                self.on_event_changed.is_some(),
+                self.on_event_change.is_some(),
             ),
         ]
         .into_iter()
@@ -1210,11 +1359,11 @@ impl MaildirHookConfig {
     /// The hook `event` calls for, when one is configured.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
         match event {
-            WatchEvent::ItemAdded { .. } => self.on_message_added.as_ref().map(Hook::Item),
-            WatchEvent::ItemRemoved { .. } => self.on_message_removed.as_ref().map(Hook::Item),
+            WatchEvent::ItemAdded { .. } => self.on_message_add.as_ref().map(Hook::Item),
+            WatchEvent::ItemRemoved { .. } => self.on_message_remove.as_ref().map(Hook::Item),
             WatchEvent::ItemChanged { .. } => None,
-            WatchEvent::FlagAdded { .. } => self.on_flag_added.as_ref().map(Hook::Flag),
-            WatchEvent::FlagRemoved { .. } => self.on_flag_removed.as_ref().map(Hook::Flag),
+            WatchEvent::FlagAdded { .. } => self.on_flag_add.as_ref().map(Hook::Flag),
+            WatchEvent::FlagRemoved { .. } => self.on_flag_remove.as_ref().map(Hook::Flag),
         }
     }
 }
@@ -1228,27 +1377,27 @@ impl CaldavHookConfig {
             WatchEvent::ItemAdded {
                 domain: WatchDomain::Event,
                 ..
-            } => &self.on_event_added,
+            } => &self.on_event_add,
             WatchEvent::ItemRemoved {
                 domain: WatchDomain::Event,
                 ..
-            } => &self.on_event_removed,
+            } => &self.on_event_remove,
             WatchEvent::ItemChanged {
                 domain: WatchDomain::Event,
                 ..
-            } => &self.on_event_changed,
+            } => &self.on_event_change,
             WatchEvent::ItemAdded {
                 domain: WatchDomain::Task,
                 ..
-            } => &self.on_task_added,
+            } => &self.on_task_add,
             WatchEvent::ItemRemoved {
                 domain: WatchDomain::Task,
                 ..
-            } => &self.on_task_removed,
+            } => &self.on_task_remove,
             WatchEvent::ItemChanged {
                 domain: WatchDomain::Task,
                 ..
-            } => &self.on_task_changed,
+            } => &self.on_task_change,
             _ => return None,
         };
 
@@ -1260,16 +1409,16 @@ impl CaldavHookConfig {
     pub fn domains(&self) -> Vec<WatchDomain> {
         let mut domains = Vec::new();
 
-        if self.on_event_added.is_some()
-            || self.on_event_removed.is_some()
-            || self.on_event_changed.is_some()
+        if self.on_event_add.is_some()
+            || self.on_event_remove.is_some()
+            || self.on_event_change.is_some()
         {
             domains.push(WatchDomain::Event);
         }
 
-        if self.on_task_added.is_some()
-            || self.on_task_removed.is_some()
-            || self.on_task_changed.is_some()
+        if self.on_task_add.is_some()
+            || self.on_task_remove.is_some()
+            || self.on_task_change.is_some()
         {
             domains.push(WatchDomain::Task);
         }
@@ -1283,9 +1432,9 @@ impl CarddavHookConfig {
     /// The hook `event` calls for, when one is configured.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
         let hook = match event {
-            WatchEvent::ItemAdded { .. } => &self.on_card_added,
-            WatchEvent::ItemRemoved { .. } => &self.on_card_removed,
-            WatchEvent::ItemChanged { .. } => &self.on_card_changed,
+            WatchEvent::ItemAdded { .. } => &self.on_card_add,
+            WatchEvent::ItemRemoved { .. } => &self.on_card_remove,
+            WatchEvent::ItemChanged { .. } => &self.on_card_change,
             _ => return None,
         };
 
@@ -1301,30 +1450,26 @@ impl ImapHookConfig {
     /// its arrival hook may name one.
     pub fn validate(&self) -> Result<()> {
         hook::validate(
-            self.on_message_added
-                .as_ref()
-                .and_then(|h| h.notify.as_ref()),
+            self.on_message_add.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::resolved(Self::COLLECTION),
-            "imap.hook.on-message-added",
+            "imap.hooks.on-message-add",
         )?;
         hook::validate(
-            self.on_message_removed
+            self.on_message_remove
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
             Vocabulary::item(Self::COLLECTION),
-            "imap.hook.on-message-removed",
+            "imap.hooks.on-message-remove",
         )?;
         hook::validate(
-            self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
+            self.on_flag_add.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::flag(Self::COLLECTION),
-            "imap.hook.on-flag-added",
+            "imap.hooks.on-flag-add",
         )?;
         hook::validate(
-            self.on_flag_removed
-                .as_ref()
-                .and_then(|h| h.notify.as_ref()),
+            self.on_flag_remove.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::flag(Self::COLLECTION),
-            "imap.hook.on-flag-removed",
+            "imap.hooks.on-flag-remove",
         )
     }
 }
@@ -1340,60 +1485,48 @@ impl DomainsHookConfig {
         let mailbox = WatchDomain::Message.collection_name();
 
         hook::validate(
-            self.on_message_added
-                .as_ref()
-                .and_then(|h| h.notify.as_ref()),
+            self.on_message_add.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::resolved(mailbox),
-            &format!("{backend}.hook.on-message-added"),
+            &format!("{backend}.hooks.on-message-add"),
         )?;
         hook::validate(
-            self.on_message_removed
+            self.on_message_remove
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
             Vocabulary::item(mailbox),
-            &format!("{backend}.hook.on-message-removed"),
+            &format!("{backend}.hooks.on-message-remove"),
         )?;
         hook::validate(
-            self.on_message_changed
+            self.on_message_change
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
             Vocabulary::item(mailbox),
-            &format!("{backend}.hook.on-message-changed"),
+            &format!("{backend}.hooks.on-message-change"),
         )?;
         hook::validate(
-            self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
+            self.on_flag_add.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::flag(mailbox),
-            &format!("{backend}.hook.on-flag-added"),
+            &format!("{backend}.hooks.on-flag-add"),
         )?;
         hook::validate(
-            self.on_flag_removed
-                .as_ref()
-                .and_then(|h| h.notify.as_ref()),
+            self.on_flag_remove.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::flag(mailbox),
-            &format!("{backend}.hook.on-flag-removed"),
+            &format!("{backend}.hooks.on-flag-remove"),
         )?;
 
         for (hook, domain, name) in [
-            (&self.on_card_added, WatchDomain::Card, "on-card-added"),
-            (&self.on_card_removed, WatchDomain::Card, "on-card-removed"),
-            (&self.on_card_changed, WatchDomain::Card, "on-card-changed"),
-            (&self.on_event_added, WatchDomain::Event, "on-event-added"),
-            (
-                &self.on_event_removed,
-                WatchDomain::Event,
-                "on-event-removed",
-            ),
-            (
-                &self.on_event_changed,
-                WatchDomain::Event,
-                "on-event-changed",
-            ),
+            (&self.on_card_add, WatchDomain::Card, "on-card-add"),
+            (&self.on_card_remove, WatchDomain::Card, "on-card-remove"),
+            (&self.on_card_change, WatchDomain::Card, "on-card-change"),
+            (&self.on_event_add, WatchDomain::Event, "on-event-add"),
+            (&self.on_event_remove, WatchDomain::Event, "on-event-remove"),
+            (&self.on_event_change, WatchDomain::Event, "on-event-change"),
         ] {
             let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
             hook::validate(
                 notify,
                 Vocabulary::item(domain.collection_name()),
-                &format!("{backend}.hook.{name}"),
+                &format!("{backend}.hooks.{name}"),
             )?;
         }
 
@@ -1406,30 +1539,26 @@ impl MaildirHookConfig {
     /// Refuses a notification naming what its event cannot fill.
     pub fn validate(&self) -> Result<()> {
         hook::validate(
-            self.on_message_added
+            self.on_message_add.as_ref().and_then(|h| h.notify.as_ref()),
+            Vocabulary::item(Self::COLLECTION),
+            "maildir.hooks.on-message-add",
+        )?;
+        hook::validate(
+            self.on_message_remove
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
             Vocabulary::item(Self::COLLECTION),
-            "maildir.hook.on-message-added",
+            "maildir.hooks.on-message-remove",
         )?;
         hook::validate(
-            self.on_message_removed
-                .as_ref()
-                .and_then(|h| h.notify.as_ref()),
-            Vocabulary::item(Self::COLLECTION),
-            "maildir.hook.on-message-removed",
-        )?;
-        hook::validate(
-            self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
+            self.on_flag_add.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::flag(Self::COLLECTION),
-            "maildir.hook.on-flag-added",
+            "maildir.hooks.on-flag-add",
         )?;
         hook::validate(
-            self.on_flag_removed
-                .as_ref()
-                .and_then(|h| h.notify.as_ref()),
+            self.on_flag_remove.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::flag(Self::COLLECTION),
-            "maildir.hook.on-flag-removed",
+            "maildir.hooks.on-flag-remove",
         )
     }
 }
@@ -1440,13 +1569,13 @@ impl PimdirHookConfig {
     /// nothing, and a notification naming what an alarm cannot fill.
     pub fn validate(&self) -> Result<()> {
         let Some(hook) = &self.on_alarm_trigger else {
-            bail!("pimdir.hook needs `on-alarm-trigger`, the one hook a pimdir watch fires");
+            bail!("pimdir.hooks needs `on-alarm-trigger`, the one hook a pimdir watch fires");
         };
 
         hook::validate(
             hook.notify.as_ref(),
             Vocabulary::alarm(PimdirConfig::COLLECTION),
-            "pimdir.hook.on-alarm-trigger",
+            "pimdir.hooks.on-alarm-trigger",
         )
     }
 }
@@ -1456,18 +1585,18 @@ impl CaldavHookConfig {
     /// Refuses a notification naming what its event cannot fill.
     pub fn validate(&self) -> Result<()> {
         for (hook, name) in [
-            (&self.on_event_added, "on-event-added"),
-            (&self.on_event_removed, "on-event-removed"),
-            (&self.on_event_changed, "on-event-changed"),
-            (&self.on_task_added, "on-task-added"),
-            (&self.on_task_removed, "on-task-removed"),
-            (&self.on_task_changed, "on-task-changed"),
+            (&self.on_event_add, "on-event-add"),
+            (&self.on_event_remove, "on-event-remove"),
+            (&self.on_event_change, "on-event-change"),
+            (&self.on_task_add, "on-task-add"),
+            (&self.on_task_remove, "on-task-remove"),
+            (&self.on_task_change, "on-task-change"),
         ] {
             let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
             hook::validate(
                 notify,
                 Vocabulary::item(CaldavConfig::COLLECTION),
-                &format!("caldav.hook.{name}"),
+                &format!("caldav.hooks.{name}"),
             )?;
         }
 
@@ -1478,7 +1607,7 @@ impl CaldavHookConfig {
         hook::validate(
             notify,
             Vocabulary::alarm(CaldavConfig::COLLECTION),
-            "caldav.hook.on-alarm-trigger",
+            "caldav.hooks.on-alarm-trigger",
         )?;
 
         Ok(())
@@ -1490,15 +1619,15 @@ impl CarddavHookConfig {
     /// Refuses a notification naming what its event cannot fill.
     pub fn validate(&self) -> Result<()> {
         for (hook, name) in [
-            (&self.on_card_added, "on-card-added"),
-            (&self.on_card_removed, "on-card-removed"),
-            (&self.on_card_changed, "on-card-changed"),
+            (&self.on_card_add, "on-card-add"),
+            (&self.on_card_remove, "on-card-remove"),
+            (&self.on_card_change, "on-card-change"),
         ] {
             let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
             hook::validate(
                 notify,
                 Vocabulary::item(CarddavConfig::COLLECTION),
-                &format!("carddav.hook.{name}"),
+                &format!("carddav.hooks.{name}"),
             )?;
         }
 
@@ -1509,13 +1638,20 @@ impl CarddavHookConfig {
 /// Hook that fires for item-level events: added, removed, changed.
 ///
 /// Summary and body template on `$name`, `${name}` and `${name:-default}`,
-/// with `$id` and the collection always available. The envelope names (`$subject`, `$sender`,
-/// …) belong to an arrival on IMAP or JMAP, which read one.
+/// with `$id` and the collection always available. The envelope names
+/// (`$subject`, `$sender`, …) belong to an arrival on a backend reading
+/// one.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ItemHook {
     pub notify: Option<NotificationTemplate>,
-    pub cmd: Option<HookCmd>,
+    /// A shell line, or a program and its arguments, run with the
+    /// variables in its environment.
+    pub command: Option<CommandConfig>,
+    /// Refused: the key before 1.0, now `command`.
+    #[serde(default, deserialize_with = "refuse_cmd")]
+    #[allow(dead_code)]
+    pub cmd: Option<RemovedKeyConfig>,
 }
 
 /// Hook that fires for flag-level events, once per flag that moved.
@@ -1527,27 +1663,15 @@ pub struct ItemHook {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct FlagHook {
     pub notify: Option<NotificationTemplate>,
-    pub cmd: Option<HookCmd>,
+    /// A shell line, or a program and its arguments, run with the
+    /// variables in its environment.
+    pub command: Option<CommandConfig>,
+    /// Refused: the key before 1.0, now `command`.
+    #[serde(default, deserialize_with = "refuse_cmd")]
+    #[allow(dead_code)]
+    pub cmd: Option<RemovedKeyConfig>,
     #[serde(default)]
     pub flags: BTreeSet<String>,
-}
-
-/// Shell-command payload, deserialized by [`pimalaya_config::command`].
-///
-/// A TOML string goes through the platform shell (`/bin/sh -c <line>` on
-/// Unix, `cmd /C <line>` on Windows), a TOML list `[program, args…]` is
-/// spawned directly. Both shapes take the variables in their environment.
-#[derive(Debug, Deserialize)]
-pub struct HookCmd(#[serde(with = "command")] pub Command);
-
-impl Clone for HookCmd {
-    fn clone(&self) -> Self {
-        // NOTE: `Command` is not `Clone`, so a fresh one is rebuilt from
-        // the same program and args, as `Secret` does.
-        let mut new = Command::new(self.0.get_program());
-        new.args(self.0.get_args());
-        Self(new)
-    }
 }
 
 // NOTE: CalDAV and CardDAV are WebDAV, so the transport half is one
@@ -1590,8 +1714,12 @@ pub struct CaldavConfig {
     #[serde(default)]
     pub watch: Option<DavWatchConfig>,
     /// The hooks this backend fires, one per component it holds.
-    #[serde(default, alias = "hooks")]
-    pub hook: CaldavHookConfig,
+    #[serde(default)]
+    pub hooks: CaldavHookConfig,
+    /// Refused: the table before 1.0, now `hooks`.
+    #[serde(default, deserialize_with = "refuse_hook")]
+    #[allow(dead_code)]
+    pub hook: Option<RemovedKeyConfig>,
 }
 
 /// CardDAV configuration: one watched addressbook, polled the same way.
@@ -1626,8 +1754,12 @@ pub struct CarddavConfig {
     #[serde(default)]
     pub watch: Option<DavWatchConfig>,
     /// The hooks this backend fires.
-    #[serde(default, alias = "hooks")]
-    pub hook: CarddavHookConfig,
+    #[serde(default)]
+    pub hooks: CarddavHookConfig,
+    /// Refused: the table before 1.0, now `hooks`.
+    #[serde(default, deserialize_with = "refuse_hook")]
+    #[allow(dead_code)]
+    pub hook: Option<RemovedKeyConfig>,
 }
 
 /// The transport half of a DAV backend, shared by a calendar and an
@@ -1853,8 +1985,12 @@ pub struct MsgraphConfig {
     #[serde(default)]
     pub watch: Option<ApiWatchConfig>,
     /// The hooks this backend fires.
-    #[serde(default, alias = "hooks")]
-    pub hook: DomainsHookConfig,
+    #[serde(default)]
+    pub hooks: DomainsHookConfig,
+    /// Refused: the table before 1.0, now `hooks`.
+    #[serde(default, deserialize_with = "refuse_hook")]
+    #[allow(dead_code)]
+    pub hook: Option<RemovedKeyConfig>,
 }
 
 #[cfg(feature = "msgraph")]
@@ -1877,8 +2013,8 @@ impl MsgraphConfig {
     /// collection, and a notification naming what its event cannot fill.
     pub fn validate(&self) -> Result<()> {
         let collection = |domain| self.collection(domain).is_some();
-        refuse_unwatched("msgraph", collection, self.hook.configured())?;
-        self.hook.validate("msgraph")
+        refuse_unwatched("msgraph", collection, self.hooks.configured())?;
+        self.hooks.validate("msgraph")
     }
 }
 
@@ -1909,8 +2045,12 @@ pub struct GmailConfig {
     #[serde(default)]
     pub watch: Option<ApiWatchConfig>,
     /// The hooks this backend fires.
-    #[serde(default, alias = "hooks")]
-    pub hook: GmailHookConfig,
+    #[serde(default)]
+    pub hooks: GmailHookConfig,
+    /// Refused: the table before 1.0, now `hooks`.
+    #[serde(default, deserialize_with = "refuse_hook")]
+    #[allow(dead_code)]
+    pub hook: Option<RemovedKeyConfig>,
 }
 
 #[cfg(feature = "gmail")]
@@ -1948,8 +2088,12 @@ pub struct GcalConfig {
     #[serde(default)]
     pub watch: Option<ApiWatchConfig>,
     /// The hooks this backend fires.
-    #[serde(default, alias = "hooks")]
-    pub hook: GcalHookConfig,
+    #[serde(default)]
+    pub hooks: GcalHookConfig,
+    /// Refused: the table before 1.0, now `hooks`.
+    #[serde(default, deserialize_with = "refuse_hook")]
+    #[allow(dead_code)]
+    pub hook: Option<RemovedKeyConfig>,
 }
 
 #[cfg(feature = "gcal")]
@@ -1988,8 +2132,12 @@ pub struct GpeopleConfig {
     #[serde(default)]
     pub watch: Option<ApiWatchConfig>,
     /// The hooks this backend fires.
-    #[serde(default, alias = "hooks")]
-    pub hook: GpeopleHookConfig,
+    #[serde(default)]
+    pub hooks: GpeopleHookConfig,
+    /// Refused: the table before 1.0, now `hooks`.
+    #[serde(default, deserialize_with = "refuse_hook")]
+    #[allow(dead_code)]
+    pub hook: Option<RemovedKeyConfig>,
 }
 
 #[cfg(feature = "gpeople")]
@@ -2041,14 +2189,27 @@ impl ApiWatchConfig {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GmailHookConfig {
     /// Fires when a message arrives in the watched label.
-    pub on_message_added: Option<ItemHook>,
+    pub on_message_add: Option<ItemHook>,
     /// Fires when a message leaves it, deleted or relabelled.
-    pub on_message_removed: Option<ItemHook>,
+    pub on_message_remove: Option<ItemHook>,
     /// Fires once for each flag set on a message: `Seen` when `UNREAD`
     /// is cleared, `Flagged` when `STARRED` is set.
-    pub on_flag_added: Option<FlagHook>,
+    pub on_flag_add: Option<FlagHook>,
     /// Fires once for each flag cleared on a message.
-    pub on_flag_removed: Option<FlagHook>,
+    pub on_flag_remove: Option<FlagHook>,
+    /// Refused: the hook names before 1.0, each pointing at its successor.
+    #[serde(default, deserialize_with = "refuse_on_message_added")]
+    #[allow(dead_code)]
+    pub on_message_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_message_removed")]
+    #[allow(dead_code)]
+    pub on_message_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_flag_added")]
+    #[allow(dead_code)]
+    pub on_flag_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_flag_removed")]
+    #[allow(dead_code)]
+    pub on_flag_removed: Option<RemovedKeyConfig>,
 }
 
 #[cfg(feature = "gmail")]
@@ -2056,11 +2217,11 @@ impl GmailHookConfig {
     /// The hook `event` calls for, when one is configured.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
         match event {
-            WatchEvent::ItemAdded { .. } => self.on_message_added.as_ref().map(Hook::Item),
-            WatchEvent::ItemRemoved { .. } => self.on_message_removed.as_ref().map(Hook::Item),
+            WatchEvent::ItemAdded { .. } => self.on_message_add.as_ref().map(Hook::Item),
+            WatchEvent::ItemRemoved { .. } => self.on_message_remove.as_ref().map(Hook::Item),
             WatchEvent::ItemChanged { .. } => None,
-            WatchEvent::FlagAdded { .. } => self.on_flag_added.as_ref().map(Hook::Flag),
-            WatchEvent::FlagRemoved { .. } => self.on_flag_removed.as_ref().map(Hook::Flag),
+            WatchEvent::FlagAdded { .. } => self.on_flag_add.as_ref().map(Hook::Flag),
+            WatchEvent::FlagRemoved { .. } => self.on_flag_remove.as_ref().map(Hook::Flag),
         }
     }
 
@@ -2071,30 +2232,26 @@ impl GmailHookConfig {
     pub fn validate(&self) -> Result<()> {
         let mailbox = WatchDomain::Message.collection_name();
         hook::validate(
-            self.on_message_added
-                .as_ref()
-                .and_then(|h| h.notify.as_ref()),
+            self.on_message_add.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::resolved(mailbox),
-            "gmail.hook.on-message-added",
+            "gmail.hooks.on-message-add",
         )?;
         hook::validate(
-            self.on_message_removed
+            self.on_message_remove
                 .as_ref()
                 .and_then(|h| h.notify.as_ref()),
             Vocabulary::item(mailbox),
-            "gmail.hook.on-message-removed",
+            "gmail.hooks.on-message-remove",
         )?;
         hook::validate(
-            self.on_flag_added.as_ref().and_then(|h| h.notify.as_ref()),
+            self.on_flag_add.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::flag(mailbox),
-            "gmail.hook.on-flag-added",
+            "gmail.hooks.on-flag-add",
         )?;
         hook::validate(
-            self.on_flag_removed
-                .as_ref()
-                .and_then(|h| h.notify.as_ref()),
+            self.on_flag_remove.as_ref().and_then(|h| h.notify.as_ref()),
             Vocabulary::flag(mailbox),
-            "gmail.hook.on-flag-removed",
+            "gmail.hooks.on-flag-remove",
         )
     }
 }
@@ -2106,11 +2263,21 @@ impl GmailHookConfig {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GcalHookConfig {
     /// Fires when an event appears in the watched calendar.
-    pub on_event_added: Option<ItemHook>,
+    pub on_event_add: Option<ItemHook>,
     /// Fires when an event leaves it.
-    pub on_event_removed: Option<ItemHook>,
+    pub on_event_remove: Option<ItemHook>,
     /// Fires when an event is edited where it stands.
-    pub on_event_changed: Option<ItemHook>,
+    pub on_event_change: Option<ItemHook>,
+    /// Refused: the hook names before 1.0, each pointing at its successor.
+    #[serde(default, deserialize_with = "refuse_on_event_added")]
+    #[allow(dead_code)]
+    pub on_event_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_event_removed")]
+    #[allow(dead_code)]
+    pub on_event_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_event_changed")]
+    #[allow(dead_code)]
+    pub on_event_changed: Option<RemovedKeyConfig>,
 }
 
 #[cfg(feature = "gcal")]
@@ -2118,9 +2285,9 @@ impl GcalHookConfig {
     /// The hook `event` calls for, when one is configured.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
         let hook = match event {
-            WatchEvent::ItemAdded { .. } => &self.on_event_added,
-            WatchEvent::ItemRemoved { .. } => &self.on_event_removed,
-            WatchEvent::ItemChanged { .. } => &self.on_event_changed,
+            WatchEvent::ItemAdded { .. } => &self.on_event_add,
+            WatchEvent::ItemRemoved { .. } => &self.on_event_remove,
+            WatchEvent::ItemChanged { .. } => &self.on_event_change,
             _ => return None,
         };
 
@@ -2130,15 +2297,15 @@ impl GcalHookConfig {
     /// Refuses a notification naming what its event cannot fill.
     pub fn validate(&self) -> Result<()> {
         for (hook, name) in [
-            (&self.on_event_added, "on-event-added"),
-            (&self.on_event_removed, "on-event-removed"),
-            (&self.on_event_changed, "on-event-changed"),
+            (&self.on_event_add, "on-event-add"),
+            (&self.on_event_remove, "on-event-remove"),
+            (&self.on_event_change, "on-event-change"),
         ] {
             let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
             hook::validate(
                 notify,
                 Vocabulary::item(WatchDomain::Event.collection_name()),
-                &format!("gcal.hook.{name}"),
+                &format!("gcal.hooks.{name}"),
             )?;
         }
 
@@ -2152,11 +2319,21 @@ impl GcalHookConfig {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GpeopleHookConfig {
     /// Fires when a contact joins the watched group.
-    pub on_card_added: Option<ItemHook>,
+    pub on_card_add: Option<ItemHook>,
     /// Fires when one leaves it, deleted or ungrouped.
-    pub on_card_removed: Option<ItemHook>,
+    pub on_card_remove: Option<ItemHook>,
     /// Fires when one is edited where it stands.
-    pub on_card_changed: Option<ItemHook>,
+    pub on_card_change: Option<ItemHook>,
+    /// Refused: the hook names before 1.0, each pointing at its successor.
+    #[serde(default, deserialize_with = "refuse_on_card_added")]
+    #[allow(dead_code)]
+    pub on_card_added: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_card_removed")]
+    #[allow(dead_code)]
+    pub on_card_removed: Option<RemovedKeyConfig>,
+    #[serde(default, deserialize_with = "refuse_on_card_changed")]
+    #[allow(dead_code)]
+    pub on_card_changed: Option<RemovedKeyConfig>,
 }
 
 #[cfg(feature = "gpeople")]
@@ -2164,9 +2341,9 @@ impl GpeopleHookConfig {
     /// The hook `event` calls for, when one is configured.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
         let hook = match event {
-            WatchEvent::ItemAdded { .. } => &self.on_card_added,
-            WatchEvent::ItemRemoved { .. } => &self.on_card_removed,
-            WatchEvent::ItemChanged { .. } => &self.on_card_changed,
+            WatchEvent::ItemAdded { .. } => &self.on_card_add,
+            WatchEvent::ItemRemoved { .. } => &self.on_card_remove,
+            WatchEvent::ItemChanged { .. } => &self.on_card_change,
             _ => return None,
         };
 
@@ -2176,15 +2353,15 @@ impl GpeopleHookConfig {
     /// Refuses a notification naming what its event cannot fill.
     pub fn validate(&self) -> Result<()> {
         for (hook, name) in [
-            (&self.on_card_added, "on-card-added"),
-            (&self.on_card_removed, "on-card-removed"),
-            (&self.on_card_changed, "on-card-changed"),
+            (&self.on_card_add, "on-card-add"),
+            (&self.on_card_remove, "on-card-remove"),
+            (&self.on_card_change, "on-card-change"),
         ] {
             let notify = hook.as_ref().and_then(|hook| hook.notify.as_ref());
             hook::validate(
                 notify,
                 Vocabulary::item(WatchDomain::Card.collection_name()),
-                &format!("gpeople.hook.{name}"),
+                &format!("gpeople.hooks.{name}"),
             )?;
         }
 
@@ -2298,13 +2475,13 @@ mod tests {
     #[cfg(feature = "jmap")]
     #[test]
     fn a_jmap_hook_needs_its_domain_s_collection() {
-        let hook = "jmap.hook.on-card-added.cmd = \"true\"\n";
+        let hook = "jmap.hooks.on-card-add.command = \"true\"\n";
 
         let err = format!(
             "{:#}",
             jmap(&format!("jmap.mailbox = \"INBOX\"\n{hook}")).expect_err("no addressbook")
         );
-        assert!(err.contains("jmap.hook.on-card-added"), "got {err}");
+        assert!(err.contains("jmap.hooks.on-card-add"), "got {err}");
         assert!(err.contains("jmap.addressbook"), "got {err}");
 
         jmap(&format!("jmap.addressbook = \"Personal\"\n{hook}")).expect("an addressbook");
@@ -2313,19 +2490,19 @@ mod tests {
     #[cfg(feature = "jmap")]
     #[test]
     fn a_jmap_message_edit_hook_is_refused() {
-        let hook = "jmap.hook.on-message-changed.cmd = \"true\"\n";
+        let hook = "jmap.hooks.on-message-change.command = \"true\"\n";
 
         let err = format!(
             "{:#}",
             jmap(&format!("jmap.mailbox = \"INBOX\"\n{hook}")).expect_err("immutable")
         );
-        assert!(err.contains("jmap.hook.on-message-changed"), "got {err}");
+        assert!(err.contains("jmap.hooks.on-message-change"), "got {err}");
     }
 
     #[cfg(feature = "jmap")]
     #[test]
     fn a_jmap_card_hook_templates_against_its_addressbook() {
-        let notify = "jmap.hook.on-card-added.notify.summary = \"$mailbox\"\n";
+        let notify = "jmap.hooks.on-card-add.notify.summary = \"$mailbox\"\n";
         let err = format!(
             "{:#}",
             jmap(&format!("jmap.addressbook = \"Personal\"\n{notify}")).expect_err("$mailbox")
@@ -2343,13 +2520,13 @@ mod tests {
             Some("Personal"),
             jmap.collection(card.domain()).map(|c| c.value)
         );
-        assert!(jmap.hook.get(&card).is_none());
+        assert!(jmap.hooks.get(&card).is_none());
     }
 
     #[cfg(all(feature = "imap", not(feature = "notify")))]
     #[test]
     fn a_notification_is_refused_by_a_build_that_cannot_show_it() {
-        let document = document("imap.hook.on-message-added.notify.summary = \"$id\"\n");
+        let document = document("imap.hooks.on-message-add.notify.summary = \"$id\"\n");
         let err = toml::from_str::<Config>(&document).expect_err("no notify feature");
 
         assert!(err.to_string().contains("`notify` cargo feature"), "{err}");
@@ -2369,28 +2546,28 @@ mod tests {
                       pimdir.calendar = \"cal\"\n";
 
         read(&format!(
-            "{caldav}caldav.hook.on-alarm-trigger.notify.summary = \"$summary at $at\"\n"
+            "{caldav}caldav.hooks.on-alarm-trigger.notify.summary = \"$summary at $at\"\n"
         ))
         .expect("a calendar fires its alarms");
 
         let err = read(&format!(
-            "{caldav}caldav.hook.on-alarm-trigger.notify.summary = \"$subject\"\n"
+            "{caldav}caldav.hooks.on-alarm-trigger.notify.summary = \"$subject\"\n"
         ))
         .expect_err("an alarm has no subject");
         assert!(
-            format!("{err:#}").contains("caldav.hook.on-alarm-trigger"),
+            format!("{err:#}").contains("caldav.hooks.on-alarm-trigger"),
             "{err:#}"
         );
 
         read(
             "carddav.server = \"https://dav.example.org\"\n\
              carddav.addressbook = \"default\"\n\
-             carddav.hook.on-alarm-trigger.cmd = \"true\"\n",
+             carddav.hooks.on-alarm-trigger.command = \"true\"\n",
         )
         .expect_err("an addressbook holds no alarm");
 
         read(&format!(
-            "{pimdir}pimdir.hook.on-alarm-trigger.cmd = \"true\"\n"
+            "{pimdir}pimdir.hooks.on-alarm-trigger.command = \"true\"\n"
         ))
         .expect("a pimdir calendar fires its alarms");
 
@@ -2407,7 +2584,7 @@ mod tests {
             ("$sender_name", "`sender_name`"),
             ("${subject:none}", "`${subject:none}`"),
         ] {
-            let notify = format!("jmap.hook.on-message-added.notify.summary = \"{template}\"\n");
+            let notify = format!("jmap.hooks.on-message-add.notify.summary = \"{template}\"\n");
             let err = format!(
                 "{:#}",
                 jmap(&format!("jmap.mailbox = \"INBOX\"\n{notify}")).expect_err(template)
@@ -2416,7 +2593,7 @@ mod tests {
         }
 
         let notify =
-            "jmap.hook.on-message-added.notify.summary = \"$senderName ${subject:-none}\"\n";
+            "jmap.hooks.on-message-add.notify.summary = \"$senderName ${subject:-none}\"\n";
         jmap(&format!("jmap.mailbox = \"INBOX\"\n{notify}")).expect("the current spelling");
     }
 
@@ -2439,12 +2616,12 @@ mod tests {
         let err = format!("{:#}", api(token).expect_err("nothing to watch"));
         assert!(err.contains("`msgraph.mailbox`"), "got {err}");
 
-        let hook = "msgraph.hook.on-event-changed.cmd = \"true\"\n";
+        let hook = "msgraph.hooks.on-event-change.command = \"true\"\n";
         let err = format!(
             "{:#}",
             api(&format!("{token}msgraph.mailbox = \"inbox\"\n{hook}")).expect_err("no calendar")
         );
-        assert!(err.contains("msgraph.hook.on-event-changed"), "got {err}");
+        assert!(err.contains("msgraph.hooks.on-event-change"), "got {err}");
         assert!(err.contains("`msgraph.calendar`"), "got {err}");
 
         let config = api(&format!("{token}msgraph.calendar = \"Calendar\"\n{hook}"))
@@ -2462,7 +2639,7 @@ mod tests {
                      gpeople.auth.token.raw = \"token\"\n";
 
         let config = api(&format!(
-            "{block}gpeople.hook.on-card-changed.notify.summary = \"$addressbook\"\n"
+            "{block}gpeople.hooks.on-card-change.notify.summary = \"$addressbook\"\n"
         ))
         .expect("an addressbook hook");
         let gpeople = config.accounts["perso"].gpeople.as_ref().unwrap();
@@ -2471,7 +2648,7 @@ mod tests {
         let err = format!(
             "{:#}",
             api(&format!(
-                "{block}gpeople.hook.on-card-added.notify.summary = \"$calendar\"\n"
+                "{block}gpeople.hooks.on-card-add.notify.summary = \"$calendar\"\n"
             ))
             .expect_err("$calendar")
         );
@@ -2494,7 +2671,12 @@ mod tests {
         );
 
         assert!(api(&format!("{block}gcal.watch.push.ping = 30\n")).is_err());
-        assert!(api(&format!("{block}gcal.hook.on-task-added.cmd = \"true\"\n")).is_err());
+        assert!(
+            api(&format!(
+                "{block}gcal.hooks.on-task-add.command = \"true\"\n"
+            ))
+            .is_err()
+        );
     }
 
     #[test]
@@ -2508,8 +2690,8 @@ mod tests {
             ("tls", "imap.tls.colour = true\n"),
             ("sasl", "imap.sasl.plain.colour = true\n"),
             ("watch", "imap.watch.idle.colour = 30\n"),
-            ("hook table", "imap.hook.colour.cmd = \"true\"\n"),
-            ("hook", "imap.hook.on-message-added.colour = true\n"),
+            ("hook table", "imap.hooks.colour.command = \"true\"\n"),
+            ("hook", "imap.hooks.on-message-add.colour = true\n"),
         ] {
             documents.push((level, document(line)));
         }
@@ -2528,7 +2710,7 @@ mod tests {
             ("mailbox = \"INBOX\"\n", "`imap.mailbox`"),
             ("collection = \"INBOX\"\n", "`imap.mailbox`"),
             ("watch.poll.interval = 60\n", "`imap.watch`"),
-            ("hooks.on-message-added.cmd = \"true\"\n", "`imap.hook`"),
+            ("hooks.on-message-add.command = \"true\"\n", "`imap.hooks`"),
             ("dav.server = \"https://dav.example.org\"\n", "`caldav`"),
         ] {
             let err = toml::from_str::<Config>(&document(line)).expect_err(line);
@@ -2545,34 +2727,94 @@ mod tests {
     fn a_removed_key_is_refused_by_name_when_the_file_is_loaded() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        let line = "hooks.on-message-added.cmd = \"true\"\n";
+        let line = "hooks.on-message-add.command = \"true\"\n";
         std::fs::write(&path, document(line)).unwrap();
 
         let err = Config::load(&[path]).expect_err("an account-level hooks table");
         let err = format!("{err:#}");
 
         assert!(
-            err.contains("`hooks` moved under each backend as `<backend>.hook`"),
+            err.contains("`hooks` moved under each backend as `<backend>.hooks`"),
             "{err}"
         );
     }
 
-    /// The former names a 0.2 configuration may hold load until 1.0.
+    /// The SASL spellings the sample writes and a secret's `cmd` load, the
+    /// hooks being under `hooks` with a `command`.
     #[test]
-    fn the_former_names_still_load() {
+    fn the_sasl_aliases_still_load() {
         let document = document(
             "imap.sasl.plain.username = \"alice\"\n\
              imap.sasl.plain.password.cmd = \"pass show imap\"\n\
-             imap.hooks.on-message-added.cmd = \"true\"\n",
+             imap.hooks.on-message-add.command = \"true\"\n",
         );
         let config: Config = toml::from_str(&document).expect("the aliases");
         let imap = config.accounts["perso"].imap.as_ref().unwrap();
 
-        assert!(imap.hook.on_message_added.is_some());
+        assert!(imap.hooks.on_message_add.is_some());
         let Some(SaslConfig::Plain(plain)) = &imap.sasl else {
             panic!("a plain SASL table");
         };
         assert_eq!("alice", plain.authcid);
+    }
+
+    /// A hook spelt as before 1.0 is refused naming what it became, where
+    /// 0.2 read it.
+    #[test]
+    fn a_hook_spelling_before_1_0_is_refused_by_name() {
+        #[cfg_attr(not(any(feature = "dav", feature = "jmap")), allow(unused_mut))]
+        let mut cases = vec![
+            (
+                "imap.hook.on-message-add.command = \"true\"\n",
+                "hook",
+                "hooks",
+            ),
+            (
+                "imap.hooks.on-message-added.command = \"true\"\n",
+                "on-message-added",
+                "on-message-add",
+            ),
+            (
+                "imap.hooks.on-flag-removed.flags = [\"Seen\"]\n",
+                "on-flag-removed",
+                "on-flag-remove",
+            ),
+            (
+                "imap.hooks.on-message-add.cmd = \"true\"\n",
+                "cmd",
+                "command",
+            ),
+            ("imap.hooks.on-flag-add.cmd = \"true\"\n", "cmd", "command"),
+        ];
+
+        #[cfg(feature = "dav")]
+        cases.push((
+            "caldav.server = \"https://dav.example.org\"\n\
+             caldav.calendar = \"work\"\n\
+             caldav.hooks.on-task-changed.command = \"true\"\n",
+            "on-task-changed",
+            "on-task-change",
+        ));
+
+        #[cfg(feature = "jmap")]
+        cases.push((
+            "jmap.server = \"fastmail.com\"\n\
+             jmap.addressbook = \"Personal\"\n\
+             jmap.hooks.on-card-removed.command = \"true\"\n",
+            "on-card-removed",
+            "on-card-remove",
+        ));
+
+        for (line, old, new) in cases {
+            let err = toml::from_str::<Config>(&document(line)).expect_err(line);
+            let err = err.to_string();
+
+            assert!(
+                err.contains(&format!("`{old}` is now `{new}`")),
+                "{line}: {err}"
+            );
+            assert!(err.contains("MIGRATION.md"), "{line}: {err}");
+        }
     }
 
     /// The sample as written loads, and no line it comments out names a
@@ -2607,6 +2849,7 @@ mod tests {
 
             let err = err.to_string();
             assert!(!err.contains("unknown"), "{name}: {err}");
+            assert!(!err.contains("MIGRATION.md"), "{name}: {err}");
         }
     }
 }

@@ -608,7 +608,66 @@ mod tests {
         messages::{MsgraphEmailAddress, MsgraphFollowupFlag, MsgraphRecipient},
     };
 
-    use crate::msgraph::*;
+    use crate::{msgraph::*, scripted::Scripted};
+
+    /// The code of the failure a watch meets arming on a mailbox, whose
+    /// folder listing is answered `status` and `body`.
+    fn refused(status: &'static str, body: &'static str) -> Option<ErrorCode> {
+        let stream = Scripted::answering(&[(status, body)]);
+        let mut client = MsgraphClientStd::new(stream, "token", Default::default());
+        let err = Watched::arm(&mut client, WatchDomain::Message, "inbox", false)
+            .err()
+            .unwrap();
+
+        crate::error::code(&err)
+    }
+
+    #[test]
+    fn a_403_is_permission_denied_unless_it_names_the_quota() {
+        let denied = refused(
+            "403 Forbidden",
+            r#"{"error":{"code":"ErrorAccessDenied","message":"Access is denied. Check credentials and try again."}}"#,
+        );
+        let over = refused(
+            "403 Forbidden",
+            r#"{"error":{"code":"ErrorQuotaExceeded","message":"The process failed to get the correct properties."}}"#,
+        );
+
+        assert_eq!(Some(ErrorCode::PermissionDenied), denied);
+        assert_eq!(Some(ErrorCode::QuotaExceeded), over);
+    }
+
+    #[test]
+    fn a_507_is_quota_exceeded() {
+        let code = refused(
+            "507 Insufficient Storage",
+            r#"{"error":{"code":"quotaLimitReached","message":"Insufficient Space Available"}}"#,
+        );
+
+        assert_eq!(Some(ErrorCode::QuotaExceeded), code);
+    }
+
+    #[test]
+    fn a_429_is_rate_limited() {
+        let code = refused(
+            "429 Too Many Requests",
+            r#"{"error":{"code":"ApplicationThrottled","message":"Application is over its MailboxConcurrency limit."}}"#,
+        );
+
+        assert_eq!(Some(ErrorCode::RateLimited), code);
+    }
+
+    /// A refusal the caller cannot act on by its rights, its quota or its
+    /// pace carries no code.
+    #[test]
+    fn a_404_carries_no_code() {
+        let code = refused(
+            "404 Not Found",
+            r#"{"error":{"code":"ErrorItemNotFound","message":"The specified object was not found in the store."}}"#,
+        );
+
+        assert_eq!(None, code);
+    }
 
     fn message(id: &str) -> MsgraphMessage {
         MsgraphMessage {

@@ -377,7 +377,54 @@ mod tests {
         GpeopleContactGroupMembership, GpeopleMembership, GpeoplePersonMetadata,
     };
 
-    use crate::gpeople::*;
+    use crate::{gpeople::*, scripted::Scripted};
+
+    /// The failure a watch meets arming on every contact, whose listing
+    /// is answered `status` and `body`.
+    fn refused(status: &'static str, body: &'static str) -> anyhow::Error {
+        let stream = Scripted::answering(&[(status, body)]);
+        let mut client = GpeopleClientStd::new(stream, "token");
+        Watched::arm(&mut client, EVERY_CONTACT).err().unwrap()
+    }
+
+    #[test]
+    fn a_403_refusing_the_contacts_is_permission_denied() {
+        let err = refused(
+            "403 Forbidden",
+            r#"{"error":{"code":403,"message":"Request had insufficient authentication scopes.","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT","domain":"googleapis.com"}]}}"#,
+        );
+
+        assert_eq!(
+            Some(ErrorCode::PermissionDenied),
+            crate::error::code(&err),
+            "{err:#}"
+        );
+    }
+
+    /// The People API names a rate limit in `error.details[]` rather than
+    /// `error.errors[]`, on a 429 or on a 403.
+    #[test]
+    fn a_429_or_a_403_naming_a_rate_limit_is_rate_limited() {
+        let throttled = refused(
+            "429 Too Many Requests",
+            r#"{"error":{"code":429,"message":"Quota exceeded for quota metric 'Read requests' and limit 'Read requests per minute per user' of service 'people.googleapis.com'.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED","domain":"googleapis.com"}]}}"#,
+        );
+        let limited = refused(
+            "403 Forbidden",
+            r#"{"error":{"code":403,"message":"Request refused.","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED","domain":"googleapis.com"}]}}"#,
+        );
+
+        assert_eq!(
+            Some(ErrorCode::RateLimited),
+            crate::error::code(&throttled),
+            "{throttled:#}"
+        );
+        assert_eq!(
+            Some(ErrorCode::RateLimited),
+            crate::error::code(&limited),
+            "{limited:#}"
+        );
+    }
 
     fn person(id: &str, etag: &str, groups: &[&str]) -> GpeoplePerson {
         let memberships = groups

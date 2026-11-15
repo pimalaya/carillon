@@ -269,7 +269,7 @@ fn watch_session(
             let collection = imap_config.collection();
             let mut resolver = Resolver::new(imap_config, collection.value, shutdown);
             let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
-                let Some(hook) = imap_config.hook.get(&event) else {
+                let Some(hook) = imap_config.hooks.get(&event) else {
                     return;
                 };
 
@@ -330,12 +330,12 @@ fn watch_session(
                 .map(|(_, collection)| format!("{} `{}`", collection.name, collection.value))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let resolve = jmap_config.hook.on_message_added.is_some();
+            let resolve = jmap_config.hooks.on_message_add.is_some();
 
             // NOTE: one JMAP account watches up to three domains, so the
             // collection a hook templates against follows the event.
             let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
-                if let Some(hook) = jmap_config.hook.get(&event)
+                if let Some(hook) = jmap_config.hooks.get(&event)
                     && let Some(collection) = jmap_config.collection(event.domain())
                 {
                     hook::run(hook, &event, collection, summary.as_ref());
@@ -383,7 +383,7 @@ fn watch_session(
                 collection.value
             );
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
-                if let Some(hook) = maildir_config.hook.get(&event) {
+                if let Some(hook) = maildir_config.hooks.get(&event) {
                     hook::run(hook, &event, maildir_config.collection(), None);
                 }
             };
@@ -410,17 +410,17 @@ fn watch_session(
                 collection.value
             );
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
-                if let Some(hook) = caldav_config.hook.get(&event) {
+                if let Some(hook) = caldav_config.hooks.get(&event) {
                     hook::run(hook, &event, caldav_config.collection(), None);
                 }
             };
-            let shared = match &caldav_config.hook.on_alarm_trigger {
+            let shared = match &caldav_config.hooks.on_alarm_trigger {
                 Some(hook) => Some(alarms.ensure(account, hook, collection, shutdown)?),
                 None => None,
             };
             return dav::watch(
                 caldav_config.server(),
-                DavKind::Calendar(caldav_config.hook.domains()),
+                DavKind::Calendar(caldav_config.hooks.domains()),
                 collection.value,
                 dav_interval(&caldav_config.watch),
                 shutdown,
@@ -443,7 +443,7 @@ fn watch_session(
                 collection.value
             );
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
-                if let Some(hook) = carddav_config.hook.get(&event) {
+                if let Some(hook) = carddav_config.hooks.get(&event) {
                     hook::run(hook, &event, carddav_config.collection(), None);
                 }
             };
@@ -472,12 +472,12 @@ fn watch_session(
                 .map(|(_, collection)| format!("{} `{}`", collection.name, collection.value))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let resolve = msgraph_config.hook.on_message_added.is_some();
+            let resolve = msgraph_config.hooks.on_message_add.is_some();
 
             // NOTE: one Graph account watches up to three domains, so the
             // collection a hook templates against follows the event.
             let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
-                if let Some(hook) = msgraph_config.hook.get(&event)
+                if let Some(hook) = msgraph_config.hooks.get(&event)
                     && let Some(collection) = msgraph_config.collection(event.domain())
                 {
                     hook::run(hook, &event, collection, summary.as_ref());
@@ -503,9 +503,9 @@ fn watch_session(
     if backend.allows_gmail() {
         if let Some(gmail_config) = &config.gmail {
             let collection = gmail_config.collection();
-            let resolve = gmail_config.hook.on_message_added.is_some();
+            let resolve = gmail_config.hooks.on_message_add.is_some();
             let mut on_event = |event: WatchEvent, summary: Option<ItemSummary>| {
-                if let Some(hook) = gmail_config.hook.get(&event) {
+                if let Some(hook) = gmail_config.hooks.get(&event) {
                     hook::run(hook, &event, gmail_config.collection(), summary.as_ref());
                 }
             };
@@ -534,7 +534,7 @@ fn watch_session(
         if let Some(gcal_config) = &config.gcal {
             let collection = gcal_config.collection();
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
-                if let Some(hook) = gcal_config.hook.get(&event) {
+                if let Some(hook) = gcal_config.hooks.get(&event) {
                     hook::run(hook, &event, gcal_config.collection(), None);
                 }
             };
@@ -561,7 +561,7 @@ fn watch_session(
         if let Some(gpeople_config) = &config.gpeople {
             let collection = gpeople_config.collection();
             let mut on_event = |event: WatchEvent, _summary: Option<ItemSummary>| {
-                if let Some(hook) = gpeople_config.hook.get(&event) {
+                if let Some(hook) = gpeople_config.hooks.get(&event) {
                     hook::run(hook, &event, gpeople_config.collection(), None);
                 }
             };
@@ -587,8 +587,8 @@ fn watch_session(
     if backend.allows_pimdir() {
         if let Some(pimdir_config) = &config.pimdir {
             let collection = pimdir_config.collection();
-            let Some(hook) = &pimdir_config.hook.on_alarm_trigger else {
-                bail!("Account has no `pimdir.hook.on-alarm-trigger`, so nothing to watch for");
+            let Some(hook) = &pimdir_config.hooks.on_alarm_trigger else {
+                bail!("Account has no `pimdir.hooks.on-alarm-trigger`, so nothing to watch for");
             };
 
             info!(

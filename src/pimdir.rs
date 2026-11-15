@@ -327,7 +327,8 @@ mod tests {
             calendar: calendar.to_owned(),
             root: dir.to_path_buf(),
             watch: None,
-            hook: Default::default(),
+            hooks: Default::default(),
+            hook: None,
         }
     }
 

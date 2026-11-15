@@ -100,6 +100,8 @@ mod pimdir;
     api
 ))]
 mod poll;
+#[cfg(all(test, api))]
+mod scripted;
 mod watch;
 
 use std::{path::PathBuf, process};

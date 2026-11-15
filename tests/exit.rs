@@ -130,7 +130,7 @@ fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
 
     let config = home.path().join("config.toml");
     let toml = format!(
-        "[accounts.a]\ndefault = true\npimdir.calendar = \"cal\"\npimdir.root = {:?}\npimdir.hook.on-alarm-trigger.cmd = \"true\"\n",
+        "[accounts.a]\ndefault = true\npimdir.calendar = \"cal\"\npimdir.root = {:?}\npimdir.hooks.on-alarm-trigger.command = \"true\"\n",
         root.display().to_string(),
     );
     std::fs::write(&config, toml).unwrap();
