@@ -128,8 +128,8 @@ pub fn open(
 /// `resume` holds what the previous watch of the account knew, taken to
 /// resume from and left for the next one when the connection is lost.
 ///
-/// `on_open` is called once the session is authenticated and its watch
-/// started, the mailbox being examined after it.
+/// `on_open` is called once the session is authenticated and its mailbox
+/// examined, right before the first wait.
 pub fn watch_idle(
     config: &ImapConfig,
     collection: &str,
@@ -157,8 +157,8 @@ pub fn watch_idle(
 /// interval and notices a change that much later, which is why it is
 /// asked for rather than fallen back on.
 ///
-/// `on_open` is called once the session is authenticated and its watch
-/// started, the mailbox being examined after it.
+/// `on_open` is called once the session is authenticated and its mailbox
+/// examined, right before the first wait.
 pub fn watch_poll(
     config: &ImapConfig,
     collection: &str,
@@ -193,7 +193,7 @@ enum Wait {
 /// Opens the session, drains its watch stream, and closes it either way.
 ///
 /// `on_open` is called once the session is connected and authenticated
-/// and its watch handed to io-imap, before the first wait.
+/// and io-imap's worker examined the mailbox, before the first wait.
 fn watch(
     config: &ImapConfig,
     collection: &str,
@@ -223,9 +223,18 @@ fn watch(
     };
     let stream = client.watch_mailbox(watched, &capability, opts)?;
 
-    // NOTE: io-imap examines the mailbox on its worker and reports no
-    // readiness, so a refused EXAMINE still comes after this.
-    on_open();
+    // NOTE: a worker ending before its EXAMINE opened the mailbox leaves
+    // its error on the stream, which the drain hands back.
+    while !shutdown.load(Ordering::SeqCst) {
+        match stream.wait_opened(POLL_TICK) {
+            Ok(()) => {
+                on_open();
+                break;
+            }
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
 
     let result = drain(&stream, shutdown, &mut on_event);
     // NOTE: this winds the worker down cleanly, whether the exit is a
@@ -769,6 +778,18 @@ mod tests {
         let report = ErrorReport::<ErrorCode>::from(with_code(err, crate::error::code));
         let report = serde_json::to_value(&report).unwrap();
         assert_eq!("permission-denied", report["code"], "{report}");
+    }
+
+    /// A mailbox the server refuses to examine fails the watch before it
+    /// is ever reported open.
+    #[test]
+    fn a_refused_examine_never_opens_the_session() {
+        let config = refuse("NONEXISTENT");
+
+        let (result, events, opened) = poll(&config, &mut None);
+        assert!(result.is_err());
+        assert!(events.is_empty(), "got {events:?}");
+        assert_eq!(None, opened);
     }
 
     /// The resolver's own connection keeps the server's refusal typed.

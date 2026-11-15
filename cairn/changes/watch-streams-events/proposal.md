@@ -24,4 +24,4 @@ pimalaya-cli 51ce8b1 (pushed) adds the family requirement "A long-lived command 
 
 ## Open
 
-- Resolved the same day (cairn/log/2026-11-15-session-opened-once-established.md): `session-opened` waits until the session is established, so a server refusing it prints `session-lost` alone. Still open: an IMAP mailbox the server refuses to EXAMINE prints `session-opened` then `session-lost`, io-imap examining it on its worker without reporting readiness.
+- Resolved the same day (cairn/log/2026-11-15-session-opened-once-established.md): `session-opened` waits until the session is established, so a server refusing it prints `session-lost` alone. An IMAP mailbox the server refuses to EXAMINE followed (cairn/log/2026-11-15-imap-session-opened-once-examined.md).
