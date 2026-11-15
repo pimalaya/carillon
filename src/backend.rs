@@ -11,13 +11,14 @@
 //!
 //! [himalaya CLI's `Backend`]: https://github.com/pimalaya/himalaya/blob/master/src/backend.rs
 
-use std::{fmt, str::FromStr};
+use std::fmt;
 
-use anyhow::{Error, bail};
-use clap::Parser;
+use clap::ValueEnum;
 
-/// Backend selector for the `-b/--backend` CLI flag.
-#[derive(Clone, Copy, Debug, Default, Parser, PartialEq, Eq)]
+/// Backend selector for the `-b/--backend` CLI flag, each variant one of
+/// its possible values whatever the build: a backend the build leaves out
+/// is still named, a command reaching it failing `backend-not-built`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum Backend {
     /// First configured block wins (priority: IMAP, JMAP, Maildir,
     /// CalDAV, CardDAV, Microsoft Graph, Gmail, Google Calendar, Google
@@ -96,27 +97,6 @@ impl Backend {
     /// Whether a `pimdir` block may be used.
     pub fn allows_pimdir(self) -> bool {
         matches!(self, Self::Auto | Self::Pimdir)
-    }
-}
-
-impl FromStr for Backend {
-    type Err = Error;
-
-    fn from_str(backend: &str) -> Result<Self, Self::Err> {
-        match backend {
-            "auto" => Ok(Self::Auto),
-            "imap" => Ok(Self::Imap),
-            "jmap" => Ok(Self::Jmap),
-            "maildir" => Ok(Self::Maildir),
-            "caldav" => Ok(Self::Caldav),
-            "carddav" => Ok(Self::Carddav),
-            "msgraph" => Ok(Self::Msgraph),
-            "gmail" => Ok(Self::Gmail),
-            "gcal" => Ok(Self::Gcal),
-            "gpeople" => Ok(Self::Gpeople),
-            "pimdir" => Ok(Self::Pimdir),
-            backend => bail!("Invalid backend {backend}"),
-        }
     }
 }
 

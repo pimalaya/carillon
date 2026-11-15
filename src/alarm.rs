@@ -895,6 +895,16 @@ mod tests {
         );
     }
 
+    /// io-webdav hands back `calendar-data` whole, the indentation of a
+    /// pretty-printed report included, and carillon reads it untrimmed.
+    #[test]
+    fn a_body_read_whole_keeps_its_alarm() {
+        let body = event("standup", "090000", "", &[("DISPLAY", "-PT15M")]);
+        let book = book(&[("a", &format!("\n      {body}    "))]);
+
+        assert_eq!(1, book.len());
+    }
+
     #[test]
     fn a_change_ends_the_alarm_thread_s_wait() {
         let mut timer = CeichasTimer::new(Default::default()).expect("a timer");

@@ -40,9 +40,10 @@ use io_webdav::{
         item::{CaldavItemEntry, join_path, list::CaldavItemList, multiget::CaldavItemMultiget},
     },
     rfc4918::{
-        DAV, GETETAG, WebdavAuth, WebdavMultistatus, WebdavProperty,
-        coroutine::WebdavRedirectYield, follow_redirects::WebdavFollowRedirectsError,
-        propfind::WebdavPropfind, send::WebdavSendError, typed::WebdavUnreadableEntry,
+        DAV, GETETAG, WebdavAuth, WebdavMultistatus, WebdavProperty, check_collection_id,
+        collection_path, coroutine::WebdavRedirectYield,
+        follow_redirects::WebdavFollowRedirectsError, propfind::WebdavPropfind,
+        send::WebdavSendError, typed::WebdavUnreadableEntry,
     },
     rfc5397::current_user_principal::WebdavCurrentUserPrincipal,
     rfc6352::addressbook::home_set::CarddavAddressbookHomeSet,
@@ -200,7 +201,8 @@ pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<Webd
 /// next one reading every alarm again.
 ///
 /// `on_open` is called once the session is up and its collection read,
-/// right before the first wait.
+/// right before the first wait. A collection id naming no collection is
+/// refused before the connection is opened.
 pub fn watch(
     config: DavServer<'_>,
     target: DavTarget<'_>,
@@ -210,8 +212,9 @@ pub fn watch(
     on_open: impl FnOnce(),
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
-    let mut client = open(config, &mut SecretResolver::new())?;
     let DavTarget { collection, kind } = target;
+    check(kind.home(), collection)?;
+    let mut client = open(config, &mut SecretResolver::new())?;
     let collection = locate(&mut client, config.home, kind.home(), collection, shutdown)?;
     let interval = interval.unwrap_or(POLL_INTERVAL);
     let mut watched = Watched::open(&mut client, collection, kind, shutdown)?;
@@ -1080,7 +1083,8 @@ fn is_timeout(err: &io::Error) -> bool {
 ///
 /// It proves the transport, the credential, and that the collection is
 /// where the configuration says. A server with no `sync-collection` is
-/// listed instead, as the watch would.
+/// listed instead, as the watch would, and a collection id naming no
+/// collection is refused before the connection is opened.
 pub fn probe(
     config: DavServer<'_>,
     home: DavHome,
@@ -1088,6 +1092,7 @@ pub fn probe(
     shutdown: &Arc<AtomicBool>,
     resolver: &mut SecretResolver,
 ) -> Result<()> {
+    check(home, collection)?;
     let mut client = open(config, resolver)?;
     let collection = locate(&mut client, config.home, home, collection, shutdown)?;
 
@@ -1111,13 +1116,33 @@ fn missing(err: Error, home: DavHome, collection: &str) -> Error {
         return err;
     }
 
-    let (domain, noun) = match home {
-        DavHome::Calendars => (WatchDomain::Event, "calendar"),
-        DavHome::Addressbooks => (WatchDomain::Card, "addressbook"),
-    };
+    let (domain, noun) = named(home);
     let err = err.context(format!("Cannot find DAV {noun} `{collection}`"));
 
     crate::error::not_found_from(domain, err)
+}
+
+/// Refuses a collection id naming no collection, coded as that collection
+/// missing: an empty one, `/` alone, or one holding an empty, `.` or `..`
+/// segment, which would address the server root, the home set or a parent
+/// of either (io-webdav's `check_collection_id`).
+fn check(home: DavHome, collection: &str) -> Result<()> {
+    let Err(err) = check_collection_id(collection) else {
+        return Ok(());
+    };
+
+    let (domain, noun) = named(home);
+    let err = Error::new(err).context(format!("Invalid DAV {noun} `{collection}`"));
+
+    Err(crate::error::not_found_from(domain, err))
+}
+
+/// The domain a collection under `home` is missing as, and its noun.
+fn named(home: DavHome) -> (WatchDomain, &'static str) {
+    match home {
+        DavHome::Calendars => (WatchDomain::Event, "calendar"),
+        DavHome::Addressbooks => (WatchDomain::Card, "addressbook"),
+    }
 }
 
 /// Resolves the account's collection into the request path.
@@ -1137,7 +1162,7 @@ fn locate(
     shutdown: &Arc<AtomicBool>,
 ) -> Result<String> {
     if collection.starts_with('/') || collection.trim_matches('/').contains('/') {
-        return Ok(path(&client.base_url, collection));
+        return Ok(under(&client.base_url, collection));
     }
 
     if let Some(pinned) = pinned {
@@ -1152,34 +1177,23 @@ fn locate(
         }
         Ok(None) => {
             debug!("dav server names no home set, reading `{collection}` under its path");
-            Ok(path(&client.base_url, collection))
+            Ok(under(&client.base_url, collection))
         }
         Err(err) => {
             debug!(
                 "cannot discover the dav home set, reading `{collection}` under the server path: {err:#}"
             );
-            Ok(path(&client.base_url, collection))
+            Ok(under(&client.base_url, collection))
         }
     }
 }
 
-/// The path of a collection given relative to the server URL, or as an
-/// absolute path.
-fn path(base: &Url, collection: &str) -> String {
-    if collection.starts_with('/') {
-        return collection.to_string();
-    }
-
-    under(base, collection)
-}
-
-/// The path of `id` under `base`, the way io-webdav composes one under a
-/// home set.
+/// The path of the collection `id` under `base`, as io-webdav composes one
+/// under a home set (`collection_path`): a relative id percent-encoded
+/// segment by segment, an absolute one taken as it stands, either ending
+/// with a slash.
 fn under(base: &Url, id: &str) -> String {
-    let base = base.path().trim_end_matches('/');
-    let id = id.trim_matches('/');
-
-    format!("{base}/{id}")
+    collection_path(base.path(), id)
 }
 
 /// Discovers the home set of the account: the principal first (RFC
@@ -1438,10 +1452,83 @@ mod tests {
     fn a_collection_path_is_read_under_its_base() {
         let base = Url::parse("https://dav.example.org/dav/calendars/alice/").unwrap();
 
-        assert_eq!("/dav/calendars/alice/work", under(&base, "work"));
-        assert_eq!("/dav/calendars/alice/work", under(&base, "/work/"));
-        assert_eq!("/elsewhere/", path(&base, "/elsewhere/"));
-        assert_eq!("/dav/calendars/alice/a/b", path(&base, "a/b"));
+        assert_eq!("/dav/calendars/alice/work/", under(&base, "work"));
+        assert_eq!("/dav/calendars/alice/work/", under(&base, "work/"));
+        assert_eq!("/elsewhere/", under(&base, "/elsewhere"));
+        assert_eq!("/dav/calendars/alice/a/b/", under(&base, "a/b"));
+    }
+
+    /// A relative id is sent as io-webdav sends one: each byte a path
+    /// segment cannot hold raw escaped, an escape already there kept.
+    #[test]
+    fn a_collection_id_is_sent_percent_encoded() {
+        let base = Url::parse("https://dav.example.org/dav/books/").unwrap();
+
+        assert_eq!("/dav/books/My%20Book/", under(&base, "My Book"));
+        assert_eq!("/dav/books/a%5Cb/", under(&base, "a\\b"));
+        assert_eq!("/dav/books/a%7Cb%5B1%5D/", under(&base, "a|b[1]"));
+        assert_eq!("/dav/books/50%25off/", under(&base, "50%25off"));
+    }
+
+    /// An id naming no collection is refused coded as the collection
+    /// missing, before any connection is opened, by the watch as by
+    /// `account check`; one climbing back into a calendar would have
+    /// watched it.
+    #[test]
+    fn a_collection_id_naming_no_collection_sends_nothing() {
+        let seen: fake::Seen = Default::default();
+        let addr = fake::start(Default::default(), seen.clone());
+        let home = Url::parse(&format!("http://{addr}/cal/alice/")).unwrap();
+        let tls = crate::config::TlsConfig::default();
+        let auth = DavAuthConfig::None;
+        let config = DavServer {
+            server: None,
+            home: Some(&home),
+            tls: &tls,
+            alpn: None,
+            proxy: None,
+            auth: &auth,
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let ids = [
+            "",
+            "/",
+            ".",
+            "..",
+            "%2e%2e",
+            "work/x/..",
+            "a\\..\\..",
+            "/cal//work",
+        ];
+
+        for id in ids {
+            let mut resolver = SecretResolver::new();
+            let checked = probe(config, DavHome::Calendars, id, &shutdown, &mut resolver);
+            let err = checked.err().unwrap_or_else(|| panic!("{id:?} probed"));
+            assert_eq!(
+                Some(ErrorCode::CalendarNotFound),
+                crate::error::code(&err),
+                "{id:?}: {err:#}"
+            );
+
+            let target = DavTarget {
+                collection: id,
+                kind: DavKind::Addressbook,
+            };
+            let watched = watch(config, target, None, &shutdown, None, || (), |_, _| ());
+            let err = watched.err().unwrap_or_else(|| panic!("{id:?} watched"));
+            assert_eq!(
+                Some(ErrorCode::AddressbookNotFound),
+                crate::error::code(&err),
+                "{id:?}: {err:#}"
+            );
+        }
+
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "{:?}",
+            seen.lock().unwrap()
+        );
     }
 
     /// Scripted DAV servers: one answering discovery, holding one calendar
@@ -1615,7 +1702,7 @@ mod tests {
         let mut client = client(&addr);
 
         let collection = locate(&mut client, None, DavHome::Calendars, "work", &shutdown).unwrap();
-        assert_eq!("/cal/alice/work", collection);
+        assert_eq!("/cal/alice/work/", collection);
 
         let kind = DavKind::Calendar(vec![WatchDomain::Event]);
         let domains = Domains::resolve(&mut client, &collection, kind, &shutdown).unwrap();
@@ -1753,7 +1840,7 @@ mod tests {
             "{calendar:#}"
         );
         assert!(
-            format!("{calendar:#}").contains("Cannot find DAV calendar `/work`"),
+            format!("{calendar:#}").contains("Cannot find DAV calendar `/work/`"),
             "{calendar:#}"
         );
         assert_eq!(

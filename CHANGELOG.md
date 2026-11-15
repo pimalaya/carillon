@@ -78,6 +78,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fixed a DAV server with no `sync-collection` being unwatchable: the collection is listed on every poll instead.
 - Fixed a rejected DAV sync token hiding what moved meanwhile: the collection is read again against what the watch knew.
 - Fixed a calendar holding events and tasks skipping every member whose content type names no component.
+- Fixed a DAV collection id naming no collection reaching the server, where `""`, `/`, `..` or `work/x/..` addressed the home set, the server root, the home set's parent or the calendar `work`: an id that is empty, `/` alone, or holds an empty, `.` or `..` segment (percent-encoded or `\`-separated forms included) is refused by `watch` and `account check` before connecting, coded `calendar-not-found` or `addressbook-not-found` (io-webdav 0.9.1's `check_collection_id`).
+- Fixed a relative DAV collection id holding a byte a path segment cannot hold raw being sent as given, a `\` read as a separator: each such byte is percent-encoded as io-webdav 0.9.1 encodes one, an escape already there kept, and the collection path ends with a slash.
+- Fixed `-b` leaving `pimdir` out of the order its help gives and refusing an unknown backend without naming the others: its help and its refusal list every backend as `[possible values: auto, imap, jmap, maildir, caldav, carddav, msgraph, gmail, gcal, gpeople, pimdir]`.
 - Fixed `imap.sasl.scram-sha-256` failing as an unsupported mechanism: io-imap is built with its `scram` feature.
 - Fixed an IMAP arrival resolving to the data of another message when the server adds a FETCH of its own to the answer.
 - Fixed a Gmail history listing that does not end holding the watch: it stops on a repeated page token or past 1000 pages, and the watch resumes from now.

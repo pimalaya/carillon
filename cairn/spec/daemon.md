@@ -69,7 +69,7 @@ Bare `carillon watch` SHALL watch every configured account at once, one thread e
 - **THEN** the failure is printed as a `session-lost` event of that account and retried for that account alone, and the other account keeps watching
 
 ### Requirement: An account watches one collection, one way
-An account SHALL watch the collection its backend names, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection of the same domain is a second account, which is also how it gets its own hooks. A backend serving several domains MAY name one collection per domain, since the domains do not share an event name and each therefore already has hooks of its own; what they share is the connection and the credential, which is what a second account would waste. Every backend SHALL name its collection by the id a listing of the account gives it, so a collection picked from a listing is watched without translation. A DAV block SHALL name `server`, the URL its principal is discovered from, or `home`, the calendar or addressbook home set pinned, or both, and SHALL be refused when read naming both when it names neither; `home` set, discovery is skipped, the connection opens on it and `server` is not read. A DAV collection named by one path segment SHALL be looked up under the pinned `home`, or else under the calendar or addressbook home set the server's principal names, read under `server` when the server names none; an absolute path SHALL be taken as it stands, and any other relative path read under the URL the connection opens on, `home` or `server`.
+An account SHALL watch the collection its backend names, and MAY name the one method it watches with. Neither SHALL be overridable from the command line: what an account watches is its configuration, and watching a second collection of the same domain is a second account, which is also how it gets its own hooks. A backend serving several domains MAY name one collection per domain, since the domains do not share an event name and each therefore already has hooks of its own; what they share is the connection and the credential, which is what a second account would waste. Every backend SHALL name its collection by the id a listing of the account gives it, so a collection picked from a listing is watched without translation. A DAV block SHALL name `server`, the URL its principal is discovered from, or `home`, the calendar or addressbook home set pinned, or both, and SHALL be refused when read naming both when it names neither; `home` set, discovery is skipped, the connection opens on it and `server` is not read. A DAV collection named by one path segment SHALL be looked up under the pinned `home`, or else under the calendar or addressbook home set the server's principal names, read under `server` when the server names none; an absolute path SHALL be taken as it stands, and any other relative path read under the URL the connection opens on, `home` or `server`. A relative path SHALL be sent as io-webdav's `collection_path` composes one, each byte a path segment cannot hold raw percent-encoded and an escape already there kept, and every collection path SHALL end with a slash. A DAV collection id naming no collection (empty, `/` alone, or holding an empty, `.` or `..` segment, percent-encoded or split on `\` alike, as io-webdav's `check_collection_id` reads it) SHALL be refused by `watch` and `account check` before a connection is opened, coded `calendar-not-found` or `addressbook-not-found`: it would address the server root, the home set or a parent of either.
 
 #### Scenario: A second collection
 - **GIVEN** an account watching one mailbox
@@ -79,12 +79,22 @@ An account SHALL watch the collection its backend names, and MAY name the one me
 #### Scenario: A calendar named by its listed id
 - **GIVEN** a CalDAV server whose principal names the home set `/dav/cal/alice/`, holding `/dav/cal/alice/default/`
 - **WHEN** an account sets `caldav.calendar = "default"`
-- **THEN** the watch reads `/dav/cal/alice/default`, whatever path `server` names
+- **THEN** the watch reads `/dav/cal/alice/default/`, whatever path `server` names
 
 #### Scenario: A pinned home set
 - **GIVEN** an account setting `caldav.home = "https://dav.example.org/dav/cal/alice/"` and `caldav.calendar = "default"`, and no `server`
 - **WHEN** it is watched or checked
-- **THEN** `/dav/cal/alice/default` is read, and no principal or home set is asked for
+- **THEN** `/dav/cal/alice/default/` is read, and no principal or home set is asked for
+
+#### Scenario: A collection id climbing out of the home set
+- **GIVEN** an account setting `caldav.calendar = ".."`
+- **WHEN** `carillon --json account check` runs
+- **THEN** the caldav row reads `ok: false` and `code: "calendar-not-found"`, nothing reaches the server, and the command exits 3
+
+#### Scenario: A collection id holding a space
+- **GIVEN** an account setting `carddav.addressbook = "My Book"` under the home set `/dav/books/alice/`
+- **WHEN** it is watched
+- **THEN** `/dav/books/alice/My%20Book/` is read
 
 ### Requirement: The watch method belongs to the backend
 The method SHALL be configured under its backend (`imap.watch`, `jmap.watch`, `maildir.watch`, and `watch` under each of `caldav` and `carddav`) and named by its mechanism, the way a SASL mechanism and an HTTP auth scheme already are. Each backend SHALL declare only the methods it has, so a method it does not have is refused when the configuration is read rather than when the watch runs. Unset, an account SHALL watch the best way its backend has: IDLE for IMAP, a held event stream for JMAP, a poll for the backends with nothing else. Every backend SHALL offer the poll, whose interval MAY be given and otherwise takes what suits that backend. Every duration of a method (the poll's `interval`, IDLE's `timeout`, the push `ping`) SHALL be read as pimalaya-config's duration: an integer of seconds, or a string holding a number and its unit (`s`, `m`, `h`, `d`, `w`); any other value SHALL be refused naming it.
@@ -570,8 +580,8 @@ A failure a caller is expected to act on SHALL carry a stable code, printed unde
 | `quota-exceeded` | an HTTP 507, a DAV body naming `quota-not-exceeded` (RFC 4331 §6), Graph's `ErrorQuotaExceeded`, an IMAP `OVERQUOTA` (RFC 5530 §3) |
 | `rate-limited` | an HTTP 429, or a Google 403 naming a rate limit or a quota; carillon sends no request twice |
 | `mailbox-not-found` | the mailbox a backend watches does not exist: an IMAP `NONEXISTENT` (RFC 5530 §3), a Maildir folder that is no directory, a JMAP, Gmail or Graph mailbox no listing names, Graph answering its direct read 404 or 400 `ErrorInvalidIdMalformed` |
-| `calendar-not-found` | the calendar a backend watches does not exist: a DAV 404 on it, a JMAP, Google Calendar or Graph calendar not found as a mailbox is, a pimdir collection the store does not hold or holds under another account than `pimdir.account` |
-| `addressbook-not-found` | the addressbook a backend watches does not exist: a DAV 404 on it, a JMAP addressbook, Google People contact group or Graph contact folder not found as a mailbox is |
+| `calendar-not-found` | the calendar a backend watches does not exist: a DAV 404 on it, a DAV calendar id naming no collection, a JMAP, Google Calendar or Graph calendar not found as a mailbox is, a pimdir collection the store does not hold or holds under another account than `pimdir.account` |
+| `addressbook-not-found` | the addressbook a backend watches does not exist: a DAV 404 on it, a DAV addressbook id naming no collection, a JMAP addressbook, Google People contact group or Graph contact folder not found as a mailbox is |
 | `store-version` | the pimdir store is of another draft than the one carillon reads; neverest reinstalls it |
 | `store-uncreated` | the pimdir root holds no store yet; its sync engine creates it |
 | `store-foreign` | the pimdir root holds a database another program wrote |
@@ -607,3 +617,10 @@ The default cargo features SHALL include `vendored`, as every family binary's do
 - **GIVEN** `cargo build` with the default features
 - **WHEN** the binary runs where no libsqlite3 and no libdbus are installed
 - **THEN** it starts
+
+### Requirement: The backend is picked by `-b`
+`-b/--backend` SHALL take `auto`, its default, or one backend by name: `imap`, `jmap`, `maildir`, `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople` or `pimdir`, every one of them in every build, a backend the build leaves out failing coded `backend-not-built` once a command reaches its block. `auto` SHALL let `watch` take the first block the account declares in that order and `account check` check every one; a name SHALL narrow both to that block. The help SHALL state the order and list every value as clap's possible values, and a value outside them SHALL be refused as a command line the grammar refuses, naming the possible values.
+
+#### Scenario: A backend no build knows
+- **WHEN** `carillon -b nope watch` runs
+- **THEN** it exits 2 before any configuration is read, its message naming `[possible values: auto, imap, jmap, maildir, caldav, carddav, msgraph, gmail, gcal, gpeople, pimdir]`

@@ -54,8 +54,8 @@ pub struct Cli {
     /// account declaring several is watched over. `auto`, the default,
     /// takes the first configured, in the order IMAP, JMAP, Maildir,
     /// CalDAV, CardDAV, Microsoft Graph, Gmail, Google Calendar, Google
-    /// People.
-    #[arg(short, long, global = true, default_value_t)]
+    /// People, pimdir.
+    #[arg(short, long, global = true, value_enum, default_value_t)]
     pub backend: Backend,
     #[command(flatten)]
     pub json: JsonFlag,
@@ -146,7 +146,10 @@ mod tests {
 
     use clap::{CommandFactory, Parser};
 
-    use crate::cli::{Cli, Command, welcome};
+    use crate::{
+        backend::Backend,
+        cli::{Cli, Command, welcome},
+    };
 
     /// The commands the help lists, in order.
     fn listed(command: &clap::Command) -> Vec<&str> {
@@ -194,6 +197,29 @@ mod tests {
         assert!(check.is_hide_set());
         let cli = Cli::try_parse_from(["carillon", "check"]).unwrap();
         assert!(matches!(cli.command, Some(Command::Check(_))), "{cli:?}");
+    }
+
+    /// `-b` lists every backend as its possible values, as himalaya's
+    /// does, and a value outside them is refused naming them all.
+    #[test]
+    fn the_backend_flag_lists_every_backend() {
+        let values = "[possible values: auto, imap, jmap, maildir, caldav, \
+                      carddav, msgraph, gmail, gcal, gpeople, pimdir]";
+        // NOTE: the help wraps at the terminal width.
+        let flat = |text: String| text.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        let cli = Cli::try_parse_from(["carillon", "-b", "pimdir", "watch"]).unwrap();
+        assert_eq!(Backend::Pimdir, cli.backend);
+
+        let err = Cli::try_parse_from(["carillon", "-b", "nope", "watch"]).unwrap_err();
+        let refused = flat(err.render().to_string());
+        assert!(refused.contains(values), "{refused}");
+
+        let help = flat(Cli::command().render_help().to_string());
+        assert!(help.contains(values), "{help}");
+        let long_help = flat(Cli::command().render_long_help().to_string());
+        assert!(long_help.contains("Google People, pimdir."), "{long_help}");
+        assert!(long_help.contains("- pimdir: Force pimdir"), "{long_help}");
     }
 
     #[test]
