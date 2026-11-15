@@ -1,13 +1,13 @@
 //! # Error codes
 //!
 //! A stable, machine-readable name for the failures a caller is expected
-//! to act on, printed as `code` beside the message under `--json` and in a
-//! `check` row. The message stays for humans and may be reworded at any
-//! time; the code is the contract. A failure with no code prints `"code":
-//! null`. The mechanism (`CodedError`, `code_of`, `with_code`, the report)
-//! lives in `pimalaya_cli::error`, which also raises `usage-invalid` for a
-//! command line the grammar refuses; only the vocabulary and its readers
-//! are carillon's.
+//! to act on, printed as `code` beside the message under `--json` and in an
+//! `account check` row. The message stays for humans and may be reworded at
+//! any time; the code is the contract. A failure with no code prints
+//! `"code": null`. The mechanism (`CodedError`, `code_of`, `with_code`, the
+//! report) lives in `pimalaya_cli::error`, which also raises `usage-invalid`
+//! for a command line the grammar refuses; only the vocabulary and its
+//! readers are carillon's.
 //!
 //! The account `-a` could not take is coded from pimalaya-config's
 //! `AccountError`, and a backend the build leaves out is coded
@@ -457,7 +457,7 @@ mod tests {
 
     use super::*;
 
-    /// Each store code is spelled as io-pimdir 0.12's `PimdirError::code`
+    /// Each store code is spelled as io-pimdir 0.13's `PimdirError::code`
     /// spells the failure it names, and is the code that failure reads as.
     #[test]
     fn a_store_code_keeps_io_pimdirs_spelling() {

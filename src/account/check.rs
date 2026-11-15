@@ -1,23 +1,27 @@
-//! # Check
+//! # Account check
 //!
-//! The `carillon check` command, opening the backends an account declares
-//! so a credential or connectivity error surfaces before the first watch.
+//! The `carillon account check` command, opening the backends an account
+//! declares so a credential or connectivity error surfaces before the
+//! first watch. `carillon check` runs it too, a hidden alias.
 //!
 //! Mirrors `himalaya account check`: each backend `--backend` allows is
-//! tried in turn, and the result collected into a per-backend report.
+//! tried in turn, and the result collected into pimalaya-cli's
+//! per-backend report.
 
+use std::path::PathBuf;
 #[cfg(feature = "dav")]
 use std::sync::{Arc, atomic::AtomicBool};
-use std::{fmt, path::PathBuf};
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use pimalaya_cli::{error::PartialOutcome, fields::Fields, printer::Printer, sanitize};
+use pimalaya_cli::{
+    account::{AccountCheckOutput, BackendCheck},
+    error::{PartialOutcome, with_code},
+    printer::Printer,
+};
 #[cfg(network)]
 use pimalaya_config::secret::SecretResolver;
 use pimalaya_config::toml::TomlConfig;
-use schemars::JsonSchema;
-use serde::Serialize;
 
 #[cfg(feature = "maildir")]
 use crate::config::MaildirConfig;
@@ -53,9 +57,9 @@ use crate::{config::JmapConfig, jmap};
 /// an unreachable server is reported here rather than at the first change.
 /// When one failed, the command exits 3 once the report is printed.
 #[derive(Debug, Parser)]
-pub struct CheckCommand;
+pub struct AccountCheckCommand;
 
-impl CheckCommand {
+impl AccountCheckCommand {
     /// Opens each allowed backend of the account and reports on it.
     pub fn execute(
         self,
@@ -68,7 +72,7 @@ impl CheckCommand {
 
         let (name, account_config) = config.take_account(account_name)?;
 
-        let mut report = CheckOutput {
+        let mut report = AccountCheckOutput {
             account: name,
             backends: Vec::new(),
         };
@@ -88,7 +92,7 @@ impl CheckCommand {
         #[cfg(not(feature = "imap"))]
         if backend.allows_imap() && account_config.imap.is_some() {
             let err = error::backend_not_built("imap", "imap");
-            report.backends.push(BackendCheck::from("imap", Err(err)));
+            report.backends.push(row("imap", Err(err)));
         }
 
         #[cfg(feature = "jmap")]
@@ -101,7 +105,7 @@ impl CheckCommand {
         #[cfg(not(feature = "jmap"))]
         if backend.allows_jmap() && account_config.jmap.is_some() {
             let err = error::backend_not_built("jmap", "jmap");
-            report.backends.push(BackendCheck::from("jmap", Err(err)));
+            report.backends.push(row("jmap", Err(err)));
         }
 
         #[cfg(feature = "maildir")]
@@ -114,9 +118,7 @@ impl CheckCommand {
         #[cfg(not(feature = "maildir"))]
         if backend.allows_maildir() && account_config.maildir.is_some() {
             let err = error::backend_not_built("maildir", "maildir");
-            report
-                .backends
-                .push(BackendCheck::from("maildir", Err(err)));
+            report.backends.push(row("maildir", Err(err)));
         }
 
         #[cfg(feature = "dav")]
@@ -135,7 +137,7 @@ impl CheckCommand {
         #[cfg(not(feature = "dav"))]
         if backend.allows_caldav() && account_config.caldav.is_some() {
             let err = error::backend_not_built("caldav", "dav");
-            report.backends.push(BackendCheck::from("caldav", Err(err)));
+            report.backends.push(row("caldav", Err(err)));
         }
 
         #[cfg(feature = "dav")]
@@ -154,9 +156,7 @@ impl CheckCommand {
         #[cfg(not(feature = "dav"))]
         if backend.allows_carddav() && account_config.carddav.is_some() {
             let err = error::backend_not_built("carddav", "dav");
-            report
-                .backends
-                .push(BackendCheck::from("carddav", Err(err)));
+            report.backends.push(row("carddav", Err(err)));
         }
 
         #[cfg(feature = "msgraph")]
@@ -164,15 +164,13 @@ impl CheckCommand {
             && let Some(msgraph_config) = account_config.msgraph.clone()
         {
             let result = msgraph::probe(&msgraph_config, &mut resolver);
-            report.backends.push(BackendCheck::from("msgraph", result));
+            report.backends.push(row("msgraph", result));
         }
 
         #[cfg(not(feature = "msgraph"))]
         if backend.allows_msgraph() && account_config.msgraph.is_some() {
             let err = error::backend_not_built("msgraph", "msgraph");
-            report
-                .backends
-                .push(BackendCheck::from("msgraph", Err(err)));
+            report.backends.push(row("msgraph", Err(err)));
         }
 
         #[cfg(feature = "gmail")]
@@ -180,13 +178,13 @@ impl CheckCommand {
             && let Some(gmail_config) = account_config.gmail.clone()
         {
             let result = gmail::probe(&gmail_config, &mut resolver);
-            report.backends.push(BackendCheck::from("gmail", result));
+            report.backends.push(row("gmail", result));
         }
 
         #[cfg(not(feature = "gmail"))]
         if backend.allows_gmail() && account_config.gmail.is_some() {
             let err = error::backend_not_built("gmail", "gmail");
-            report.backends.push(BackendCheck::from("gmail", Err(err)));
+            report.backends.push(row("gmail", Err(err)));
         }
 
         #[cfg(feature = "gcal")]
@@ -194,13 +192,13 @@ impl CheckCommand {
             && let Some(gcal_config) = account_config.gcal.clone()
         {
             let result = gcal::probe(&gcal_config, &mut resolver);
-            report.backends.push(BackendCheck::from("gcal", result));
+            report.backends.push(row("gcal", result));
         }
 
         #[cfg(not(feature = "gcal"))]
         if backend.allows_gcal() && account_config.gcal.is_some() {
             let err = error::backend_not_built("gcal", "gcal");
-            report.backends.push(BackendCheck::from("gcal", Err(err)));
+            report.backends.push(row("gcal", Err(err)));
         }
 
         #[cfg(feature = "gpeople")]
@@ -208,15 +206,13 @@ impl CheckCommand {
             && let Some(gpeople_config) = account_config.gpeople.clone()
         {
             let result = gpeople::probe(&gpeople_config, &mut resolver);
-            report.backends.push(BackendCheck::from("gpeople", result));
+            report.backends.push(row("gpeople", result));
         }
 
         #[cfg(not(feature = "gpeople"))]
         if backend.allows_gpeople() && account_config.gpeople.is_some() {
             let err = error::backend_not_built("gpeople", "gpeople");
-            report
-                .backends
-                .push(BackendCheck::from("gpeople", Err(err)));
+            report.backends.push(row("gpeople", Err(err)));
         }
 
         #[cfg(feature = "pimdir")]
@@ -224,13 +220,13 @@ impl CheckCommand {
             && let Some(pimdir_config) = account_config.pimdir.clone()
         {
             let result = pimdir::probe(&pimdir_config);
-            report.backends.push(BackendCheck::from("pimdir", result));
+            report.backends.push(row("pimdir", result));
         }
 
         #[cfg(not(feature = "pimdir"))]
         if backend.allows_pimdir() && account_config.pimdir.is_some() {
             let err = error::backend_not_built("pimdir", "pimdir");
-            report.backends.push(BackendCheck::from("pimdir", Err(err)));
+            report.backends.push(row("pimdir", Err(err)));
         }
 
         if report.backends.is_empty() {
@@ -249,24 +245,31 @@ impl CheckCommand {
     }
 }
 
+/// Folds one backend's outcome into its row, coded as every carillon
+/// failure is: a coded error in its chain, else a typed cause a backend's
+/// reader knows.
+fn row(backend: &'static str, result: Result<()>) -> BackendCheck<ErrorCode> {
+    BackendCheck::new(backend, result.map_err(|err| with_code(err, error::code)))
+}
+
 #[cfg(feature = "imap")]
-fn check_imap(imap_config: ImapConfig, resolver: &mut SecretResolver) -> BackendCheck {
+fn check_imap(imap_config: ImapConfig, resolver: &mut SecretResolver) -> BackendCheck<ErrorCode> {
     // NOTE: opening the session is the check: it runs the same
     // transport, greeting and authentication a watch would.
     let result = imap::open(&imap_config, resolver).map(|_| ());
 
-    BackendCheck::from("imap", result)
+    row("imap", result)
 }
 
 #[cfg(feature = "jmap")]
-fn check_jmap(jmap_config: JmapConfig, resolver: &mut SecretResolver) -> BackendCheck {
+fn check_jmap(jmap_config: JmapConfig, resolver: &mut SecretResolver) -> BackendCheck<ErrorCode> {
     let result = jmap::open(&jmap_config, resolver).map(|_| ());
 
-    BackendCheck::from("jmap", result)
+    row("jmap", result)
 }
 
 #[cfg(feature = "maildir")]
-fn check_maildir(maildir_config: MaildirConfig) -> BackendCheck {
+fn check_maildir(maildir_config: MaildirConfig) -> BackendCheck<ErrorCode> {
     let result = (|| -> Result<()> {
         if !maildir_config.root.is_dir() {
             bail!(
@@ -277,7 +280,7 @@ fn check_maildir(maildir_config: MaildirConfig) -> BackendCheck {
         Ok(())
     })();
 
-    BackendCheck::from("maildir", result)
+    row("maildir", result)
 }
 
 #[cfg(feature = "dav")]
@@ -287,101 +290,32 @@ fn check_dav(
     server: DavServer<'_>,
     collection: &str,
     resolver: &mut SecretResolver,
-) -> BackendCheck {
+) -> BackendCheck<ErrorCode> {
     // NOTE: opening proves the transport, and one report the credential
     // and that the collection is there, as a first poll would.
     let shutdown = Arc::new(AtomicBool::new(false));
     let result = dav::probe(server, home, collection, &shutdown, resolver);
 
-    BackendCheck::from(backend, result)
-}
-
-/// The `check` output: one account, and one line per backend tried.
-#[derive(Clone, Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CheckOutput {
-    /// The account that was checked.
-    pub account: String,
-    /// One entry per backend `--backend` allowed on it.
-    pub backends: Vec<BackendCheck>,
-}
-
-/// The outcome of opening one backend.
-#[derive(Clone, Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct BackendCheck {
-    /// The backend name, as the configuration spells it.
-    pub backend: &'static str,
-    /// Whether it opened.
-    pub ok: bool,
-    /// The stable code of the failure, `null` when it opened or the failure
-    /// carries none.
-    pub code: Option<ErrorCode>,
-    /// Why it did not, rendered with its causes.
-    pub error: Option<String>,
-}
-
-impl BackendCheck {
-    /// Folds one backend's outcome into its report entry.
-    fn from(backend: &'static str, result: Result<()>) -> Self {
-        match result {
-            Ok(()) => Self {
-                backend,
-                ok: true,
-                code: None,
-                error: None,
-            },
-            Err(err) => Self {
-                backend,
-                ok: false,
-                code: error::code(&err),
-                error: Some(format!("{err:#}")),
-            },
-        }
-    }
-}
-
-/// The report as himalaya's `account check` prints it: one aligned field
-/// for the account, then one per backend, a failure's text sanitized.
-impl fmt::Display for CheckOutput {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut fields = Fields::default();
-        fields.push("Account", sanitize::text(&self.account));
-
-        for check in &self.backends {
-            match &check.error {
-                None => fields.push(check.backend, "OK"),
-                Some(err) => fields.push(check.backend, format!("FAIL ({})", sanitize::text(err))),
-            }
-        }
-
-        write!(f, "{fields}")
-    }
+    row(backend, result)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::check::*;
+    use anyhow::anyhow;
+    use pimalaya_cli::account::{AccountCheckOutput, BackendCheck};
+    use pimalaya_config::toml::AccountError;
+
+    use crate::{account::check::row, error::ErrorCode};
 
     /// The rows align past the longest label as every family `account
     /// check` prints them, a server's text unable to break its line.
     #[test]
     fn the_report_prints_on_the_family_layout() {
-        let report = CheckOutput {
+        let report = AccountCheckOutput {
             account: String::from("perso"),
             backends: vec![
-                BackendCheck {
-                    backend: "maildir",
-                    ok: true,
-                    code: None,
-                    error: None,
-                },
-                BackendCheck {
-                    backend: "imap",
-                    ok: false,
-                    code: None,
-                    error: Some(String::from("NO \x1b[2Jrefused\nagain")),
-                },
+                BackendCheck::<ErrorCode>::new("maildir", Ok(())),
+                BackendCheck::new("imap", Err(anyhow!("NO \x1b[2Jrefused\nagain"))),
             ],
         };
 
@@ -391,5 +325,24 @@ maildir:  OK
 imap:     FAIL (NO \u{fffd}[2Jrefused\u{fffd}again)
 ";
         assert_eq!(expected, report.to_string());
+    }
+
+    /// A row takes the code carillon reads off a typed cause, which
+    /// pimalaya-cli's chain walk alone would leave out, its text kept.
+    #[test]
+    fn a_row_is_coded_by_carillons_readers() {
+        let err = anyhow::Error::new(AccountError::NoDefault).context("Cannot check");
+        let check = row("imap", Err(err));
+
+        assert!(!check.ok);
+        assert_eq!(check.code, Some(ErrorCode::AccountDefaultMissing));
+        let error = check.error.unwrap();
+        assert!(
+            error.starts_with("Cannot check: No default account"),
+            "{error}"
+        );
+
+        let check = row("imap", Err(anyhow!("refused")));
+        assert_eq!(check.code, None);
     }
 }

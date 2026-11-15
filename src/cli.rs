@@ -22,7 +22,11 @@ use pimalaya_cli::{
 use pimalaya_config::toml::ConfigMissingError;
 
 use crate::{
-    backend::Backend, check::CheckCommand, config::Config, json_schema, watch::WatchCommand,
+    account::{check::AccountCheckCommand, cli::AccountCommand},
+    backend::Backend,
+    config::Config,
+    json_schema,
+    watch::WatchCommand,
 };
 
 /// The sample configuration as a raw file, for `curl` to fetch.
@@ -64,8 +68,14 @@ pub enum Command {
     /// Watch the accounts, fire their hooks and print every change until
     /// a termination signal.
     Watch(WatchCommand),
-    /// Validate the account configuration against each allowed backend.
-    Check(CheckCommand),
+    #[command(subcommand)]
+    Account(AccountCommand),
+    /// Validate the account configuration, as `account check` does.
+    ///
+    /// The name `account check` had before the account group, hidden from
+    /// the help so a script calling it runs on.
+    #[command(hide = true)]
+    Check(AccountCheckCommand),
     #[command(alias = "completions")]
     Completion(CompletionCommand),
     #[command(alias = "manuals")]
@@ -86,6 +96,7 @@ impl Command {
     ) -> Result<()> {
         match self {
             Self::Watch(cmd) => cmd.execute(printer, config_paths, account_name, backend),
+            Self::Account(cmd) => cmd.execute(printer, config_paths, account_name, backend),
             Self::Check(cmd) => cmd.execute(printer, config_paths, account_name, backend),
             Self::Completion(cmd) => cmd.execute(printer, Cli::command()),
             Self::Manual(cmd) => cmd.execute(printer, Cli::command()),
@@ -111,7 +122,7 @@ pub fn meet_bare_invocation(config_paths: &[PathBuf]) -> Result<()> {
 
 /// The welcome a person meets when no configuration exists at `path`:
 /// the commands creating it from `sample`, the shipped sample
-/// configuration, or downloading it without one, then `check`.
+/// configuration, or downloading it without one, then `account check`.
 pub fn welcome<'a>(
     path: &'a Path,
     config_paths: &'a [PathBuf],
@@ -125,7 +136,7 @@ pub fn welcome<'a>(
         sample,
         sample_url: SAMPLE_RAW_URL,
         next: "Edit it, keep one backend and the hooks you want, then check the account:",
-        command: "check",
+        command: "account check",
     }
 }
 
@@ -133,23 +144,28 @@ pub fn welcome<'a>(
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
 
-    use crate::cli::{Cli, welcome};
+    use crate::cli::{Cli, Command, welcome};
+
+    /// The commands the help lists, in order.
+    fn listed(command: &clap::Command) -> Vec<&str> {
+        let listed = command.get_subcommands().filter(|c| !c.is_hide_set());
+        listed.map(|c| c.get_name()).collect()
+    }
 
     /// The standard commands come in himalaya's order, with the abouts
     /// pimalaya-cli gives them in every binary of the family.
     #[test]
     fn the_standard_commands_are_the_familys() {
         let command = Cli::command();
-        let names: Vec<_> = command.get_subcommands().map(|c| c.get_name()).collect();
         let about = |name: &str| {
             let subcommand = command.find_subcommand(name).unwrap();
             subcommand.get_about().unwrap().to_string()
         };
 
         let standard = ["completion", "manual", "json-schema"];
-        assert_eq!(standard, names[2..]);
+        assert_eq!(standard, listed(&command)[2..]);
         assert_eq!(
             "Generate completion script for the given shell(s)",
             about("completion")
@@ -164,6 +180,22 @@ mod tests {
         );
     }
 
+    /// `account` holds `list` and `check` as in every family binary, and
+    /// the former top-level `check` still parses, hidden from the help.
+    #[test]
+    fn the_account_group_holds_list_and_check() {
+        let command = Cli::command();
+        assert_eq!(listed(&command)[..2], ["watch", "account"]);
+
+        let account = command.find_subcommand("account").unwrap();
+        assert_eq!(listed(account), ["list", "check"]);
+
+        let check = command.find_subcommand("check").unwrap();
+        assert!(check.is_hide_set());
+        let cli = Cli::try_parse_from(["carillon", "check"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Check(_))), "{cli:?}");
+    }
+
     #[test]
     #[cfg(not(windows))]
     fn the_welcome_downloads_the_raw_sample_then_checks() {
@@ -173,7 +205,7 @@ mod tests {
         let curl = "curl -sSL --create-dirs -o '/nonexistent/carillon/config.toml' \
                     https://raw.githubusercontent.com/pimalaya/carillon/master/config.sample.toml";
         assert!(welcome.contains(curl), "{welcome}");
-        let check = "\n  carillon -c '/nonexistent/carillon/config.toml' check\n";
+        let check = "\n  carillon -c '/nonexistent/carillon/config.toml' account check\n";
         assert!(welcome.contains(check), "{welcome}");
     }
 

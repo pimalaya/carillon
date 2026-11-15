@@ -55,10 +55,19 @@ use pimalaya_stream::{
 };
 #[cfg(network)]
 use secrecy::SecretString;
-use serde::{
-    Deserialize, Deserializer,
-    de::{self, Error as _},
-};
+use serde::Deserialize;
+#[cfg(not(all(
+    feature = "imap",
+    feature = "jmap",
+    feature = "maildir",
+    feature = "dav",
+    feature = "msgraph",
+    feature = "gmail",
+    feature = "gcal",
+    feature = "gpeople",
+    feature = "pimdir"
+)))]
+use serde::de;
 #[cfg(feature = "dav")]
 use url::Url;
 
@@ -218,128 +227,169 @@ pub struct AccountConfig {
     #[serde(default)]
     pub pimdir: Option<de::IgnoredAny>,
     /// Refused: the mirador `folder`, now the backend's collection key.
-    #[serde(default, deserialize_with = "refuse_folder")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub folder: Option<RemovedKeyConfig>,
+    pub folder: Option<FolderRemoved>,
     /// Refused: the account-level `mailbox`, now the backend's.
-    #[serde(default, deserialize_with = "refuse_mailbox")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub mailbox: Option<RemovedKeyConfig>,
+    pub mailbox: Option<MailboxRemoved>,
     /// Refused: the account-level `collection`, now the backend's.
-    #[serde(default, deserialize_with = "refuse_collection")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub collection: Option<RemovedKeyConfig>,
+    pub collection: Option<CollectionRemoved>,
     /// Refused: the account-level `watch`, now `<backend>.watch`.
-    #[serde(default, deserialize_with = "refuse_watch")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub watch: Option<RemovedKeyConfig>,
+    pub watch: Option<WatchRemoved>,
     /// Refused: the account-level `hooks`, now `<backend>.hooks`.
-    #[serde(default, deserialize_with = "refuse_hooks")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub hooks: Option<RemovedKeyConfig>,
+    pub hooks: Option<HooksRemoved>,
     /// Refused: the plain `dav` backend, now `caldav` or `carddav`.
-    #[serde(default, deserialize_with = "refuse_dav")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub dav: Option<RemovedKeyConfig>,
+    pub dav: Option<DavRemoved>,
 }
 
-/// A key carillon no longer reads, which no configuration holds: present,
-/// it fails the load naming where it went.
-#[derive(Clone, Debug)]
-pub enum RemovedKeyConfig {}
+/// Why the account-level keys naming the collection went.
+const COLLECTION_MOVED: &str = "the collection being named under its backend";
 
-/// The error of an account key that moved under each backend.
-fn moved<E: de::Error>(key: &str, to: &str) -> E {
-    E::custom(format!(
-        "The account-level `{key}` moved under each backend as {to}, \
-         see MIGRATION.md"
-    ))
+/// What replaces the account-level keys naming the collection.
+const COLLECTION_KEY: &str = "write the backend's collection key instead \
+                              (`imap.mailbox`, `caldav.calendar`, \
+                              `carddav.addressbook`…)";
+
+// NOTE: each key carillon no longer reads is a type no configuration
+// holds: present, it fails the load with pimalaya-config's sentence for a
+// removed key, naming what replaced it and MIGRATION.md.
+pimalaya_config::removed_key! {
+    /// The mirador `folder`, now the backend's collection key.
+    pub FolderRemoved: Key {
+        name: "folder",
+        why: COLLECTION_MOVED,
+        instead: COLLECTION_KEY,
+    }
+
+    /// The account-level `mailbox`, now the backend's collection key.
+    pub MailboxRemoved: Key {
+        name: "mailbox",
+        why: COLLECTION_MOVED,
+        instead: COLLECTION_KEY,
+    }
+
+    /// The account-level `collection`, now the backend's collection key.
+    pub CollectionRemoved: Key {
+        name: "collection",
+        why: COLLECTION_MOVED,
+        instead: COLLECTION_KEY,
+    }
+
+    /// The account-level `watch`, now `<backend>.watch`.
+    pub WatchRemoved: Table {
+        name: "watch",
+        why: "the watch method being its backend's",
+        instead: "write `<backend>.watch` instead (`imap.watch`)",
+    }
+
+    /// The account-level `hooks`, now `<backend>.hooks`.
+    pub HooksRemoved: Table {
+        name: "hooks",
+        why: "the hooks being their backend's",
+        instead: "write `<backend>.hooks` instead (`imap.hooks`)",
+    }
+
+    /// The plain `dav` backend, now `caldav` or `carddav`.
+    pub DavRemoved: Table {
+        name: "dav",
+        why: "a DAV backend being named after what it watches",
+        instead: "write `caldav` for a calendar or `carddav` for an \
+                  addressbook instead",
+    }
+
+    /// A backend's `hook` table before 1.0, now `hooks`.
+    #[cfg_attr(not(any(backend, feature = "pimdir")), allow(dead_code))]
+    pub HookTableRemoved: Table {
+        name: "hook",
+        why: "the hooks taking Comodoro's shape",
+        instead: "write `hooks` instead",
+    }
 }
 
-/// The error of the account-level keys that named the collection.
-fn collection_moved<E: de::Error>(key: &str) -> E {
-    moved(
-        key,
-        "its collection key (`imap.mailbox`, `caldav.calendar`, \
-         `carddav.addressbook`…)",
-    )
+/// Declares one type per hook name before 1.0, refusing it by name with
+/// the one it became.
+macro_rules! renamed_hooks {
+    ($($ty:ident: $old:literal => $new:literal,)*) => {
+        pimalaya_config::removed_key! {$(
+            // NOTE: a build leaving out every backend that fired the hook
+            // leaves its type unused.
+            #[allow(dead_code)]
+            pub $ty: Table {
+                name: $old,
+                why: "every hook name ending in a bare verb",
+                instead: concat!("write `", $new, "` instead"),
+            }
+        )*}
+    };
 }
 
-fn refuse_folder<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
-    Err(collection_moved("folder"))
-}
-
-fn refuse_mailbox<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
-    Err(collection_moved("mailbox"))
-}
-
-fn refuse_collection<'de, D: Deserializer<'de>>(
-    _: D,
-) -> Result<Option<RemovedKeyConfig>, D::Error> {
-    Err(collection_moved("collection"))
-}
-
-fn refuse_watch<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
-    Err(moved("watch", "`<backend>.watch` (`imap.watch`)"))
-}
-
-fn refuse_hooks<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
-    Err(moved("hooks", "`<backend>.hooks` (`imap.hooks`)"))
-}
-
-fn refuse_dav<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
-    Err(D::Error::custom(
-        "The `dav` backend is removed: watch a calendar with `caldav` or an \
-         addressbook with `carddav`, see MIGRATION.md",
-    ))
-}
-
-/// The error of a hook spelling renamed for 1.0, `what` naming the kind
-/// of key it is.
-fn renamed<E: de::Error>(what: &str, old: &str, new: &str) -> E {
-    E::custom(format!(
-        "The {what} `{old}` is now `{new}`, see MIGRATION.md"
-    ))
-}
-
-#[cfg_attr(not(any(backend, feature = "pimdir")), allow(dead_code))]
-fn refuse_hook<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
-    Err(renamed("hook table", "hook", "hooks"))
-}
-
-/// Declares one refuser per hook name before 1.0, serde handing the key
-/// it read to no function.
-macro_rules! refuse_renamed_hooks {
-    ($($refuse:ident: $old:literal => $new:literal,)*) => {$(
-        // NOTE: a build leaving out every backend that fired the hook
-        // leaves its refuser unused.
-        #[allow(dead_code)]
-        fn $refuse<'de, D: Deserializer<'de>>(
-            _: D,
-        ) -> Result<Option<RemovedKeyConfig>, D::Error> {
-            Err(renamed("hook", $old, $new))
-        }
-    )*};
-}
-
-refuse_renamed_hooks! {
-    refuse_on_message_added: "on-message-added" => "on-message-add",
-    refuse_on_message_removed: "on-message-removed" => "on-message-remove",
-    refuse_on_message_changed: "on-message-changed" => "on-message-change",
-    refuse_on_flag_added: "on-flag-added" => "on-flag-add",
-    refuse_on_flag_removed: "on-flag-removed" => "on-flag-remove",
-    refuse_on_card_added: "on-card-added" => "on-card-add",
-    refuse_on_card_removed: "on-card-removed" => "on-card-remove",
-    refuse_on_card_changed: "on-card-changed" => "on-card-change",
-    refuse_on_event_added: "on-event-added" => "on-event-add",
-    refuse_on_event_removed: "on-event-removed" => "on-event-remove",
-    refuse_on_event_changed: "on-event-changed" => "on-event-change",
-    refuse_on_task_added: "on-task-added" => "on-task-add",
-    refuse_on_task_removed: "on-task-removed" => "on-task-remove",
-    refuse_on_task_changed: "on-task-changed" => "on-task-change",
+renamed_hooks! {
+    OnMessageAddedRenamed: "on-message-added" => "on-message-add",
+    OnMessageRemovedRenamed: "on-message-removed" => "on-message-remove",
+    OnMessageChangedRenamed: "on-message-changed" => "on-message-change",
+    OnFlagAddedRenamed: "on-flag-added" => "on-flag-add",
+    OnFlagRemovedRenamed: "on-flag-removed" => "on-flag-remove",
+    OnCardAddedRenamed: "on-card-added" => "on-card-add",
+    OnCardRemovedRenamed: "on-card-removed" => "on-card-remove",
+    OnCardChangedRenamed: "on-card-changed" => "on-card-change",
+    OnEventAddedRenamed: "on-event-added" => "on-event-add",
+    OnEventRemovedRenamed: "on-event-removed" => "on-event-remove",
+    OnEventChangedRenamed: "on-event-changed" => "on-event-change",
+    OnTaskAddedRenamed: "on-task-added" => "on-task-add",
+    OnTaskRemovedRenamed: "on-task-removed" => "on-task-remove",
+    OnTaskChangedRenamed: "on-task-changed" => "on-task-change",
 }
 
 impl AccountConfig {
+    /// The backends the account carries a block for, as `--backend`
+    /// spells them, in the order `auto` tries them, each with whether this
+    /// build serves it.
+    pub fn blocks(&self) -> Vec<(&'static str, bool)> {
+        let blocks = [
+            ("imap", self.imap.is_some(), cfg!(feature = "imap")),
+            ("jmap", self.jmap.is_some(), cfg!(feature = "jmap")),
+            ("maildir", self.maildir.is_some(), cfg!(feature = "maildir")),
+            ("caldav", self.caldav.is_some(), cfg!(feature = "dav")),
+            ("carddav", self.carddav.is_some(), cfg!(feature = "dav")),
+            ("msgraph", self.msgraph.is_some(), cfg!(feature = "msgraph")),
+            ("gmail", self.gmail.is_some(), cfg!(feature = "gmail")),
+            ("gcal", self.gcal.is_some(), cfg!(feature = "gcal")),
+            ("gpeople", self.gpeople.is_some(), cfg!(feature = "gpeople")),
+            ("pimdir", self.pimdir.is_some(), cfg!(feature = "pimdir")),
+        ];
+
+        let carried = blocks.into_iter().filter(|(_, carried, _)| *carried);
+        carried.map(|(name, _, built)| (name, built)).collect()
+    }
+
+    /// The backends the account carries a block for and this build serves,
+    /// in the order `auto` tries them.
+    pub fn backends(&self) -> Vec<&'static str> {
+        let blocks = self.blocks().into_iter();
+        blocks
+            .filter_map(|(name, built)| built.then_some(name))
+            .collect()
+    }
+
+    /// The backends the account carries a block for and this build leaves
+    /// out, in the order `auto` tries them.
+    pub fn not_built(&self) -> Vec<&'static str> {
+        let blocks = self.blocks().into_iter();
+        blocks
+            .filter_map(|(name, built)| (!built).then_some(name))
+            .collect()
+    }
+
     /// Hands the account proxy to every network backend naming none of
     /// its own.
     #[cfg(network)]
@@ -481,9 +531,9 @@ pub struct ImapConfig {
     #[serde(default)]
     pub hooks: ImapHookConfig,
     /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default, deserialize_with = "refuse_hook")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub hook: Option<RemovedKeyConfig>,
+    pub hook: Option<HookTableRemoved>,
 }
 
 /// Per-account `imap.id.*` quirks.
@@ -603,9 +653,9 @@ pub struct JmapConfig {
     #[serde(default)]
     pub hooks: DomainsHookConfig,
     /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default, deserialize_with = "refuse_hook")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub hook: Option<RemovedKeyConfig>,
+    pub hook: Option<HookTableRemoved>,
 }
 
 #[cfg(feature = "jmap")]
@@ -639,9 +689,9 @@ pub struct MaildirConfig {
     #[serde(default)]
     pub hooks: MaildirHookConfig,
     /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default, deserialize_with = "refuse_hook")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub hook: Option<RemovedKeyConfig>,
+    pub hook: Option<HookTableRemoved>,
 }
 
 /// pimdir configuration: one calendar collection of a local pimdir store,
@@ -671,9 +721,9 @@ pub struct PimdirConfig {
     #[serde(default)]
     pub hooks: PimdirHookConfig,
     /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default, deserialize_with = "refuse_hook")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub hook: Option<RemovedKeyConfig>,
+    pub hook: Option<HookTableRemoved>,
 }
 
 /// Proxy configuration.
@@ -1105,18 +1155,18 @@ pub struct ImapHookConfig {
     /// Fires once for each flag cleared on a message.
     pub on_flag_remove: Option<FlagHook>,
     /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default, deserialize_with = "refuse_on_message_added")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_message_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_message_removed")]
+    pub on_message_added: Option<OnMessageAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_message_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_flag_added")]
+    pub on_message_removed: Option<OnMessageRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_flag_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_flag_removed")]
+    pub on_flag_added: Option<OnFlagAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_flag_removed: Option<RemovedKeyConfig>,
+    pub on_flag_removed: Option<OnFlagRemovedRenamed>,
 }
 
 /// Hooks a JMAP or a Microsoft Graph watch fires, one set per domain.
@@ -1148,39 +1198,39 @@ pub struct DomainsHookConfig {
     /// Fires when an event is edited where it stands.
     pub on_event_change: Option<ItemHook>,
     /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default, deserialize_with = "refuse_on_message_added")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_message_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_message_removed")]
+    pub on_message_added: Option<OnMessageAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_message_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_message_changed")]
+    pub on_message_removed: Option<OnMessageRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_message_changed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_flag_added")]
+    pub on_message_changed: Option<OnMessageChangedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_flag_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_flag_removed")]
+    pub on_flag_added: Option<OnFlagAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_flag_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_card_added")]
+    pub on_flag_removed: Option<OnFlagRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_card_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_card_removed")]
+    pub on_card_added: Option<OnCardAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_card_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_card_changed")]
+    pub on_card_removed: Option<OnCardRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_card_changed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_event_added")]
+    pub on_card_changed: Option<OnCardChangedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_event_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_event_removed")]
+    pub on_event_added: Option<OnEventAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_event_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_event_changed")]
+    pub on_event_removed: Option<OnEventRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_event_changed: Option<RemovedKeyConfig>,
+    pub on_event_changed: Option<OnEventChangedRenamed>,
 }
 
 /// Hooks a Maildir watch fires.
@@ -1197,18 +1247,18 @@ pub struct MaildirHookConfig {
     /// Fires once for each flag letter removed from one.
     pub on_flag_remove: Option<FlagHook>,
     /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default, deserialize_with = "refuse_on_message_added")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_message_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_message_removed")]
+    pub on_message_added: Option<OnMessageAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_message_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_flag_added")]
+    pub on_message_removed: Option<OnMessageRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_flag_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_flag_removed")]
+    pub on_flag_added: Option<OnFlagAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_flag_removed: Option<RemovedKeyConfig>,
+    pub on_flag_removed: Option<OnFlagRemovedRenamed>,
 }
 
 /// Hooks a pimdir watch fires.
@@ -1240,24 +1290,24 @@ pub struct CaldavHookConfig {
     /// Fires when an alarm of a VEVENT or a VTODO reaches its trigger.
     pub on_alarm_trigger: Option<ItemHook>,
     /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default, deserialize_with = "refuse_on_event_added")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_event_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_event_removed")]
+    pub on_event_added: Option<OnEventAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_event_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_event_changed")]
+    pub on_event_removed: Option<OnEventRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_event_changed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_task_added")]
+    pub on_event_changed: Option<OnEventChangedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_task_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_task_removed")]
+    pub on_task_added: Option<OnTaskAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_task_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_task_changed")]
+    pub on_task_removed: Option<OnTaskRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_task_changed: Option<RemovedKeyConfig>,
+    pub on_task_changed: Option<OnTaskChangedRenamed>,
 }
 
 /// Hooks a CardDAV watch fires.
@@ -1272,15 +1322,15 @@ pub struct CarddavHookConfig {
     /// Fires when a vCard is edited where it stands.
     pub on_card_change: Option<ItemHook>,
     /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default, deserialize_with = "refuse_on_card_added")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_card_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_card_removed")]
+    pub on_card_added: Option<OnCardAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_card_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_card_changed")]
+    pub on_card_removed: Option<OnCardRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_card_changed: Option<RemovedKeyConfig>,
+    pub on_card_changed: Option<OnCardChangedRenamed>,
 }
 
 /// The hook one event resolved to, in either of the two shapes a hook is
@@ -1768,9 +1818,9 @@ pub struct CaldavConfig {
     #[serde(default)]
     pub hooks: CaldavHookConfig,
     /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default, deserialize_with = "refuse_hook")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub hook: Option<RemovedKeyConfig>,
+    pub hook: Option<HookTableRemoved>,
 }
 
 /// CardDAV configuration: one watched addressbook, polled the same way.
@@ -1813,9 +1863,9 @@ pub struct CarddavConfig {
     #[serde(default)]
     pub hooks: CarddavHookConfig,
     /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default, deserialize_with = "refuse_hook")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub hook: Option<RemovedKeyConfig>,
+    pub hook: Option<HookTableRemoved>,
 }
 
 /// The transport half of a DAV backend, shared by a calendar and an
@@ -1955,21 +2005,21 @@ pub enum DavWatchConfig {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct IdleWatchConfig {
-    /// Seconds an IDLE is held before it is re-issued, unset taking
-    /// io-imap's own default of 29.
+    /// How long an IDLE is held before it is re-issued, unset taking
+    /// io-imap's own default of 29 seconds.
     ///
     /// Short survives a NAT middle-box dropping a quiet connection, at a
     /// round trip per interval; a server known to hold one open is asked
     /// less often, up to the 29 minutes RFC 2177 allows.
-    #[serde(default)]
-    pub timeout: Option<u64>,
+    #[serde(default, with = "pimalaya_config::duration::option")]
+    pub timeout: Option<Duration>,
 }
 
 #[cfg(feature = "imap")]
 impl IdleWatchConfig {
     /// The interval this config overrides the io-imap default with.
     pub fn timeout(&self) -> Option<Duration> {
-        self.timeout.map(Duration::from_secs)
+        self.timeout
     }
 }
 
@@ -1978,26 +2028,26 @@ impl IdleWatchConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PushWatchConfig {
-    /// Seconds between the server's keep-alive pings, which are also what
-    /// proves the stream is still there.
-    #[serde(default = "default_push_ping")]
-    pub ping: u64,
+    /// How long between the server's keep-alive pings, which are also
+    /// what proves the stream is still there.
+    #[serde(default = "default_push_ping", with = "pimalaya_config::duration")]
+    pub ping: Duration,
 }
 
 /// Options of the poll method.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PollWatchConfig {
-    /// Seconds between two rounds, unset taking what suits the backend: a
-    /// couple of seconds for a directory read, longer for a remote one.
-    #[serde(default)]
-    pub interval: Option<u64>,
+    /// How long between two rounds, unset taking what suits the backend:
+    /// a couple of seconds for a directory read, longer for a remote one.
+    #[serde(default, with = "pimalaya_config::duration::option")]
+    pub interval: Option<Duration>,
 }
 
 impl PollWatchConfig {
     /// The interval this config overrides the backend default with.
     pub fn interval(&self) -> Option<Duration> {
-        self.interval.map(Duration::from_secs)
+        self.interval
     }
 }
 
@@ -2013,8 +2063,8 @@ impl Default for PushWatchConfig {
 /// Half a minute between pings, short enough to notice a dead stream
 /// and long enough to be quiet.
 #[cfg(feature = "jmap")]
-fn default_push_ping() -> u64 {
-    30
+fn default_push_ping() -> Duration {
+    Duration::from_secs(30)
 }
 
 // NOTE: the vendor REST APIs authenticate with a bearer token alone and
@@ -2062,9 +2112,9 @@ pub struct MsgraphConfig {
     #[serde(default)]
     pub hooks: DomainsHookConfig,
     /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default, deserialize_with = "refuse_hook")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub hook: Option<RemovedKeyConfig>,
+    pub hook: Option<HookTableRemoved>,
 }
 
 #[cfg(feature = "msgraph")]
@@ -2122,9 +2172,9 @@ pub struct GmailConfig {
     #[serde(default)]
     pub hooks: GmailHookConfig,
     /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default, deserialize_with = "refuse_hook")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub hook: Option<RemovedKeyConfig>,
+    pub hook: Option<HookTableRemoved>,
 }
 
 #[cfg(feature = "gmail")]
@@ -2165,9 +2215,9 @@ pub struct GcalConfig {
     #[serde(default)]
     pub hooks: GcalHookConfig,
     /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default, deserialize_with = "refuse_hook")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub hook: Option<RemovedKeyConfig>,
+    pub hook: Option<HookTableRemoved>,
 }
 
 #[cfg(feature = "gcal")]
@@ -2209,9 +2259,9 @@ pub struct GpeopleConfig {
     #[serde(default)]
     pub hooks: GpeopleHookConfig,
     /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default, deserialize_with = "refuse_hook")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub hook: Option<RemovedKeyConfig>,
+    pub hook: Option<HookTableRemoved>,
 }
 
 #[cfg(feature = "gpeople")]
@@ -2272,18 +2322,18 @@ pub struct GmailHookConfig {
     /// Fires once for each flag cleared on a message.
     pub on_flag_remove: Option<FlagHook>,
     /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default, deserialize_with = "refuse_on_message_added")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_message_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_message_removed")]
+    pub on_message_added: Option<OnMessageAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_message_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_flag_added")]
+    pub on_message_removed: Option<OnMessageRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_flag_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_flag_removed")]
+    pub on_flag_added: Option<OnFlagAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_flag_removed: Option<RemovedKeyConfig>,
+    pub on_flag_removed: Option<OnFlagRemovedRenamed>,
 }
 
 #[cfg(feature = "gmail")]
@@ -2343,15 +2393,15 @@ pub struct GcalHookConfig {
     /// Fires when an event is edited where it stands.
     pub on_event_change: Option<ItemHook>,
     /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default, deserialize_with = "refuse_on_event_added")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_event_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_event_removed")]
+    pub on_event_added: Option<OnEventAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_event_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_event_changed")]
+    pub on_event_removed: Option<OnEventRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_event_changed: Option<RemovedKeyConfig>,
+    pub on_event_changed: Option<OnEventChangedRenamed>,
 }
 
 #[cfg(feature = "gcal")]
@@ -2399,15 +2449,15 @@ pub struct GpeopleHookConfig {
     /// Fires when one is edited where it stands.
     pub on_card_change: Option<ItemHook>,
     /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default, deserialize_with = "refuse_on_card_added")]
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_card_added: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_card_removed")]
+    pub on_card_added: Option<OnCardAddedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_card_removed: Option<RemovedKeyConfig>,
-    #[serde(default, deserialize_with = "refuse_on_card_changed")]
+    pub on_card_removed: Option<OnCardRemovedRenamed>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub on_card_changed: Option<RemovedKeyConfig>,
+    pub on_card_changed: Option<OnCardChangedRenamed>,
 }
 
 #[cfg(feature = "gpeople")]
@@ -2777,23 +2827,83 @@ mod tests {
         }
     }
 
+    /// A duration reads integer seconds as it did, or a number and its
+    /// unit, pimalaya-config's shape; a value of neither is refused.
+    #[test]
+    fn a_duration_takes_seconds_or_a_unit() {
+        let read = |line: &str| {
+            let config: Config = toml::from_str(&document(line)).expect(line);
+            config.accounts["perso"].imap.clone().unwrap().watch
+        };
+
+        for (value, secs) in [("90", 90), ("\"90s\"", 90), ("\"5m\"", 300)] {
+            let line = format!("imap.watch.poll.interval = {value}\n");
+            let Some(ImapWatchConfig::Poll(poll)) = read(&line) else {
+                panic!("{line}: a poll");
+            };
+            assert_eq!(poll.interval(), Some(Duration::from_secs(secs)), "{line}");
+        }
+
+        let Some(ImapWatchConfig::Idle(idle)) = read("imap.watch.idle.timeout = \"2h\"\n") else {
+            panic!("an IDLE");
+        };
+        assert_eq!(idle.timeout(), Some(Duration::from_secs(7200)));
+
+        let line = "imap.watch.poll.interval = \"5 minutes\"\n";
+        let err = toml::from_str::<Config>(&document(line)).expect_err(line);
+        assert!(err.to_string().contains("Invalid duration"), "{err}");
+    }
+
+    #[cfg(feature = "jmap")]
+    #[test]
+    fn a_push_ping_takes_seconds_or_a_unit() {
+        for (value, secs) in [("45", 45), ("\"1m\"", 60)] {
+            let line = format!(
+                "jmap.server = \"fastmail.com\"\n\
+                 jmap.mailbox = \"Inbox\"\n\
+                 jmap.auth.bearer.token.raw = \"token\"\n\
+                 jmap.watch.push.ping = {value}\n"
+            );
+            let config: Config = toml::from_str(&document(&line)).expect(&line);
+            let jmap = config.accounts["perso"].jmap.clone().unwrap();
+            let Some(JmapWatchConfig::Push(push)) = jmap.watch else {
+                panic!("{line}: a push");
+            };
+            assert_eq!(push.ping, Duration::from_secs(secs), "{line}");
+        }
+
+        assert_eq!(PushWatchConfig::default().ping, Duration::from_secs(30));
+    }
+
+    /// A key carillon moved is refused in the family's sentence for a
+    /// removed key, naming what replaced it and MIGRATION.md.
     #[test]
     fn a_key_carillon_no_longer_reads_is_refused_by_name() {
-        for (line, named) in [
-            ("folder = \"INBOX\"\n", "`imap.mailbox`"),
-            ("mailbox = \"INBOX\"\n", "`imap.mailbox`"),
-            ("collection = \"INBOX\"\n", "`imap.mailbox`"),
-            ("watch.poll.interval = 60\n", "`imap.watch`"),
-            ("hooks.on-message-add.command = \"true\"\n", "`imap.hooks`"),
-            ("dav.server = \"https://dav.example.org\"\n", "`caldav`"),
+        for (line, kind, named) in [
+            ("folder = \"INBOX\"\n", "key", "`imap.mailbox`"),
+            ("mailbox = \"INBOX\"\n", "key", "`imap.mailbox`"),
+            ("collection = \"INBOX\"\n", "key", "`imap.mailbox`"),
+            ("watch.poll.interval = 60\n", "table", "`imap.watch`"),
+            (
+                "hooks.on-message-add.command = \"true\"\n",
+                "table",
+                "`imap.hooks`",
+            ),
+            (
+                "dav.server = \"https://dav.example.org\"\n",
+                "table",
+                "`caldav`",
+            ),
         ] {
             let err = toml::from_str::<Config>(&document(line)).expect_err(line);
             let err = err.to_string();
             let key = line.split(['.', ' ']).next().unwrap();
+            let removed = format!("The `{key}` {kind} is removed, ");
 
-            assert!(err.contains(&format!("`{key}`")), "{line}: {err}");
+            assert!(err.contains(&removed), "{line}: {err}");
             assert!(err.contains(named), "{line}: {err}");
-            assert!(err.contains("MIGRATION.md"), "{line}: {err}");
+            assert!(err.contains(" instead"), "{line}: {err}");
+            assert!(err.contains(", see MIGRATION.md"), "{line}: {err}");
         }
     }
 
@@ -2807,10 +2917,10 @@ mod tests {
         let err = Config::load(&[path]).expect_err("an account-level hooks table");
         let err = format!("{err:#}");
 
-        assert!(
-            err.contains("`hooks` moved under each backend as `<backend>.hooks`"),
-            "{err}"
-        );
+        let sentence = "The `hooks` table is removed, the hooks being their \
+                        backend's: write `<backend>.hooks` instead \
+                        (`imap.hooks`), see MIGRATION.md";
+        assert!(err.contains(sentence), "{err}");
     }
 
     /// The SASL spellings the sample writes and a secret's `cmd` load, the
@@ -2936,13 +3046,19 @@ mod tests {
         for (line, old, new) in cases {
             let err = toml::from_str::<Config>(&document(line)).expect_err(line);
             let err = err.to_string();
+            let removed = format!("The `{old}` table is removed, ");
+            let instead = format!(": write `{new}` instead, see MIGRATION.md");
 
-            assert!(
-                err.contains(&format!("`{old}` is now `{new}`")),
-                "{line}: {err}"
-            );
-            assert!(err.contains("MIGRATION.md"), "{line}: {err}");
+            assert!(err.contains(&removed), "{line}: {err}");
+            assert!(err.contains(&instead), "{line}: {err}");
         }
+
+        let line = "imap.hooks.on-message-added.command = \"true\"\n";
+        let err = toml::from_str::<Config>(&document(line)).expect_err(line);
+        let sentence = "The `on-message-added` table is removed, every hook \
+                        name ending in a bare verb: write `on-message-add` \
+                        instead, see MIGRATION.md";
+        assert!(err.to_string().contains(sentence), "{err}");
     }
 
     /// The sample as written loads, and no line it comments out names a

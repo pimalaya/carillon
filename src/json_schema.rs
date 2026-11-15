@@ -7,12 +7,18 @@
 //!
 //! Every runnable command appears, `watch` twice: its result under
 //! `carillon-watch` and the events it prints before it under
-//! `carillon-watch.events`. pimalaya-cli registers its own `completion`,
-//! `manual` and `json-schema`.
+//! `carillon-watch.events`. `check`, the hidden former name of `account
+//! check`, keeps its `carillon-check` key beside `carillon-account-check`.
+//! pimalaya-cli registers its own `completion`, `manual` and
+//! `json-schema`.
 //!
 //! [`JsonSchemaCommand`]: pimalaya_cli::clap::commands::json_schema::JsonSchemaCommand
 
-use pimalaya_cli::{clap::commands::json_schema::JsonSchemaRegistry, error::ErrorReport};
+use pimalaya_cli::{
+    account::{AccountCheckOutput, AccountListOutput},
+    clap::commands::json_schema::JsonSchemaRegistry,
+    error::ErrorReport,
+};
 
 use crate::error::ErrorCode;
 
@@ -24,7 +30,9 @@ use crate::error::ErrorCode;
 pub fn registry() -> JsonSchemaRegistry {
     let mut registry = JsonSchemaRegistry::new("carillon", env!("CARGO_PKG_VERSION"));
 
-    registry.insert::<crate::check::CheckOutput>("carillon-check");
+    registry.insert::<AccountListOutput>("carillon-account-list");
+    registry.insert::<AccountCheckOutput<ErrorCode>>("carillon-account-check");
+    registry.insert::<AccountCheckOutput<ErrorCode>>("carillon-check");
     registry.insert::<crate::stream::WatchOutput>("carillon-watch");
     registry.insert_events::<crate::stream::WatchStreamEvent>("carillon-watch");
     registry.insert::<ErrorReport<ErrorCode>>("carillon-error");
@@ -39,7 +47,7 @@ mod tests {
     use serde_json::json;
 
     use super::registry;
-    use crate::{check::CheckOutput, cli::Cli, error::ErrorCode};
+    use crate::{cli::Cli, error::ErrorCode};
 
     /// The runnable commands printing nothing, so described by no schema:
     /// the bare binary prints its help.
@@ -98,14 +106,33 @@ mod tests {
         }
     }
 
+    /// `account check` prints the family's check, its row code typed by
+    /// carillon's vocabulary, and `check` the same under its former key.
     #[test]
     fn a_check_row_requires_its_code() {
-        let schema = output_schema::<CheckOutput>();
+        let registry = registry();
+        let schema = &registry.schemas["carillon-account-check"];
         let row = &schema["$defs"]["BackendCheck"];
 
+        assert_eq!(schema["title"], "AccountCheckOutput", "{schema}");
         assert_eq!(
             row["required"],
             json!(["backend", "ok", "code", "error"]),
+            "{schema}"
+        );
+        assert!(schema["$defs"].get("ErrorCode").is_some(), "{schema}");
+        assert_eq!(schema, &registry.schemas["carillon-check"]);
+    }
+
+    /// `account list` prints the family's rows, `notBuilt` included.
+    #[test]
+    fn an_account_row_carries_what_the_build_leaves_out() {
+        let schema = &registry().schemas["carillon-account-list"];
+        let row = &schema["$defs"]["AccountRow"];
+
+        assert_eq!(
+            row["required"],
+            json!(["name", "default", "backends", "notBuilt"]),
             "{schema}"
         );
     }

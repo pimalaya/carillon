@@ -2,9 +2,9 @@
 //!
 //! The built binary reading a configuration that declares a backend its
 //! build leaves out: the block loads, a misspelt key beside it is still
-//! refused, and `check` reaching it fails its row coded
-//! `backend-not-built`, naming the cargo feature. These run on a build
-//! without the `imap` feature, such as
+//! refused, `account list` lists it as not built, and `account check`
+//! reaching it fails its row coded `backend-not-built`, naming the cargo
+//! feature. These run on a build without the `imap` feature, such as
 //! `cargo test --no-default-features --features rustls-ring,maildir`.
 
 #![cfg(not(feature = "imap"))]
@@ -45,7 +45,7 @@ const IMAP: &str = "[accounts.a]\ndefault = true\nimap.mailbox = \"INBOX\"\n\
 
 #[test]
 fn a_check_reaching_it_fails_its_row_naming_the_feature() {
-    let output = run(IMAP, &["check"]);
+    let output = run(IMAP, &["account", "check"]);
     let stdout = text(&output.stdout);
 
     assert_eq!(output.status.code(), Some(3), "{stdout}");
@@ -58,9 +58,22 @@ fn a_check_reaching_it_fails_its_row_naming_the_feature() {
     assert!(error.contains("`--features imap`"), "{error}");
 }
 
+/// The listing names the block under `notBuilt`, not among the backends
+/// this build serves.
+#[test]
+fn a_listing_names_it_not_built() {
+    let output = run(IMAP, &["account", "list"]);
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let row = &json["accounts"][0];
+
+    assert_eq!(output.status.code(), Some(0), "{json}");
+    assert_eq!(row["backends"], serde_json::json!([]), "{json}");
+    assert_eq!(row["notBuilt"], serde_json::json!(["imap"]), "{json}");
+}
+
 #[test]
 fn a_backend_pinned_away_from_it_leaves_it_unread() {
-    let output = run(IMAP, &["--backend", "jmap", "check"]);
+    let output = run(IMAP, &["--backend", "jmap", "account", "check"]);
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(output.status.code(), Some(1), "{json}");
@@ -72,7 +85,7 @@ fn a_backend_pinned_away_from_it_leaves_it_unread() {
 fn a_misspelt_backend_is_still_refused() {
     let output = run(
         "[accounts.a]\ndefault = true\nimapp.mailbox = \"INBOX\"\n",
-        &["check"],
+        &["account", "check"],
     );
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
     let error = json.to_string();

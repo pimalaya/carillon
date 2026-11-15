@@ -2,8 +2,8 @@
 //!
 //! The built binary's exit statuses beyond success and failure: a command
 //! line the grammar refuses exits 2, its failure object coded
-//! `usage-invalid` under `--json`, and a `check` that printed its report
-//! with a failed backend exits 3.
+//! `usage-invalid` under `--json`, and an `account check` that printed its
+//! report with a failed backend exits 3.
 
 use std::{
     path::Path,
@@ -71,7 +71,7 @@ fn check_missing_maildir(json: bool) -> Output {
     std::fs::write(&config, toml).unwrap();
 
     let config = config.to_str().unwrap();
-    let args = ["-c", config, "--backend", "maildir", "check"];
+    let args = ["-c", config, "--backend", "maildir", "account", "check"];
     let mut args = Vec::from(args);
     if json {
         args.insert(0, "--json");
@@ -136,7 +136,15 @@ fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
     std::fs::write(&config, toml).unwrap();
 
     let config = config.to_str().unwrap();
-    let args = ["--json", "-c", config, "--backend", "pimdir", "check"];
+    let args = [
+        "--json",
+        "-c",
+        config,
+        "--backend",
+        "pimdir",
+        "account",
+        "check",
+    ];
     let output = run(home.path(), &args);
     let stdout = text(&output.stdout);
 

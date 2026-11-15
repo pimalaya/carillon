@@ -1075,7 +1075,8 @@ fn is_timeout(err: &io::Error) -> bool {
     )
 }
 
-/// Opens the collection and runs one report, which is what `check` needs.
+/// Opens the collection and runs one report, which is what `account check`
+/// needs.
 ///
 /// It proves the transport, the credential, and that the collection is
 /// where the configuration says. A server with no `sync-collection` is

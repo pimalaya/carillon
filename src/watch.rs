@@ -406,8 +406,8 @@ fn watch_session(
                 ),
                 watch => {
                     let ping = match watch {
-                        Some(JmapWatchConfig::Push(push)) => push.ping,
-                        _ => PushWatchConfig::default().ping,
+                        Some(JmapWatchConfig::Push(push)) => push.ping.as_secs(),
+                        _ => PushWatchConfig::default().ping.as_secs(),
                     };
                     let on_open = || events.opened("jmap", WatchMethod::Push, collections);
                     jmap::watch_push(jmap_config, ping, resolve, shutdown, on_open, &mut on_event)

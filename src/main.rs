@@ -9,16 +9,17 @@
 //! The frontend: main dispatches, cli declares the parser and meets a bare
 //! invocation with the help, or with the missing configuration as any
 //! command does, config parses the TOML accounts and fails naming the file
-//! and the documented sample when there is none, watch and check are the
-//! two commands, hook fires the notification and
-//! the command, json_schema names the schema of what each command prints,
+//! and the documented sample when there is none, watch is the command
+//! and account the group listing and checking the accounts (`check` its
+//! hidden former name), hook fires the notification and the command,
+//! json_schema names the schema of what each command prints,
 //! error the stable codes a failure carries, each backend reading its own
 //! protocol's refusals into them.
 //!
 //! A command exits 0 on success, a watch stopped by a signal included, 1
 //! on a failure, printed under `--json` as the failure object with its
 //! code, 2 on a command line the grammar refuses (`usage-invalid`), and 3
-//! on a `check` that printed its report with a failed backend.
+//! on an `account check` that printed its report with a failed backend.
 //! No configuration is ever written: an account is written by hand from
 //! config.sample.toml, which a person at a terminal missing one is
 //! welcomed to by pimalaya-cli's welcome, a script or a JSON caller
@@ -64,10 +65,10 @@
     allow(dead_code, unused_imports, unused_mut, unused_variables)
 )]
 
+mod account;
 #[cfg(alarm)]
 mod alarm;
 mod backend;
-mod check;
 mod cli;
 mod config;
 #[cfg(feature = "dav")]

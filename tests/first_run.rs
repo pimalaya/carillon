@@ -122,7 +122,7 @@ fn a_command_without_configuration_names_the_given_path_and_the_sample() {
 #[test]
 fn a_command_without_configuration_names_the_default_path() {
     let (home, _) = home(None);
-    let output = run(home.path(), &["check"]);
+    let output = run(home.path(), &["account", "check"]);
     let path = home.path().join("carillon").join("config.toml");
 
     assert_missing(&output, &path);
@@ -147,7 +147,10 @@ fn a_json_caller_gets_the_missing_configuration_as_the_failure_object() {
 #[test]
 fn a_broken_configuration_is_an_error_rather_than_absent() {
     let (home, path) = home(Some("[accounts.a\n"));
-    let output = run(home.path(), &["-c", path.to_str().unwrap(), "check"]);
+    let output = run(
+        home.path(),
+        &["-c", path.to_str().unwrap(), "account", "check"],
+    );
     let stdout = text(&output.stdout);
 
     assert_eq!(output.status.code(), Some(1), "{stdout}");
@@ -168,7 +171,10 @@ fn the_configure_command_is_gone() {
 fn a_config_path_holding_a_colon_stays_whole() {
     let (home, _) = home(None);
     let path = home.path().join("a:b.toml");
-    let output = run(home.path(), &["-c", path.to_str().unwrap(), "check"]);
+    let output = run(
+        home.path(),
+        &["-c", path.to_str().unwrap(), "account", "check"],
+    );
 
     assert_missing(&output, &path);
 }
@@ -176,7 +182,11 @@ fn a_config_path_holding_a_colon_stays_whole() {
 #[test]
 fn the_former_config_variable_is_not_read() {
     let (home, path) = home(Some("[accounts.a]\ndefault = true\n"));
-    let output = run_with(home.path(), &["check"], &[("CARILLON_CONFIG", &path)]);
+    let output = run_with(
+        home.path(),
+        &["account", "check"],
+        &[("CARILLON_CONFIG", &path)],
+    );
     let default = home.path().join("carillon").join("config.toml");
 
     assert_missing(&output, &default);

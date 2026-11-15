@@ -36,13 +36,13 @@ panic = "abort"
 
 [dev-dependencies]
 io-oauth = { version = "0.7", default-features = false, features = ["jwt-bearer", "rustls-ring"] }
-pimalaya-config = { version = "0.5", default-features = false, features = ["sample"] }
+pimalaya-config = { version = "0.5.1", default-features = false, features = ["sample"] }
 rusqlite = { version = "0.41", default-features = false }
 tempfile = "3"
 toml = "1"
 
 [build-dependencies]
-pimalaya-cli = { version = "0.5", default-features = false, features = ["build"] }
+pimalaya-cli = { version = "0.5.1", default-features = false, features = ["build"] }
 
 [dependencies]
 anyhow = "1"
@@ -63,8 +63,8 @@ io-sasl = { version = "0.2", default-features = false, features = ["scram"] }
 io-webdav = { version = "0.9", default-features = false, optional = true }
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"], optional = true }
 log = "0.4"
-pimalaya-cli = { version = "0.5", default-features = false, features = ["signal", "terminal"] }
-pimalaya-config = { version = "0.5", default-features = false, features = ["toml", "secret"] }
+pimalaya-cli = { version = "0.5.1", default-features = false, features = ["signal", "terminal"] }
+pimalaya-config = { version = "0.5.1", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.4", default-features = false, features = ["std"] }
 schemars = "1"
 secrecy = { version = "0.10", features = ["serde"] }

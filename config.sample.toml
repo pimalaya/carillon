@@ -11,7 +11,10 @@
 # top of it. A path is never split on `:`.
 #
 # Carillon writes no configuration: copy this file, keep one backend and the
-# hooks you want, then delete the rest.
+# hooks you want, then delete the rest, and run `carillon account check`.
+#
+# A duration (`watch.poll.interval`, `watch.idle.timeout`, `watch.push.ping`) is
+# an integer of seconds or a number and its unit: `90`, `"90s"`, `"5m"`, `"2h"`.
 # ================================================================================
 
 [accounts.example]
@@ -103,8 +106,8 @@ imap.sasl.plain.password.raw = "REPLACE_ME"
 # How this account learns about a change, IMAP offering two ways. Unset holds
 # the idle connection, re-issued every 29 seconds, short enough to survive a NAT
 # box dropping a quiet connection; a server known to hold one open is asked less
-# often, up to the 29 minutes RFC 2177 allows. Both values are in seconds.
-#imap.watch.idle.timeout = 600
+# often, up to the 29 minutes RFC 2177 allows.
+#imap.watch.idle.timeout = "10m"
 #imap.watch.poll.interval = 60
 
 
