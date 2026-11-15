@@ -64,7 +64,7 @@ use url::Url;
 
 use crate::{
     config::{JmapAuthConfig, JmapConfig, ProxyConfig},
-    error::ErrorCode,
+    error::{self, ErrorCode},
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,
 };
@@ -810,9 +810,10 @@ fn resolve_mailbox(client: &mut JmapClientStd, mailbox: &str) -> Result<String> 
         })?
     });
 
-    found
-        .and_then(|mailbox| mailbox.id.clone())
-        .ok_or_else(|| anyhow!("Mailbox `{mailbox}` not found on the JMAP server"))
+    found.and_then(|mailbox| mailbox.id.clone()).ok_or_else(|| {
+        let message = format!("Mailbox `{mailbox}` not found on the JMAP server");
+        error::not_found(WatchDomain::Message, message)
+    })
 }
 
 /// Resolves an addressbook, by name case-insensitively or by id.
@@ -826,7 +827,10 @@ fn resolve_addressbook(client: &mut JmapClientStd, addressbook: &str) -> Result<
         .into_iter()
         .map(|candidate| (candidate.id, candidate.name))
         .find_map(|(id, name)| matches_collection(id, name, addressbook))
-        .ok_or_else(|| anyhow!("Addressbook `{addressbook}` not found on the JMAP server"))
+        .ok_or_else(|| {
+            let message = format!("Addressbook `{addressbook}` not found on the JMAP server");
+            error::not_found(WatchDomain::Card, message)
+        })
 }
 
 /// Resolves a calendar, by name case-insensitively or by id.
@@ -840,7 +844,10 @@ fn resolve_calendar(client: &mut JmapClientStd, calendar: &str) -> Result<String
         .into_iter()
         .map(|candidate| (candidate.id, candidate.name))
         .find_map(|(id, name)| matches_collection(id, name, calendar))
-        .ok_or_else(|| anyhow!("Calendar `{calendar}` not found on the JMAP server"))
+        .ok_or_else(|| {
+            let message = format!("Calendar `{calendar}` not found on the JMAP server");
+            error::not_found(WatchDomain::Event, message)
+        })
 }
 
 /// The id of a listed collection, when `wanted` names it by id or by

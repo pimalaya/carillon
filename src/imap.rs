@@ -513,7 +513,8 @@ pub fn parse_server(server: &str) -> Result<Url> {
 
 /// The code of an IMAP refusal in an error chain: a completion naming
 /// `NOPERM` is `permission-denied`, one naming `OVERQUOTA`
-/// `quota-exceeded` (RFC 5530 §3).
+/// `quota-exceeded`, and one naming `NONEXISTENT`, which only a command
+/// naming the watched mailbox meets, `mailbox-not-found` (RFC 5530 §3).
 pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<ErrorCode> {
     let status = cause.downcast_ref::<ImapClientError>()?.status()?;
 
@@ -521,6 +522,9 @@ pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<
         Code::OverQuota => Some(ErrorCode::QuotaExceeded),
         Code::Other(code) if code.inner().eq_ignore_ascii_case(b"NOPERM") => {
             Some(ErrorCode::PermissionDenied)
+        }
+        Code::Other(code) if code.inner().eq_ignore_ascii_case(b"NONEXISTENT") => {
+            Some(ErrorCode::MailboxNotFound)
         }
         _ => None,
     }
@@ -781,13 +785,15 @@ mod tests {
     }
 
     /// A mailbox the server refuses to examine fails the watch before it
-    /// is ever reported open.
+    /// is ever reported open, a missing one coded so.
     #[test]
     fn a_refused_examine_never_opens_the_session() {
         let config = refuse("NONEXISTENT");
 
         let (result, events, opened) = poll(&config, &mut None);
-        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let code = crate::error::code(&err);
+        assert_eq!(Some(ErrorCode::MailboxNotFound), code, "{err:#}");
         assert!(events.is_empty(), "got {events:?}");
         assert_eq!(None, opened);
     }

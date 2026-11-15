@@ -202,6 +202,7 @@ fn a_session_that_cannot_open_is_lost_and_never_opened() {
     let lost = watch.json();
     assert_eq!(lost["event"], "session-lost", "{lost}");
     assert_eq!(lost["account"], "a", "{lost}");
+    assert_eq!(lost["code"], "mailbox-not-found", "{lost}");
     assert!(
         lost["error"].as_str().unwrap().contains("missing"),
         "{lost}"

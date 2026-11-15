@@ -17,6 +17,7 @@
 
 use std::fmt;
 
+use pimalaya_cli::sanitize;
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -154,17 +155,21 @@ impl fmt::Display for WatchDomain {
 }
 
 /// The change in words: `message 42 added`, `flag Seen added on message
-/// 42`.
+/// 42`, the id and the flag a server sent sanitized.
 impl fmt::Display for WatchEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let id = sanitize::text(self.id());
+
         match self {
-            Self::ItemAdded { domain, id } => write!(f, "{domain} {id} added"),
-            Self::ItemRemoved { domain, id } => write!(f, "{domain} {id} removed"),
-            Self::ItemChanged { domain, id } => write!(f, "{domain} {id} changed"),
-            Self::FlagAdded { domain, id, flag } => {
+            Self::ItemAdded { domain, .. } => write!(f, "{domain} {id} added"),
+            Self::ItemRemoved { domain, .. } => write!(f, "{domain} {id} removed"),
+            Self::ItemChanged { domain, .. } => write!(f, "{domain} {id} changed"),
+            Self::FlagAdded { domain, flag, .. } => {
+                let flag = sanitize::text(flag);
                 write!(f, "flag {flag} added on {domain} {id}")
             }
-            Self::FlagRemoved { domain, id, flag } => {
+            Self::FlagRemoved { domain, flag, .. } => {
+                let flag = sanitize::text(flag);
                 write!(f, "flag {flag} removed from {domain} {id}")
             }
         }

@@ -2,9 +2,10 @@
 //!
 //! The built binary run with and without a configuration, its stdin and
 //! stderr not a terminal, so it answers as a script sees it: a bare
-//! invocation prints the help, a command finding no configuration fails
-//! naming the path it looked at and the documented sample, the welcome
-//! left to a person at a terminal, and nothing offers to write one.
+//! invocation prints the help over a configuration, and like any command
+//! finding none fails naming the path it looked at and the documented
+//! sample, the welcome left to a person at a terminal, and nothing offers
+//! to write one.
 
 use std::{
     fs,
@@ -77,14 +78,36 @@ fn a_bare_invocation_prints_the_help_when_a_configuration_exists() {
     assert!(text(&output.stdout).contains("Usage: carillon"));
 }
 
+/// A bare `carillon` finding no configuration fails as any command does,
+/// as himalaya's does, where it printed the help and exited 0.
 #[test]
-fn a_bare_invocation_prints_the_help_without_a_configuration() {
+fn a_bare_invocation_without_a_configuration_names_the_path_and_the_sample() {
     let (home, path) = home(None);
+    let output = run(home.path(), &["-c", path.to_str().unwrap()]);
+
+    assert_missing(&output, &path);
+    assert!(!text(&output.stdout).contains("Usage: carillon"));
+    assert!(!path.exists());
+
+    let output = run(home.path(), &["--json"]);
+    let default = home.path().join("carillon").join("config.toml");
+
+    assert_eq!(output.status.code(), Some(1));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let error = json["error"].as_str().unwrap();
+    assert!(error.contains(&default.display().to_string()), "{error}");
+    assert!(output.stderr.is_empty(), "{}", text(&output.stderr));
+}
+
+/// A configuration that does not parse is still one: the help prints, its
+/// error left to the first command reading it.
+#[test]
+fn a_bare_invocation_prints_the_help_over_a_broken_configuration() {
+    let (home, path) = home(Some("[accounts.a\n"));
     let output = run(home.path(), &["-c", path.to_str().unwrap()]);
 
     assert!(output.status.success(), "{}", text(&output.stdout));
     assert!(text(&output.stdout).contains("Usage: carillon"));
-    assert!(!path.exists());
 }
 
 #[test]

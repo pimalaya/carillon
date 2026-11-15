@@ -130,9 +130,17 @@ pub enum DavHome {
 /// The stream carries a read deadline and hands back the failures that
 /// only mean "not ready yet", so a poll against a server that stopped
 /// answering ends at the next deadline rather than holding the thread.
+///
+/// A pinned home set is what the connection opens on, `server` left
+/// unread.
 pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<WebdavClientStd> {
-    let url = Url::parse(config.server)
-        .with_context(|| format!("Invalid DAV server URL `{}`", config.server))?;
+    let url = match (config.home, config.server) {
+        (Some(home), _) => home.clone(),
+        (None, Some(server)) => {
+            Url::parse(server).with_context(|| format!("Invalid DAV server URL `{server}`"))?
+        }
+        (None, None) => bail!("A DAV backend needs `server`, or `home` to pin its home set"),
+    };
     let host = url
         .host_str()
         .ok_or_else(|| anyhow!("DAV server URL `{url}` has no host"))?
@@ -204,10 +212,9 @@ pub fn watch(
 ) -> Result<()> {
     let mut client = open(config, &mut SecretResolver::new())?;
     let DavTarget { collection, kind } = target;
-    let collection = locate(&mut client, kind.home(), collection, shutdown)?;
+    let collection = locate(&mut client, config.home, kind.home(), collection, shutdown)?;
     let interval = interval.unwrap_or(POLL_INTERVAL);
-    let domains = Domains::resolve(&mut client, &collection, kind, shutdown)?;
-    let mut watched = Watched::arm(&mut client, collection, domains, shutdown)?;
+    let mut watched = Watched::open(&mut client, collection, kind, shutdown)?;
 
     if let Some(alarms) = alarms {
         alarms.replace(read_alarms(&mut client, &watched.collection, shutdown)?);
@@ -416,6 +423,22 @@ struct Watched {
 }
 
 impl Watched {
+    /// Asks the collection what it holds, then arms on it: a server
+    /// answering 404 to either fails coded as the collection missing.
+    fn open(
+        client: &mut WebdavClientStd,
+        collection: String,
+        kind: DavKind,
+        shutdown: &Arc<AtomicBool>,
+    ) -> Result<Self> {
+        let home = kind.home();
+        let path = collection.clone();
+
+        Domains::resolve(client, &collection, kind, shutdown)
+            .and_then(|domains| Self::arm(client, collection, domains, shutdown))
+            .map_err(|err| missing(err, home, &path))
+    }
+
     /// Enumerates the collection, which is the baseline a later change
     /// is a change against, learning on the way whether the server has
     /// `sync-collection` at all.
@@ -1065,36 +1088,60 @@ pub fn probe(
     resolver: &mut SecretResolver,
 ) -> Result<()> {
     let mut client = open(config, resolver)?;
-    let collection = locate(&mut client, home, collection, shutdown)?;
+    let collection = locate(&mut client, config.home, home, collection, shutdown)?;
 
-    match sync(&mut client, &collection, None, shutdown) {
+    let result = match sync(&mut client, &collection, None, shutdown) {
         Err(err) if is_unsupported_report(&err) => {
-            list(&mut client, &collection, shutdown)?;
+            list(&mut client, &collection, shutdown).map(drop)
         }
-        result => {
-            result?;
-        }
+        result => result.map(drop),
+    };
+
+    result.map_err(|err| missing(err, home, &collection))
+}
+
+/// `err` coded as the collection at `collection` missing when the server
+/// answered a request on it 404 (RFC 4918 §9.1), under a message naming
+/// it; any other failure is `err` unchanged.
+fn missing(err: Error, home: DavHome, collection: &str) -> Error {
+    let gone = |cause: &(dyn error::Error + 'static)| matches!(refused(cause), Some((404, _)));
+
+    if !err.chain().any(gone) {
+        return err;
     }
 
-    Ok(())
+    let (domain, noun) = match home {
+        DavHome::Calendars => (WatchDomain::Event, "calendar"),
+        DavHome::Addressbooks => (WatchDomain::Card, "addressbook"),
+    };
+    let err = err.context(format!("Cannot find DAV {noun} `{collection}`"));
+
+    crate::error::not_found_from(domain, err)
 }
 
 /// Resolves the account's collection into the request path.
 ///
 /// An absolute path is taken as it stands. A bare name, one path segment,
-/// is the collection's id under the home set the server's principal
-/// names (RFC 4791 §6.2.1, RFC 6352 §7.1.1), which is the id a listing of
-/// the account gives; a server naming no home set reads it under its own
-/// path instead. Any other relative path is read under the server URL's
-/// own path.
+/// is the collection's id under the home set: the `pinned` one, or else
+/// the one the server's principal names (RFC 4791 §6.2.1, RFC 6352
+/// §7.1.1), which is the id a listing of the account gives; a server
+/// naming no home set reads it under its own path instead. Any other
+/// relative path is read under the path of the URL the connection opened
+/// on, the pinned home set when there is one.
 fn locate(
     client: &mut WebdavClientStd,
+    pinned: Option<&Url>,
     home: DavHome,
     collection: &str,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<String> {
     if collection.starts_with('/') || collection.trim_matches('/').contains('/') {
         return Ok(path(&client.base_url, collection));
+    }
+
+    if let Some(pinned) = pinned {
+        debug!("dav home set pinned: {pinned}");
+        return Ok(under(pinned, collection));
     }
 
     match home_set(client, home, shutdown) {
@@ -1566,7 +1613,7 @@ mod tests {
         let shutdown = Arc::new(AtomicBool::new(false));
         let mut client = client(&addr);
 
-        let collection = locate(&mut client, DavHome::Calendars, "work", &shutdown).unwrap();
+        let collection = locate(&mut client, None, DavHome::Calendars, "work", &shutdown).unwrap();
         assert_eq!("/cal/alice/work", collection);
 
         let kind = DavKind::Calendar(vec![WatchDomain::Event]);
@@ -1626,9 +1673,8 @@ mod tests {
         let shutdown = Arc::new(AtomicBool::new(false));
         let mut client = client(&addr);
 
-        let collection = locate(&mut client, kind.home(), "work", &shutdown).unwrap();
-        Domains::resolve(&mut client, &collection, kind, &shutdown)
-            .and_then(|domains| Watched::arm(&mut client, collection, domains, &shutdown))
+        let collection = locate(&mut client, None, kind.home(), "work", &shutdown).unwrap();
+        Watched::open(&mut client, collection, kind, &shutdown)
             .err()
             .unwrap()
     }
@@ -1688,6 +1734,62 @@ mod tests {
             Some(ErrorCode::QuotaExceeded),
             crate::error::code(&err),
             "{err:#}"
+        );
+    }
+
+    #[test]
+    fn a_404_on_the_collection_is_its_domain_not_found() {
+        let calendar = refused(
+            DavKind::Calendar(vec![WatchDomain::Event]),
+            "404 Not Found",
+            "",
+        );
+        let addressbook = refused(DavKind::Addressbook, "404 Not Found", "");
+
+        assert_eq!(
+            Some(ErrorCode::CalendarNotFound),
+            crate::error::code(&calendar),
+            "{calendar:#}"
+        );
+        assert!(
+            format!("{calendar:#}").contains("Cannot find DAV calendar `/work`"),
+            "{calendar:#}"
+        );
+        assert_eq!(
+            Some(ErrorCode::AddressbookNotFound),
+            crate::error::code(&addressbook),
+            "{addressbook:#}"
+        );
+    }
+
+    /// A pinned home set is where a collection id is read, with no
+    /// discovery request, the connection opening on it.
+    #[test]
+    fn a_pinned_home_skips_discovery() {
+        let seen: fake::Seen = Default::default();
+        let addr = fake::start(Default::default(), seen.clone());
+        let home = Url::parse(&format!("http://{addr}/cal/alice/")).unwrap();
+        let tls = crate::config::TlsConfig::default();
+        let auth = DavAuthConfig::None;
+        let config = DavServer {
+            server: None,
+            home: Some(&home),
+            tls: &tls,
+            alpn: None,
+            proxy: None,
+            auth: &auth,
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut resolver = SecretResolver::new();
+
+        probe(config, DavHome::Calendars, "work", &shutdown, &mut resolver).unwrap();
+
+        let seen = seen.lock().unwrap();
+        assert!(!seen.is_empty(), "{seen:?}");
+        assert!(
+            seen.iter()
+                .all(|request| request.contains("/cal/alice/work")),
+            "{seen:?}"
         );
     }
 }

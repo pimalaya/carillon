@@ -36,7 +36,7 @@ use secrecy::ExposeSecret;
 
 use crate::{
     config::{GpeopleConfig, ProxyConfig},
-    error::{ErrorCode, GoogleAnswer, google_code},
+    error::{self, ErrorCode, GoogleAnswer, google_code},
     event::{ItemSummary, WatchDomain, WatchEvent},
     picture::{self, Item, Known},
     poll,
@@ -343,7 +343,10 @@ fn resolve_group(client: &mut GpeopleClientStd, name: &str) -> Result<Option<Str
 
         match page.next_page_token {
             Some(next) => page_token = Some(next),
-            None => return Err(anyhow!("Contact group `{name}` not found on Google People")),
+            None => {
+                let message = format!("Contact group `{name}` not found on Google People");
+                return Err(error::not_found(WatchDomain::Card, message));
+            }
         }
     }
 }
@@ -509,5 +512,19 @@ mod tests {
                 .all(|event| matches!(event, WatchEvent::ItemRemoved { .. }))
         );
         assert!(watched.known.is_empty());
+    }
+
+    /// A contact group the account lists under no name nor resource name
+    /// is the addressbook not found.
+    #[test]
+    fn a_group_the_account_lacks_is_addressbook_not_found() {
+        let listing =
+            r#"{"contactGroups":[{"resourceName":"contactGroups/friends","name":"Friends"}]}"#;
+        let stream = Scripted::answering(&[("200 OK", listing)]);
+        let mut client = GpeopleClientStd::new(stream, "token");
+        let err = resolve_group(&mut client, "work").unwrap_err();
+
+        let code = crate::error::code(&err);
+        assert_eq!(Some(ErrorCode::AddressbookNotFound), code, "{err:#}");
     }
 }

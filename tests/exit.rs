@@ -104,7 +104,7 @@ fn a_failed_check_in_text_prints_its_report_alone_and_exits_3() {
 
     assert_eq!(output.status.code(), Some(3), "{stdout}");
     assert!(
-        stdout.starts_with("Account: a\n  maildir: FAIL ("),
+        stdout.starts_with("Account:  a\nmaildir:  FAIL ("),
         "{stdout}"
     );
     assert!(!stdout.contains("Error:"), "{stdout}");
@@ -146,4 +146,30 @@ fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
     assert_eq!(row["backend"], "pimdir", "{json}");
     assert_eq!(row["ok"], false, "{json}");
     assert_eq!(row["code"], "store-version", "{json}");
+}
+
+/// `manual`, `completion` and `json-schema` given no argument fail as
+/// himalaya's do, exit 1 and the failure on stdout asking for `--dir`,
+/// where clap printed the help of the first two on stderr and exited 2.
+#[test]
+fn a_standard_command_with_no_argument_asks_for_a_directory() {
+    let home = TempDir::new().unwrap();
+
+    for command in ["manual", "completion", "json-schema"] {
+        let output = run(home.path(), &[command]);
+        let stdout = text(&output.stdout);
+
+        assert_eq!(output.status.code(), Some(1), "{command}: {stdout}");
+        assert!(stdout.contains("use --dir"), "{command}: {stdout}");
+        assert!(output.stderr.is_empty(), "{}", text(&output.stderr));
+
+        let output = run(home.path(), &["--json", command]);
+        let stdout = text(&output.stdout);
+
+        assert_eq!(output.status.code(), Some(1), "{command}: {stdout}");
+        let json: Value = serde_json::from_str(&stdout).unwrap();
+        let error = json["error"].as_str().unwrap();
+        assert!(error.contains("use --dir"), "{command}: {error}");
+        assert_eq!(json["code"], Value::Null, "{json}");
+    }
 }

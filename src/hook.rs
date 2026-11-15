@@ -503,7 +503,6 @@ mod tests {
         let hook = ItemHook {
             notify: None,
             command: Some(CommandConfig::Shell(String::from("exit 3"))),
-            ..Default::default()
         };
         let event = WatchEvent::ItemAdded {
             domain: crate::event::WatchDomain::Message,
@@ -697,7 +696,6 @@ mod tests {
         let hook = ItemHook {
             notify: None,
             command: Some(CommandConfig::Shell(line)),
-            ..Default::default()
         };
 
         let trigger = "2026-11-05T07:45:00Z"

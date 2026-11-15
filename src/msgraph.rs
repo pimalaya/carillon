@@ -500,7 +500,7 @@ fn resolve_mail_folder(client: &mut MsgraphClientStd, name: &str) -> Result<Stri
     // top-level, so both are asked for directly.
     let folder = client
         .mail_folder_get(name)
-        .with_context(|| format!("Mail folder `{name}` not found on Microsoft Graph"))?
+        .map_err(|err| not_found(WatchDomain::Message, "mail folder", name, err))?
         .response;
 
     Ok(folder.id)
@@ -542,7 +542,7 @@ fn resolve_contact_folder(client: &mut MsgraphClientStd, name: &str) -> Result<O
 
     let folder = client
         .contact_folder_get(name)
-        .with_context(|| format!("Contact folder `{name}` not found on Microsoft Graph"))?
+        .map_err(|err| not_found(WatchDomain::Card, "contact folder", name, err))?
         .response;
 
     Ok(Some(folder.id))
@@ -574,10 +574,29 @@ fn resolve_calendar(client: &mut MsgraphClientStd, name: &str) -> Result<String>
 
     let calendar = client
         .calendar_get(name)
-        .with_context(|| format!("Calendar `{name}` not found on Microsoft Graph"))?
+        .map_err(|err| not_found(WatchDomain::Event, "calendar", name, err))?
         .response;
 
     Ok(calendar.id)
+}
+
+/// The failure of asking Graph for the collection `name` of `domain`
+/// directly, `what` naming it: a 404, or an id Graph reads as none of its
+/// own (400 `ErrorInvalidIdMalformed`), is that collection not found.
+fn not_found(domain: WatchDomain, what: &str, name: &str, err: MsgraphClientStdError) -> Error {
+    let missing = match &err {
+        MsgraphClientStdError::Send(send) => send.api().is_some_and(|api| {
+            api.status == 404 || (api.status == 400 && api.code == "ErrorInvalidIdMalformed")
+        }),
+        _ => false,
+    };
+
+    if !missing {
+        return Error::new(err).context(format!("Cannot read {what} `{name}` on Microsoft Graph"));
+    }
+
+    let err = Error::new(err).context(format!("Cannot find {what} `{name}` on Microsoft Graph"));
+    crate::error::not_found_from(domain, err)
 }
 
 /// Whether a failure is Graph refusing an expired delta link (HTTP 410).
@@ -673,6 +692,46 @@ mod tests {
         );
 
         assert_eq!(None, code);
+    }
+
+    /// The failure of a watch arming on a mailbox Graph does not list,
+    /// whose direct read is answered `status` and `body`.
+    fn unlisted(status: &'static str, body: &'static str) -> Error {
+        let listing = ("200 OK", r#"{"value":[]}"#);
+        let stream = Scripted::answering(&[listing, (status, body)]);
+        let mut client = MsgraphClientStd::new(stream, "token", Default::default());
+
+        Watched::arm(&mut client, WatchDomain::Message, "Archive", false)
+            .err()
+            .unwrap()
+    }
+
+    /// A folder Graph knows by no id, a 404 or a 400 reading the name as
+    /// no id of its own, is the mailbox not found; another refusal keeps
+    /// its own code.
+    #[test]
+    fn a_folder_graph_does_not_know_is_mailbox_not_found() {
+        let missing = unlisted(
+            "404 Not Found",
+            r#"{"error":{"code":"ErrorItemNotFound","message":"The specified object was not found in the store."}}"#,
+        );
+        let malformed = unlisted(
+            "400 Bad Request",
+            r#"{"error":{"code":"ErrorInvalidIdMalformed","message":"Id is malformed."}}"#,
+        );
+        let denied = unlisted(
+            "403 Forbidden",
+            r#"{"error":{"code":"ErrorAccessDenied","message":"Access is denied. Check credentials and try again."}}"#,
+        );
+
+        for err in [&missing, &malformed] {
+            let code = crate::error::code(err);
+            assert_eq!(Some(ErrorCode::MailboxNotFound), code, "{err:#}");
+            assert!(format!("{err:#}").contains("`Archive`"), "{err:#}");
+        }
+
+        let code = crate::error::code(&denied);
+        assert_eq!(Some(ErrorCode::PermissionDenied), code, "{denied:#}");
     }
 
     fn message(id: &str) -> MsgraphMessage {

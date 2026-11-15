@@ -6,10 +6,11 @@
 //!
 //! ## Layout
 //!
-//! The frontend: main dispatches and meets a bare invocation with the
-//! help, cli declares the parser, config parses the TOML accounts and
-//! fails naming the file and the documented sample when there is none,
-//! watch and check are the two commands, hook fires the notification and
+//! The frontend: main dispatches, cli declares the parser and meets a bare
+//! invocation with the help, or with the missing configuration as any
+//! command does, config parses the TOML accounts and fails naming the file
+//! and the documented sample when there is none, watch and check are the
+//! two commands, hook fires the notification and
 //! the command, json_schema names the schema of what each command prints,
 //! error the stable codes a failure carries, each backend reading its own
 //! protocol's refusals into them.
@@ -109,7 +110,6 @@ mod watch;
 use std::{path::PathBuf, process};
 
 use anyhow::Result;
-use clap::CommandFactory;
 use pimalaya_cli::{
     clap::{args::LogFlags, parse},
     error::{EXIT_FAILURE, ErrorReport, with_code},
@@ -164,8 +164,7 @@ fn main() {
     );
 }
 
-/// Runs the parsed command, or meets a bare `carillon` with the help,
-/// with a configuration or without one.
+/// Runs the parsed command, or meets a bare `carillon`.
 fn execute(
     printer: &mut StdoutPrinter,
     command: Option<Command>,
@@ -177,8 +176,7 @@ fn execute(
     Logger::try_init(log)?;
 
     let Some(command) = command else {
-        Cli::command().print_help()?;
-        return Ok(());
+        return cli::meet_bare_invocation(config_paths);
     };
 
     command.execute(printer, config_paths, account_name, backend)

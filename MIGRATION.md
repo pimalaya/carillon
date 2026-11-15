@@ -9,7 +9,7 @@ One section per major version, the newest first: what to change in a configurati
 ### Hooks
 
 - **The hook table is `hooks`**, under each backend, where 0.2 read `hook` (and `hooks` as an alias): `imap.hooks`, `caldav.hooks`, `msgraph.hooks` and so on. `<backend>.hook` is refused, naming `hooks` and this page.
-- **A hook's command is `command`**, where 0.2 read `cmd`. A string still goes through the platform shell and a list is still spawned directly; `cmd` is refused naming `command`. A secret's `cmd` (`password.cmd`) is not a hook key and still reads.
+- **A hook's command is `command`**, where 0.2 read `cmd`. A string still goes through the platform shell and a list is still spawned directly. `cmd` still reads, as the alias of `command` wherever the family configures a command (a secret's `password.cmd` included), so a 0.2 hook needs no change there; write `command` in a new one.
 - **Every event name ends in a bare verb**: `-add`, `-remove` and `-change` where 0.2 read `-added`, `-removed` and `-changed`. The former names are refused, each naming its successor. `on-alarm-trigger` keeps its name.
 
   | 0.2 | 1.0 |
@@ -52,7 +52,7 @@ perl -pi -e 's/\.hook\./.hooks./; s/\b(on-[a-z]+-(?:add|remov|chang))ed\b/$1 =~ 
 
 ### Configuration and first run
 
-- **The wizard is gone**: `carillon configure` (alias `wizard`) and its `carillon-configure` schema no longer exist, and no command offers to write a configuration. An existing configuration keeps working once migrated; a new one is written by hand from [config.sample.toml](./config.sample.toml): copy it to $XDG_CONFIG_HOME/carillon/config.toml, keep one backend and the hooks you want, delete the rest, then run `carillon check`. Run at a terminal with no configuration, any command prints the commands doing the copy. A bare `carillon` prints the help.
+- **The wizard is gone**: `carillon configure` (alias `wizard`) and its `carillon-configure` schema no longer exist, and no command offers to write a configuration. An existing configuration keeps working once migrated; a new one is written by hand from [config.sample.toml](./config.sample.toml): copy it to $XDG_CONFIG_HOME/carillon/config.toml, keep one backend and the hooks you want, delete the rest, then run `carillon check`. Run at a terminal with no configuration, any command prints the commands doing the copy, a bare `carillon` included. A bare `carillon` prints the help once a configuration exists.
 - **An unknown key is refused at every level**, the root and the account included, naming the key and its line, where 0.2 ignored it there: fix a misspelt key, and delete a key another tool reads (an account shared with himalaya goes in its own file). A backend the build leaves out is no unknown key: its block loads, and `watch` or `check` reaching it fails coded `backend-not-built`, naming the cargo feature to build with, where 0.2 skipped it silently. `watch` stops that account for the run and watches the others, and fails, exit 1, when no account is left. A key carillon moved under each backend before 0.1 is refused naming where it went, and was silently ignored until now:
   - `folder`, `mailbox` and `collection` on the account: name the collection under its backend, `imap.mailbox`, `maildir.mailbox`, `caldav.calendar`, `carddav.addressbook` and so on.
   - `watch` on the account: move it under its backend, `imap.watch.poll.interval` for instance.
@@ -102,6 +102,18 @@ carillon -c ~/.config/carillon/base.toml -c ~/.config/carillon/secrets.toml watc
 carillon -c base.toml -c secrets.toml watch
 ```
 
+- **A bare `carillon` with no configuration fails** as any command does, exit 1 naming the path it looked at and the sample, where it printed the help and exited 0 (0.2 offered the wizard there). A script running `carillon` to test the installation reads 1 until a configuration exists: run `carillon --help` or `carillon --version` instead.
+- **`manual` and `completion` given no argument fail**, exit 1 with an error saying to use `--dir` on stdout (under `--json`, the failure object), where they printed their help on stderr and exited 2. Both still print one page or one script to stdout when given its name, and `--dir` writes them all.
+
+```sh
+# 0.2
+carillon manual      # the help of `manual` on stderr, exit 2
+# 1.0
+carillon manual      # Error: Writing several manual pages to the standard output is ambiguous, use --dir to generate them as files (exit 1)
+carillon manual --dir ~/.local/share/man/man1
+carillon completion bash > ~/.local/share/bash-completion/completions/carillon
+```
+
 - **Exit codes**: 0 is a success, 1 a failure of the command itself (no configuration, an unknown account, a configuration refused), 2 a command line carillon refused (an unknown flag or command, a missing argument), and 3 a `check` that printed its report with a failed backend, where 0.2 exited 0 there. A script reading the exit status of `carillon check` now sees the failure.
 
 ```sh
@@ -130,7 +142,7 @@ carillon watch
 
 ### JSON consumers
 
-- **Failures carry a stable code**: under `--json`, the failure object gains `code` beside `error`, `sources` and `backtrace`, `code` being `null` for a failure carrying none, and each `check` row reads `{backend, ok, code, error}`. Match on `code` (`permission-denied`, `quota-exceeded`, `rate-limited`, `store-version` and the other pimdir store codes, `account-missing`, `account-default-missing`, `account-default-several`, `backend-not-built`, `usage-invalid`) rather than on the wording of `error`, which may change. `carillon json-schema carillon-error` describes the failure object.
+- **Failures carry a stable code**: under `--json`, the failure object gains `code` beside `error`, `sources` and `backtrace`, `code` being `null` for a failure carrying none, and each `check` row reads `{backend, ok, code, error}`. Match on `code` (`permission-denied`, `quota-exceeded`, `rate-limited`, `mailbox-not-found`, `calendar-not-found`, `addressbook-not-found`, `store-version` and the other pimdir store codes, `account-missing`, `account-default-missing`, `account-default-several`, `backend-not-built`, `usage-invalid`) rather than on the wording of `error`, which may change. `carillon json-schema carillon-error` describes the failure object.
 - **A command line refused under `--json`** prints its failure object, coded `usage-invalid`, on stdout and nothing on stderr, still exiting 2, where 0.2 printed clap's message on stderr.
 - **`watch --json` prints events, then one result**: each event is an object carrying `event` (`session-opened`, `session-lost`, `changed`, `hook-failed`, `alarm-fired`) and `account`, the result `{"stoppedBy":"signal"}` carries none. `carillon json-schema carillon-watch.events` describes the events, `carillon-watch` the result.
 - **Piped `--json` output prints one value per line**, and each schema of `carillon json-schema` carries an `$id` naming the contract version, `https://pimalaya.org/schemas/carillon/v1/<name>.json` from 1.0 on.

@@ -35,7 +35,7 @@ use url::Url;
 
 use crate::{
     config::{GcalConfig, ProxyConfig},
-    error::{ErrorCode, GoogleAnswer, google_code},
+    error::{self, ErrorCode, GoogleAnswer, google_code},
     event::{ItemSummary, WatchDomain, WatchEvent},
     picture::{self, Item, Known},
     poll,
@@ -286,7 +286,10 @@ fn resolve_calendar(client: &mut GcalClientStd, name: &str) -> Result<String> {
         .into_iter()
         .find(|(id, summary)| id == name || summary.eq_ignore_ascii_case(name))
         .map(|(id, _)| id)
-        .ok_or_else(|| anyhow!("Calendar `{name}` not found on Google Calendar"))
+        .ok_or_else(|| {
+            let message = format!("Calendar `{name}` not found on Google Calendar");
+            error::not_found(WatchDomain::Event, message)
+        })
 }
 
 /// Lists the account's calendars, each by id and by the summary it shows
@@ -440,5 +443,18 @@ mod tests {
             ],
             events
         );
+    }
+
+    /// A calendar the account lists under no summary nor id is the
+    /// calendar not found.
+    #[test]
+    fn a_calendar_the_account_lacks_is_calendar_not_found() {
+        let listing = r#"{"items":[{"id":"primary@example.org","summary":"Alice"}]}"#;
+        let stream = Scripted::answering(&[("200 OK", listing)]);
+        let mut client = GcalClientStd::new(stream, "token");
+        let err = resolve_calendar(&mut client, "work").unwrap_err();
+
+        let code = crate::error::code(&err);
+        assert_eq!(Some(ErrorCode::CalendarNotFound), code, "{err:#}");
     }
 }

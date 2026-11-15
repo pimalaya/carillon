@@ -41,7 +41,7 @@ use secrecy::ExposeSecret;
 
 use crate::{
     config::{GmailConfig, ProxyConfig},
-    error::{ErrorCode, GoogleAnswer, google_code},
+    error::{self, ErrorCode, GoogleAnswer, google_code},
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,
 };
@@ -364,7 +364,10 @@ fn resolve_label(client: &mut GmailClientStd, name: &str) -> Result<String> {
         .into_iter()
         .find(|label| label.id == name || label.name.eq_ignore_ascii_case(name))
         .map(|label| label.id)
-        .ok_or_else(|| anyhow!("Label `{name}` not found on Gmail"))
+        .ok_or_else(|| {
+            let message = format!("Label `{name}` not found on Gmail");
+            error::not_found(WatchDomain::Message, message)
+        })
 }
 
 /// The history cursor as it stands now.
@@ -596,5 +599,16 @@ mod tests {
             crate::error::code(&limited),
             "{limited:#}"
         );
+    }
+
+    /// A label the account lists under no name nor id is the mailbox
+    /// not found.
+    #[test]
+    fn a_label_the_account_lacks_is_mailbox_not_found() {
+        let mut client = client(&[r#"{"labels":[{"id":"Label_7","name":"Work"}]}"#]);
+        let err = resolve_label(&mut client, "Archive").unwrap_err();
+
+        let code = crate::error::code(&err);
+        assert_eq!(Some(ErrorCode::MailboxNotFound), code, "{err:#}");
     }
 }

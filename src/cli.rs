@@ -1,7 +1,8 @@
 //! # Parser
 //!
-//! The top-level CLI parser and subcommand dispatcher, and the welcome a
-//! person missing a configuration meets. A bare `carillon` is met in main.
+//! The top-level CLI parser and subcommand dispatcher, what a bare
+//! `carillon` meets, and the welcome a person missing a configuration
+//! meets.
 
 use std::path::{Path, PathBuf};
 
@@ -18,8 +19,11 @@ use pimalaya_cli::{
     printer::Printer,
     welcome::Welcome,
 };
+use pimalaya_config::toml::ConfigMissingError;
 
-use crate::{backend::Backend, check::CheckCommand, json_schema, watch::WatchCommand};
+use crate::{
+    backend::Backend, check::CheckCommand, config::Config, json_schema, watch::WatchCommand,
+};
 
 /// The sample configuration as a raw file, for `curl` to fetch.
 const SAMPLE_RAW_URL: &str =
@@ -33,9 +37,7 @@ const SAMPLE_RAW_URL: &str =
 #[command(after_help = footer!())]
 #[command(propagate_version = true, infer_subcommands = true)]
 pub struct Cli {
-    /// The command to run.
-    ///
-    /// Omitted, a bare `carillon` shows this help.
+    /// The command to run, a bare `carillon` showing this help.
     #[command(subcommand)]
     pub command: Option<Command>,
     #[command(flatten)]
@@ -64,15 +66,10 @@ pub enum Command {
     Watch(WatchCommand),
     /// Validate the account configuration against each allowed backend.
     Check(CheckCommand),
-    /// Generate man pages into the given directory.
-    #[command(arg_required_else_help = true)]
-    #[command(alias = "manuals")]
-    Manual(ManualCommand),
-    /// Generate shell completion scripts into the given directory.
-    #[command(arg_required_else_help = true)]
     #[command(alias = "completions")]
     Completion(CompletionCommand),
-    /// Generate the JSON Schema of a command's `--json` output.
+    #[command(alias = "manuals")]
+    Manual(ManualCommand),
     #[command(alias = "json-schemas")]
     JsonSchema(JsonSchemaCommand),
 }
@@ -90,11 +87,26 @@ impl Command {
         match self {
             Self::Watch(cmd) => cmd.execute(printer, config_paths, account_name, backend),
             Self::Check(cmd) => cmd.execute(printer, config_paths, account_name, backend),
-            Self::Manual(cmd) => cmd.execute(printer, Cli::command()),
             Self::Completion(cmd) => cmd.execute(printer, Cli::command()),
+            Self::Manual(cmd) => cmd.execute(printer, Cli::command()),
             Self::JsonSchema(cmd) => cmd.execute(printer, json_schema::registry()),
         }
     }
+}
+
+/// Meets a bare `carillon`: the help when a configuration exists, the
+/// missing configuration otherwise, which a person meets as the welcome.
+pub fn meet_bare_invocation(config_paths: &[PathBuf]) -> Result<()> {
+    // NOTE: a broken file counts as a configuration, its error left to
+    // the first command reading it.
+    if let Err(err) = Config::load(config_paths)
+        && err.is::<ConfigMissingError>()
+    {
+        return Err(err);
+    }
+
+    Cli::command().print_help()?;
+    Ok(())
 }
 
 /// The welcome a person meets when no configuration exists at `path`:
@@ -121,7 +133,36 @@ pub fn welcome<'a>(
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use crate::cli::welcome;
+    use clap::CommandFactory;
+
+    use crate::cli::{Cli, welcome};
+
+    /// The standard commands come in himalaya's order, with the abouts
+    /// pimalaya-cli gives them in every binary of the family.
+    #[test]
+    fn the_standard_commands_are_the_familys() {
+        let command = Cli::command();
+        let names: Vec<_> = command.get_subcommands().map(|c| c.get_name()).collect();
+        let about = |name: &str| {
+            let subcommand = command.find_subcommand(name).unwrap();
+            subcommand.get_about().unwrap().to_string()
+        };
+
+        let standard = ["completion", "manual", "json-schema"];
+        assert_eq!(standard, names[2..]);
+        assert_eq!(
+            "Generate completion script for the given shell(s)",
+            about("completion")
+        );
+        assert_eq!(
+            "Generate manual page for the given command(s)",
+            about("manual")
+        );
+        assert_eq!(
+            "Generate JSON Schema of the given command(s) JSON output",
+            about("json-schema")
+        );
+    }
 
     #[test]
     #[cfg(not(windows))]

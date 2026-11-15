@@ -25,7 +25,8 @@ use log::{debug, trace, warn};
 use crate::{
     alarm::{AlarmBook, AlarmShared},
     config::PimdirConfig,
-    error::ErrorCode,
+    error::{self, ErrorCode},
+    event::WatchDomain,
     poll,
 };
 
@@ -63,7 +64,8 @@ pub fn watch(
 ) -> Result<()> {
     let reader = open(config)?;
     let interval = config.interval().unwrap_or(POLL_INTERVAL);
-    let mut cursor = load(&reader, &config.calendar, alarms)?;
+    let account = config.account.as_deref();
+    let mut cursor = load(&reader, &config.calendar, account, alarms)?;
     on_open();
 
     while !shutdown.load(Ordering::SeqCst) {
@@ -71,7 +73,7 @@ pub fn watch(
             break;
         }
 
-        cursor = follow(&reader, &config.calendar, cursor, alarms)?;
+        cursor = follow(&reader, &config.calendar, account, cursor, alarms)?;
     }
 
     Ok(())
@@ -81,7 +83,7 @@ pub fn watch(
 /// any item.
 pub fn probe(config: &PimdirConfig) -> Result<()> {
     let reader = open(config)?;
-    check_calendar(&reader, &config.calendar)
+    check_calendar(&reader, &config.calendar, config.account.as_deref())
 }
 
 /// Opens the store as a reader, which creates nothing: a store its owner
@@ -99,11 +101,20 @@ pub(crate) fn store_code(cause: &(dyn std::error::Error + 'static)) -> Option<Er
     ErrorCode::of_pimdir(cause.downcast_ref::<PimdirError>()?)
 }
 
-/// Refuses a calendar the store does not hold, or holding no calendars.
-fn check_calendar(reader: &PimdirReader, calendar: &str) -> Result<()> {
+/// Refuses a calendar the store does not hold, one grouped under another
+/// account than `account` when given, and one holding no calendars.
+fn check_calendar(reader: &PimdirReader, calendar: &str, account: Option<&str>) -> Result<()> {
     let Some(kind) = reader.collection_kind(calendar)? else {
-        bail!("Cannot find pimdir collection `{calendar}`");
+        let message = format!("Cannot find pimdir calendar `{calendar}`");
+        return Err(error::not_found(WatchDomain::Event, message));
     };
+
+    if let Some(account) = account
+        && reader.collection_account(calendar)?.flatten().as_deref() != Some(account)
+    {
+        let message = format!("Cannot find pimdir calendar `{calendar}` under account `{account}`");
+        return Err(error::not_found(WatchDomain::Event, message));
+    }
 
     if !is_calendar(&kind) {
         bail!("Pimdir collection `{calendar}` holds {kind}, not calendars");
@@ -115,9 +126,14 @@ fn check_calendar(reader: &PimdirReader, calendar: &str) -> Result<()> {
 /// Reads every item of the calendar, and answers the cursor it was read
 /// at: read before the items, so a change landing meanwhile is folded
 /// again rather than skipped.
-fn load(reader: &PimdirReader, calendar: &str, alarms: &AlarmShared) -> Result<PimdirChangeCursor> {
+fn load(
+    reader: &PimdirReader,
+    calendar: &str,
+    account: Option<&str>,
+    alarms: &AlarmShared,
+) -> Result<PimdirChangeCursor> {
     let cursor = reader.change_cursor()?;
-    check_calendar(reader, calendar)?;
+    check_calendar(reader, calendar, account)?;
 
     let blobs = reader.blobs();
     let mut book = AlarmBook::new();
@@ -162,6 +178,7 @@ fn load(reader: &PimdirReader, calendar: &str, alarms: &AlarmShared) -> Result<P
 fn follow(
     reader: &PimdirReader,
     calendar: &str,
+    account: Option<&str>,
     cursor: PimdirChangeCursor,
     alarms: &AlarmShared,
 ) -> Result<PimdirChangeCursor> {
@@ -183,7 +200,7 @@ fn follow(
 
     if reset || renamed()? {
         debug!("pimdir store reset or calendar moved, reading it again");
-        return load(reader, calendar, alarms);
+        return load(reader, calendar, account, alarms);
     }
 
     let blobs = reader.blobs();
@@ -331,6 +348,7 @@ mod tests {
         PimdirConfig {
             calendar: calendar.to_owned(),
             root: dir.to_path_buf(),
+            account: None,
             watch: None,
             hooks: Default::default(),
             hook: None,
@@ -412,6 +430,32 @@ mod tests {
         probe(&config(dir.path(), "nowhere")).expect_err("no such collection");
     }
 
+    /// A calendar the store does not hold, or holds under another account
+    /// than `pimdir.account` names, is `calendar-not-found`.
+    #[test]
+    fn a_calendar_not_found_is_coded_so() {
+        use crate::error::{ErrorCode, code};
+
+        let dir = scratch();
+        let store = PimdirStore::open(dir.path()).unwrap();
+        store.set_collection_account(CAL, Some("work")).unwrap();
+        drop(store);
+
+        let err = probe(&config(dir.path(), "nowhere")).expect_err("no such calendar");
+        assert_eq!(Some(ErrorCode::CalendarNotFound), code(&err), "{err:#}");
+
+        let mut work = config(dir.path(), CAL);
+        work.account = Some(String::from("work"));
+        probe(&work).expect("the calendar of work");
+        probe(&config(dir.path(), CAL)).expect("the calendar, whichever account");
+
+        let mut perso = config(dir.path(), CAL);
+        perso.account = Some(String::from("perso"));
+        let err = probe(&perso).expect_err("a calendar of work");
+        assert_eq!(Some(ErrorCode::CalendarNotFound), code(&err), "{err:#}");
+        assert!(format!("{err:#}").contains("`perso`"), "{err:#}");
+    }
+
     #[test]
     fn a_calendar_is_read_then_followed() {
         let dir = scratch();
@@ -421,7 +465,7 @@ mod tests {
         let reader = PimdirReader::open(dir.path()).unwrap();
         let timer = CeichasTimer::new(Default::default()).unwrap();
         let alarms = AlarmShared::new(timer.waker());
-        let cursor = load(&reader, CAL, &alarms).unwrap();
+        let cursor = load(&reader, CAL, None, &alarms).unwrap();
         let id = seq(dir.path(), "standup").to_string();
 
         assert_eq!(
@@ -438,7 +482,7 @@ mod tests {
                 resolves: None,
             }
         });
-        let cursor = follow(&reader, CAL, cursor, &alarms).unwrap();
+        let cursor = follow(&reader, CAL, None, cursor, &alarms).unwrap();
 
         assert_eq!(
             vec![(id, at("09:45:00"))],
@@ -459,7 +503,7 @@ mod tests {
             .unwrap();
         drop(producer);
         drain(dir.path());
-        follow(&reader, CAL, cursor, &alarms).unwrap();
+        follow(&reader, CAL, None, cursor, &alarms).unwrap();
 
         assert!(alarms.triggers(at("00:00:00"), at("23:00:00")).is_empty());
     }

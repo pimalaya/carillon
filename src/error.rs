@@ -16,20 +16,27 @@
 //! A server's refusal takes a code of the vocabulary the family shares,
 //! `permission-denied`, `quota-exceeded` and `rate-limited`, read from the
 //! typed error of the protocol that answered it by that backend's reader,
-//! `refusal_code` beside its client. A pimdir store's failure takes the
-//! code io-pimdir gives it (`PimdirError::code`), spelled the same; the
-//! codes of a store's owner (`store-busy`, `store-owned`, `lock-replaced`)
-//! never reach a reader taking no lock.
+//! `refusal_code` beside its client. A watched collection that does not
+//! exist is `mailbox-not-found`, `calendar-not-found` or
+//! `addressbook-not-found`, after the backend's word for it, wherever the
+//! backend can tell a missing collection from another failure.
+//!
+//! A pimdir store's failure takes the code io-pimdir gives it
+//! (`PimdirError::code`), spelled the same: carillon relays the codes
+//! himalaya does, so a caller reading every pimdir app reads one
+//! vocabulary, though a reader taking no lock meets only a few of them.
 
 use std::fmt;
 
 use anyhow::Error;
 #[cfg(feature = "pimdir")]
 use io_pimdir::client::PimdirError;
-use pimalaya_cli::error::code_of;
+use pimalaya_cli::error::{CodedError, code_of, with_code};
 use pimalaya_config::toml::AccountError;
 use schemars::JsonSchema;
 use serde::Serialize;
+
+use crate::event::WatchDomain;
 
 /// The stable codes, each serialised in kebab-case.
 // NOTE: declared in every build, so the schema is one: a build leaving out
@@ -59,6 +66,42 @@ pub enum ErrorCode {
     /// naming a rate limit or a quota. carillon sends no request twice.
     #[cfg_attr(not(any(feature = "dav", feature = "jmap", api)), allow(dead_code))]
     RateLimited,
+    /// The mailbox a backend watches does not exist: nothing was watched.
+    #[cfg_attr(
+        not(any(
+            feature = "imap",
+            feature = "jmap",
+            feature = "maildir",
+            feature = "msgraph",
+            feature = "gmail"
+        )),
+        allow(dead_code)
+    )]
+    MailboxNotFound,
+    /// The calendar a backend watches does not exist: nothing was watched.
+    #[cfg_attr(
+        not(any(
+            feature = "jmap",
+            feature = "dav",
+            feature = "msgraph",
+            feature = "gcal",
+            feature = "pimdir"
+        )),
+        allow(dead_code)
+    )]
+    CalendarNotFound,
+    /// The addressbook a backend watches does not exist: nothing was
+    /// watched.
+    #[cfg_attr(
+        not(any(
+            feature = "jmap",
+            feature = "dav",
+            feature = "msgraph",
+            feature = "gpeople"
+        )),
+        allow(dead_code)
+    )]
+    AddressbookNotFound,
     /// The pimdir store is of another draft than the one carillon reads:
     /// its owner reinstalls it.
     #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
@@ -85,6 +128,78 @@ pub enum ErrorCode {
     /// Another sync engine version wrote the pimdir store's sync state.
     #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
     SyncVersion,
+    /// Another writer holds the pimdir store's write lock. Retry.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    StoreBusy,
+    /// A sync owns the pimdir store: retry once it ends.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    StoreOwned,
+    /// A producer is staging a body in the pimdir store: retry.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    StoreStaging,
+    /// A pimdir store verb is between two of its chunks: retry.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    StoreInFlight,
+    /// The pimdir store is not the one that answered a queue row's
+    /// handle, a copy restored since.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    StoreReset,
+    /// The lock file of the pimdir store was removed or replaced under a
+    /// write. Retry.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    LockReplaced,
+    /// The pimdir collection already holds the item, or has its creation
+    /// queued.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    ItemDuplicate,
+    /// The pimdir store cannot hold the flag.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    FlagInvalid,
+    /// The pimdir action's payload is malformed.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    ActionMalformed,
+    /// The pimdir conflict holds a body nobody has read.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    ConflictUnread,
+    /// A source of the pimdir store does not support the write.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    Unsupported,
+    /// No source of the pimdir store can perform the intent.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    NoPerformer,
+    /// Several sources of the pimdir store can perform the intent and
+    /// none is chosen.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    AmbiguousPerformer,
+    /// The pimdir store has no search index yet: its sync engine builds
+    /// it.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    IndexMissing,
+    /// The pimdir search index was built by another version: its sync
+    /// engine rebuilds it.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    IndexOutdated,
+    /// The pimdir search index is of another draft or shape.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    IndexVersion,
+    /// The zone the pimdir search index reads floating times in is not
+    /// an IANA zone.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    IndexZoneUnknown,
+    /// The SQLite linked lacks what the pimdir search index needs (FTS5,
+    /// 3.43 or later).
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    IndexFts5Missing,
+    /// The pimdir search query is malformed or names an unknown field or
+    /// value.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    QueryRefused,
+    /// The pimdir search index could not answer an accepted query.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    QueryUnanswerable,
+    /// The pimdir tag names no flag, or adds and removes one flag.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    TagRefused,
     /// No account carries the name `-a` gave.
     AccountMissing,
     /// No account is marked default, and `-a` named none.
@@ -111,7 +226,7 @@ pub enum ErrorCode {
 }
 
 /// The store codes carillon relays, by io-pimdir's spelling, which
-/// serialises each.
+/// serialises each: himalaya's table (himalaya/src/error.rs).
 #[cfg(feature = "pimdir")]
 const PIMDIR_CODES: &[(&str, ErrorCode)] = &[
     ("store-version", ErrorCode::StoreVersion),
@@ -120,8 +235,29 @@ const PIMDIR_CODES: &[(&str, ErrorCode)] = &[
     ("store-corrupt", ErrorCode::StoreCorrupt),
     ("store-not-current", ErrorCode::StoreNotCurrent),
     ("store-hash-algo", ErrorCode::StoreHashAlgo),
-    ("store-exposed", ErrorCode::StoreExposed),
     ("sync-version", ErrorCode::SyncVersion),
+    ("store-busy", ErrorCode::StoreBusy),
+    ("store-owned", ErrorCode::StoreOwned),
+    ("store-staging", ErrorCode::StoreStaging),
+    ("store-in-flight", ErrorCode::StoreInFlight),
+    ("store-exposed", ErrorCode::StoreExposed),
+    ("store-reset", ErrorCode::StoreReset),
+    ("lock-replaced", ErrorCode::LockReplaced),
+    ("item-duplicate", ErrorCode::ItemDuplicate),
+    ("flag-invalid", ErrorCode::FlagInvalid),
+    ("action-malformed", ErrorCode::ActionMalformed),
+    ("conflict-unread", ErrorCode::ConflictUnread),
+    ("unsupported", ErrorCode::Unsupported),
+    ("no-performer", ErrorCode::NoPerformer),
+    ("ambiguous-performer", ErrorCode::AmbiguousPerformer),
+    ("index-missing", ErrorCode::IndexMissing),
+    ("index-outdated", ErrorCode::IndexOutdated),
+    ("index-version", ErrorCode::IndexVersion),
+    ("index-zone-unknown", ErrorCode::IndexZoneUnknown),
+    ("index-fts5-missing", ErrorCode::IndexFts5Missing),
+    ("query-refused", ErrorCode::QueryRefused),
+    ("query-unanswerable", ErrorCode::QueryUnanswerable),
+    ("tag-refused", ErrorCode::TagRefused),
 ];
 
 impl ErrorCode {
@@ -166,7 +302,42 @@ pub fn backend_not_built(backend: &str, feature: &str) -> Error {
          `--features {feature}`"
     );
 
-    pimalaya_cli::error::CodedError::new(ErrorCode::BackendNotBuilt, message).into()
+    CodedError::new(ErrorCode::BackendNotBuilt, message).into()
+}
+
+/// The code of a watched collection of `domain` that does not exist, after
+/// the word its backend names it by.
+fn not_found_code(domain: WatchDomain) -> ErrorCode {
+    match domain {
+        WatchDomain::Message => ErrorCode::MailboxNotFound,
+        WatchDomain::Card => ErrorCode::AddressbookNotFound,
+        WatchDomain::Event | WatchDomain::Task => ErrorCode::CalendarNotFound,
+    }
+}
+
+/// The failure of a watched collection of `domain` that does not exist.
+#[cfg_attr(
+    not(any(
+        feature = "jmap",
+        feature = "gmail",
+        feature = "gcal",
+        feature = "gpeople",
+        feature = "pimdir"
+    )),
+    allow(dead_code)
+)]
+pub fn not_found(domain: WatchDomain, message: impl Into<String>) -> Error {
+    CodedError::new(not_found_code(domain), message.into()).into()
+}
+
+/// `err`, a backend's answer that the watched collection of `domain` does
+/// not exist, coded so, its messages kept.
+#[cfg_attr(
+    not(any(feature = "maildir", feature = "dav", feature = "msgraph")),
+    allow(dead_code)
+)]
+pub fn not_found_from(domain: WatchDomain, err: Error) -> Error {
+    with_code(err, |_| Some(not_found_code(domain)))
 }
 
 /// The code of `err`: the one a coded error in its chain carries, else
@@ -328,5 +499,19 @@ mod tests {
             assert_eq!(serde_json::to_value(ours).unwrap(), err.code());
             assert_eq!(Some(ours), ErrorCode::of_pimdir(&err), "{err}");
         }
+    }
+
+    /// Every code of himalaya's relay table is relayed, under io-pimdir's
+    /// spelling, the owner's codes included.
+    #[test]
+    fn the_relayed_pimdir_codes_are_himalayas() {
+        assert_eq!(29, PIMDIR_CODES.len());
+
+        for (pimdir, ours) in PIMDIR_CODES {
+            assert_eq!(serde_json::to_value(ours).unwrap(), *pimdir);
+        }
+
+        let busy = ErrorCode::of_pimdir(&PimdirError::Busy);
+        assert_eq!(Some(ErrorCode::StoreBusy), busy);
     }
 }

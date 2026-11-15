@@ -9,6 +9,7 @@
 use std::{fmt, sync::mpsc::Sender};
 
 use anyhow::Error;
+use pimalaya_cli::sanitize;
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -68,7 +69,7 @@ impl From<HookCollection<'_>> for CollectionOutput {
 
 impl fmt::Display for CollectionOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} `{}`", self.name, self.value)
+        write!(f, "{} `{}`", self.name, sanitize::text(&self.value))
     }
 }
 
@@ -88,6 +89,11 @@ pub enum WatchMethod {
 }
 
 /// One thing a watch observed, tagged by `event`.
+///
+/// Its text is one line whatever its strings hold: what a server or a
+/// store sent (an id, a flag, a summary, an error) and what the
+/// configuration names (an account, a collection) pass through
+/// pimalaya-cli's `sanitize::text`, as the family's text listings do.
 // NOTE: declared in every build, so the schema is one: a build leaving out
 // the calendar backends never fires an alarm.
 #[allow(dead_code)]
@@ -176,6 +182,7 @@ impl fmt::Display for WatchStreamEvent {
                 method,
                 collections,
             } => {
+                let account = sanitize::text(account);
                 let collections: Vec<_> = collections.iter().map(ToString::to_string).collect();
                 let method = match method {
                     WatchMethod::Idle => "idling",
@@ -194,7 +201,7 @@ impl fmt::Display for WatchStreamEvent {
                 error,
                 sources,
             } => {
-                write!(f, "[{account}] session lost")?;
+                write!(f, "[{}] session lost", sanitize::text(account))?;
                 if let Some(code) = code {
                     write!(f, " ({code})")?;
                 }
@@ -204,7 +211,7 @@ impl fmt::Display for WatchStreamEvent {
                 account,
                 collection,
                 change,
-            } => writeln!(f, "[{account}] {collection}: {change}"),
+            } => writeln!(f, "[{}] {collection}: {change}", sanitize::text(account)),
             Self::HookFailed {
                 account,
                 reaction,
@@ -216,6 +223,7 @@ impl fmt::Display for WatchStreamEvent {
                     HookReaction::Notify => "notify",
                     HookReaction::Command => "command",
                 };
+                let account = sanitize::text(account);
                 write!(f, "[{account}] {reaction} hook failed")?;
                 if let Some(code) = code {
                     write!(f, " ({code})")?;
@@ -231,7 +239,8 @@ impl fmt::Display for WatchStreamEvent {
                 trigger,
                 ..
             } => {
-                let what = summary.as_deref().unwrap_or(uid);
+                let account = sanitize::text(account);
+                let what = sanitize::text(summary.as_deref().unwrap_or(uid));
                 writeln!(
                     f,
                     "[{account}] {collection}: alarm of {kind} {what} at {trigger}"
@@ -241,12 +250,13 @@ impl fmt::Display for WatchStreamEvent {
     }
 }
 
-/// An error and its causes on one line, as `{err:#}` renders them.
+/// An error and its causes on one line, as `{err:#}` renders them, a
+/// server's text sanitized.
 fn chain(error: &str, sources: &[String]) -> String {
-    let mut line = error.to_owned();
+    let mut line = sanitize::text(error).into_owned();
     for source in sources {
         line.push_str(": ");
-        line.push_str(source);
+        line.push_str(&sanitize::text(source));
     }
     line
 }
@@ -365,5 +375,65 @@ impl WatchEvents {
                 sources,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        event::{WatchDomain, WatchEvent},
+        stream::*,
+    };
+
+    /// What a server or a store sent cannot drive the terminal nor break
+    /// the line of a text event: its control and bidi characters print as
+    /// U+FFFD, as `sanitize::text` renders them.
+    #[test]
+    fn a_text_event_sanitizes_what_it_was_sent() {
+        let changed = WatchStreamEvent::Changed {
+            account: String::from("per\x1bso"),
+            collection: CollectionOutput {
+                name: "mailbox",
+                value: String::from("IN\x1b[2JBOX"),
+            },
+            change: WatchEvent::FlagAdded {
+                domain: WatchDomain::Message,
+                id: String::from("4\n2"),
+                flag: String::from("Se\u{202e}en"),
+            },
+        };
+        assert_eq!(
+            "[per\u{fffd}so] mailbox `IN\u{fffd}[2JBOX`: flag Se\u{fffd}en added on message 4\u{fffd}2\n",
+            changed.to_string()
+        );
+
+        let fired = WatchStreamEvent::AlarmFired {
+            account: String::from("perso"),
+            collection: CollectionOutput {
+                name: "calendar",
+                value: String::from("work"),
+            },
+            id: String::from("a.ics"),
+            uid: String::from("standup"),
+            kind: "event",
+            summary: Some(String::from("Stand\x07up\nrm -rf ~")),
+            action: "display",
+            trigger: String::from("2026-11-15T08:45:00+01:00"),
+        };
+        assert_eq!(
+            "[perso] calendar `work`: alarm of event Stand\u{fffd}up\u{fffd}rm -rf ~ at 2026-11-15T08:45:00+01:00\n",
+            fired.to_string()
+        );
+
+        let lost = WatchStreamEvent::SessionLost {
+            account: String::from("perso"),
+            code: None,
+            error: String::from("imap watch failed"),
+            sources: vec![String::from("NO \x1b]52;c;cm0=\x07")],
+        };
+        assert_eq!(
+            "[perso] session lost: imap watch failed: NO \u{fffd}]52;c;cm0=\u{fffd}\n",
+            lost.to_string()
+        );
     }
 }

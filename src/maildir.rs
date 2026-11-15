@@ -19,9 +19,9 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Error, Result};
 use io_maildir::{
-    client::MaildirClient,
+    client::{MaildirClient, MaildirClientError},
     flag::{MaildirFlag, MaildirFlags},
     maildir::Maildir,
     path::MaildirPath,
@@ -30,6 +30,7 @@ use log::{debug, trace};
 
 use crate::{
     config::MaildirConfig,
+    error,
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,
 };
@@ -167,9 +168,14 @@ fn resolve(client: &MaildirClient, collection: &str) -> Result<Maildir> {
     // (dot-prefixed flat names under Maildir++, nested directories
     // otherwise) and turns a wrong name into an error rather than a
     // listing that stays empty forever.
-    client
-        .load_maildir(name)
-        .with_context(|| format!("Cannot open maildir `{collection}`"))
+    match client.load_maildir(name) {
+        Ok(maildir) => Ok(maildir),
+        Err(err @ MaildirClientError::NotDir(_)) => {
+            let err = Error::new(err).context(format!("Cannot find maildir `{collection}`"));
+            Err(error::not_found_from(WatchDomain::Message, err))
+        }
+        Err(err) => Err(err).with_context(|| format!("Cannot open maildir `{collection}`")),
+    }
 }
 
 /// Renders Maildir flags under the names a hook filter matches, so a
@@ -195,7 +201,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::maildir::*;
+    use crate::{error::ErrorCode, maildir::*};
 
     /// Builds a Maildir at `path`, with the three subdirectories a
     /// listing needs.
@@ -292,6 +298,8 @@ mod tests {
 
         let err = resolve(&client, "Nope").expect_err("unknown mailbox fails");
         assert!(format!("{err:#}").contains("Nope"), "got {err:#}");
+        let code = crate::error::code(&err);
+        assert_eq!(Some(ErrorCode::MailboxNotFound), code, "got {err:#}");
     }
 
     /// Reading a message moves its file from `new` to `cur` and appends

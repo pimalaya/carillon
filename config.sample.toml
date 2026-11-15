@@ -43,7 +43,7 @@ default = true
 # $mailbox/$calendar/$addressbook, $flag for flag hooks and envelope variables
 # ($subject, $sender…) for message arrivals, camelCase ($senderName);
 # `${name:-default}` covers an empty value. A secret is `raw = "..."` or
-# `command = "..."`.
+# `command = "..."`. A `command`, of a hook or of a secret, may be spelt `cmd`.
 
 # ---- IMAP: an idle connection (RFC 2177) ---------------------------------------
 
@@ -204,11 +204,17 @@ imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
 # The calendar this account watches. A bare id (one path segment) is looked up
 # under the calendar home set the server's principal names, which is the id a
 # listing of the account gives; an absolute path is taken as it stands, and any
-# other path is read under `caldav.server`. Required.
+# other path is read under `caldav.server`, or under `caldav.home` when set.
+# Required.
 #caldav.calendar = "work"
 
-# The DAV server URL, where the principal is discovered from.
+# The DAV server URL, where the principal is discovered from. Required without
+# `caldav.home`.
 #caldav.server = "https://dav.example.org/"
+
+# The calendar home set, pinned: discovery is skipped, the connection opens on
+# it and `caldav.server` is not read.
+#caldav.home = "https://dav.example.org/dav/calendars/alice/"
 
 # Omit for a calendar readable without authentication.
 #caldav.auth.basic.username = "alice"
@@ -258,6 +264,7 @@ imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
 #carddav.addressbook = "default"
 
 #carddav.server = "https://dav.example.org/"
+#carddav.home = "https://dav.example.org/dav/addressbooks/alice/"
 #carddav.alpn = ["http/1.1"]
 #carddav.proxy.url = "http://proxy.example.org:3128"
 #carddav.auth.basic.username = "alice"
@@ -363,6 +370,11 @@ imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
 
 # The calendar this account watches, by its collection id. Required.
 #pimdir.calendar = "personal"
+
+# The account of the store the calendar is grouped under, for a store several
+# accounts share: a calendar grouped under another one is not found. Unset
+# reads the calendar whichever account it is grouped under.
+#pimdir.account = "personal"
 
 #pimdir.watch.poll.interval = 30
 

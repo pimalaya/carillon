@@ -12,7 +12,7 @@ use std::{fmt, path::PathBuf};
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use pimalaya_cli::{error::PartialOutcome, printer::Printer};
+use pimalaya_cli::{error::PartialOutcome, fields::Fields, printer::Printer, sanitize};
 #[cfg(network)]
 use pimalaya_config::secret::SecretResolver;
 use pimalaya_config::toml::TomlConfig;
@@ -341,15 +341,55 @@ impl BackendCheck {
     }
 }
 
+/// The report as himalaya's `account check` prints it: one aligned field
+/// for the account, then one per backend, a failure's text sanitized.
 impl fmt::Display for CheckOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Account: {}", self.account)?;
+        let mut fields = Fields::default();
+        fields.push("Account", sanitize::text(&self.account));
+
         for check in &self.backends {
             match &check.error {
-                None => writeln!(f, "  {}: OK", check.backend)?,
-                Some(err) => writeln!(f, "  {}: FAIL ({err})", check.backend)?,
+                None => fields.push(check.backend, "OK"),
+                Some(err) => fields.push(check.backend, format!("FAIL ({})", sanitize::text(err))),
             }
         }
-        Ok(())
+
+        write!(f, "{fields}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::check::*;
+
+    /// The rows align past the longest label as every family `account
+    /// check` prints them, a server's text unable to break its line.
+    #[test]
+    fn the_report_prints_on_the_family_layout() {
+        let report = CheckOutput {
+            account: String::from("perso"),
+            backends: vec![
+                BackendCheck {
+                    backend: "maildir",
+                    ok: true,
+                    code: None,
+                    error: None,
+                },
+                BackendCheck {
+                    backend: "imap",
+                    ok: false,
+                    code: None,
+                    error: Some(String::from("NO \x1b[2Jrefused\nagain")),
+                },
+            ],
+        };
+
+        let expected = "\
+Account:  perso
+maildir:  OK
+imap:     FAIL (NO \u{fffd}[2Jrefused\u{fffd}again)
+";
+        assert_eq!(expected, report.to_string());
     }
 }

@@ -59,6 +59,8 @@ use serde::{
     Deserialize, Deserializer,
     de::{self, Error as _},
 };
+#[cfg(feature = "dav")]
+use url::Url;
 
 #[cfg(any(feature = "jmap", feature = "dav", api))]
 use crate::event::WatchDomain;
@@ -305,10 +307,6 @@ fn refuse_hook<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfi
     Err(renamed("hook table", "hook", "hooks"))
 }
 
-fn refuse_cmd<'de, D: Deserializer<'de>>(_: D) -> Result<Option<RemovedKeyConfig>, D::Error> {
-    Err(renamed("hook key", "cmd", "command"))
-}
-
 /// Declares one refuser per hook name before 1.0, serde handing the key
 /// it read to no function.
 macro_rules! refuse_renamed_hooks {
@@ -394,11 +392,13 @@ impl AccountConfig {
 
         #[cfg(feature = "dav")]
         if let Some(caldav) = &self.caldav {
+            caldav.server().validate("caldav")?;
             caldav.hooks.validate()?;
         }
 
         #[cfg(feature = "dav")]
         if let Some(carddav) = &self.carddav {
+            carddav.server().validate("carddav")?;
             carddav.hooks.validate()?;
         }
 
@@ -656,6 +656,14 @@ pub struct PimdirConfig {
     /// The directory holding the store, which its owner keeps in sync.
     #[serde(deserialize_with = "pimalaya_config::toml::shell_expanded_path")]
     pub root: PathBuf,
+    /// The account of the store the calendar is grouped under (pimdir
+    /// STORAGE §9.2), for a store several accounts share.
+    ///
+    /// Unset reads the calendar whichever account it is grouped under, its
+    /// id naming one collection of the store; set, a calendar grouped
+    /// under another account is not found.
+    #[serde(default)]
+    pub account: Option<String>,
     /// How this account learns about a change. Unset polls.
     #[serde(default)]
     pub watch: Option<PimdirWatchConfig>,
@@ -1688,11 +1696,10 @@ pub struct ItemHook {
     pub notify: Option<NotificationTemplate>,
     /// A shell line, or a program and its arguments, run with the
     /// variables in its environment.
+    ///
+    /// `cmd` is read as its alias, as everywhere a command is configured.
+    #[serde(alias = "cmd")]
     pub command: Option<CommandConfig>,
-    /// Refused: the key before 1.0, now `command`.
-    #[serde(default, deserialize_with = "refuse_cmd")]
-    #[allow(dead_code)]
-    pub cmd: Option<RemovedKeyConfig>,
 }
 
 /// Hook that fires for flag-level events, once per flag that moved.
@@ -1706,11 +1713,10 @@ pub struct FlagHook {
     pub notify: Option<NotificationTemplate>,
     /// A shell line, or a program and its arguments, run with the
     /// variables in its environment.
+    ///
+    /// `cmd` is read as its alias, as everywhere a command is configured.
+    #[serde(alias = "cmd")]
     pub command: Option<CommandConfig>,
-    /// Refused: the key before 1.0, now `command`.
-    #[serde(default, deserialize_with = "refuse_cmd")]
-    #[allow(dead_code)]
-    pub cmd: Option<RemovedKeyConfig>,
     #[serde(default)]
     pub flags: BTreeSet<String>,
 }
@@ -1728,12 +1734,16 @@ pub struct FlagHook {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CaldavConfig {
-    /// The calendar this account watches, read as a path under `server`,
-    /// or as an absolute path when it starts with a slash.
+    /// The calendar this account watches: an id looked up under the
+    /// calendar home set, an absolute path taken as it stands, or any other
+    /// path read under the URL the connection opens on.
     pub calendar: String,
-    /// The DAV server URL, `http://` or `https://`, naming the root the
-    /// calendar hangs under.
-    pub server: String,
+    /// The DAV server URL, `http://` or `https://`, where the principal and
+    /// its calendar home set are discovered from. Required without `home`.
+    pub server: Option<String>,
+    /// The calendar home set, pinned: discovery is skipped and the
+    /// connection opens on it, `server` left unread.
+    pub home: Option<Url>,
     #[serde(default)]
     pub tls: TlsConfig,
     /// The ALPN identifiers offered during the TLS handshake.
@@ -1768,12 +1778,17 @@ pub struct CaldavConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CarddavConfig {
-    /// The addressbook this account watches, read as a path under
-    /// `server`, or as an absolute path when it starts with a slash.
+    /// The addressbook this account watches: an id looked up under the
+    /// addressbook home set, an absolute path taken as it stands, or any
+    /// other path read under the URL the connection opens on.
     pub addressbook: String,
-    /// The DAV server URL, `http://` or `https://`, naming the root the
-    /// addressbook hangs under.
-    pub server: String,
+    /// The DAV server URL, `http://` or `https://`, where the principal and
+    /// its addressbook home set are discovered from. Required without
+    /// `home`.
+    pub server: Option<String>,
+    /// The addressbook home set, pinned: discovery is skipped and the
+    /// connection opens on it, `server` left unread.
+    pub home: Option<Url>,
     #[serde(default)]
     pub tls: TlsConfig,
     /// The ALPN identifiers offered during the TLS handshake.
@@ -1808,7 +1823,10 @@ pub struct CarddavConfig {
 #[cfg(feature = "dav")]
 #[derive(Clone, Copy)]
 pub struct DavServer<'a> {
-    pub server: &'a str,
+    /// The URL discovery starts from, unread when `home` is pinned.
+    pub server: Option<&'a str>,
+    /// The home set pinned, skipping discovery.
+    pub home: Option<&'a Url>,
     pub tls: &'a TlsConfig,
     pub alpn: Option<&'a [String]>,
     pub proxy: Option<&'a ProxyConfig>,
@@ -1816,11 +1834,25 @@ pub struct DavServer<'a> {
 }
 
 #[cfg(feature = "dav")]
+impl DavServer<'_> {
+    /// Refuses a block naming neither the URL discovery starts from nor
+    /// the home set it would find, `backend` naming the block.
+    pub fn validate(&self, backend: &str) -> Result<()> {
+        if self.server.is_none() && self.home.is_none() {
+            bail!("`{backend}` needs `server`, or `home` to pin its home set");
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "dav")]
 impl CaldavConfig {
     /// What it takes to open a connection to this server.
     pub fn server(&self) -> DavServer<'_> {
         DavServer {
-            server: &self.server,
+            server: self.server.as_deref(),
+            home: self.home.as_ref(),
             tls: &self.tls,
             alpn: self.alpn.as_deref(),
             proxy: self.proxy.as_ref(),
@@ -1834,7 +1866,8 @@ impl CarddavConfig {
     /// What it takes to open a connection to this server.
     pub fn server(&self) -> DavServer<'_> {
         DavServer {
-            server: &self.server,
+            server: self.server.as_deref(),
+            home: self.home.as_ref(),
             tls: &self.tls,
             alpn: self.alpn.as_deref(),
             proxy: self.proxy.as_ref(),
@@ -2799,6 +2832,66 @@ mod tests {
         assert_eq!("alice", plain.authcid);
     }
 
+    /// A hook's `cmd` is read as its `command`, as every command of the
+    /// family is (pimalaya-config's spec), where 1.0 first refused it.
+    #[test]
+    fn a_hook_reads_cmd_as_its_command() {
+        let line = "imap.hooks.on-message-add.cmd = \"true\"\n\
+                    imap.hooks.on-flag-add.cmd = [\"notify-send\", \"$flag\"]\n";
+        let config: Config = toml::from_str(&document(line)).expect("the alias");
+        let hooks = &config.accounts["perso"].imap.as_ref().unwrap().hooks;
+
+        let add = hooks.on_message_add.as_ref().unwrap().command.as_ref();
+        assert_eq!(Some(&CommandConfig::Shell(String::from("true"))), add);
+
+        let flag = hooks.on_flag_add.as_ref().unwrap().command.as_ref();
+        let argv = CommandConfig::Argv {
+            program: String::from("notify-send"),
+            args: vec![String::from("$flag")],
+        };
+        assert_eq!(Some(&argv), flag);
+
+        let both = "imap.hooks.on-message-add.cmd = \"true\"\n\
+                    imap.hooks.on-message-add.command = \"true\"\n";
+        let err = toml::from_str::<Config>(&document(both)).expect_err("two commands");
+        assert!(err.to_string().contains("command"), "{err}");
+    }
+
+    /// A DAV block takes `server`, `home` or both, and is refused naming
+    /// both when it takes neither.
+    #[cfg(feature = "dav")]
+    #[test]
+    fn a_dav_block_takes_a_server_or_a_pinned_home() {
+        let home = "caldav.calendar = \"work\"\n\
+                    caldav.home = \"https://dav.example.org/cal/alice/\"\n";
+        let config: Config = toml::from_str(&document(home)).expect("a home");
+        config.accounts["perso"].validate().expect("a pinned home");
+        let caldav = config.accounts["perso"].caldav.as_ref().unwrap();
+        assert_eq!(None, caldav.server);
+        assert_eq!("/cal/alice/", caldav.home.as_ref().unwrap().path());
+
+        let neither = "carddav.addressbook = \"default\"\n";
+        let config: Config = toml::from_str(&document(neither)).expect("a block");
+        let err = config.accounts["perso"].validate().expect_err("no route");
+        let err = format!("{err:#}");
+        assert!(err.contains("`carddav` needs `server`, or `home`"), "{err}");
+    }
+
+    /// `pimdir.account` names the account of the store the calendar is
+    /// grouped under.
+    #[cfg(feature = "pimdir")]
+    #[test]
+    fn a_pimdir_block_takes_the_account_of_its_store() {
+        let line = "pimdir.root = \"/nonexistent\"\n\
+                    pimdir.calendar = \"cal\"\n\
+                    pimdir.account = \"work\"\n\
+                    pimdir.hooks.on-alarm-trigger.command = \"true\"\n";
+        let config: Config = toml::from_str(&document(line)).expect("an account");
+        let pimdir = config.accounts["perso"].pimdir.as_ref().unwrap();
+
+        assert_eq!(Some("work"), pimdir.account.as_deref());
+    }
+
     /// A hook spelt as before 1.0 is refused naming what it became, where
     /// 0.2 read it.
     #[test]
@@ -2820,12 +2913,6 @@ mod tests {
                 "on-flag-removed",
                 "on-flag-remove",
             ),
-            (
-                "imap.hooks.on-message-add.cmd = \"true\"\n",
-                "cmd",
-                "command",
-            ),
-            ("imap.hooks.on-flag-add.cmd = \"true\"\n", "cmd", "command"),
         ];
 
         #[cfg(feature = "dav")]

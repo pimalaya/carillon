@@ -22,12 +22,13 @@ let
   nativeTls = builtins.elem "native-tls" buildFeatures;
 
   # A feature is on when asked for by name, or when the defaults are kept,
-  # `notify` and `pimdir` being among them.
+  # `notify`, `pimdir` and `vendored` being among them.
   enabled = feature: !buildNoDefaultFeatures || builtins.elem feature buildFeatures;
 
-  # `vendored` is added on windows, where dbus and SQLite are built from
-  # source; elsewhere it is asked for by name or left out.
-  vendored = stdenv.hostPlatform.isWindows || builtins.elem "vendored" buildFeatures;
+  # `vendored`, which builds dbus and SQLite from source, is among the
+  # defaults, and is added on windows; with the defaults off, it is asked
+  # for by name or left out, as pimalaya/nix builds it.
+  vendored = stdenv.hostPlatform.isWindows || enabled "vendored";
 
   # Desktop notifications go through the system dbus.
   systemDbus = enabled "notify" && !vendored;
