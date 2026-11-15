@@ -457,7 +457,7 @@ mod tests {
 
     use super::*;
 
-    /// Each store code is spelled as io-pimdir 0.13's `PimdirError::code`
+    /// Each store code is spelled as io-pimdir 0.14's `PimdirError::code`
     /// spells the failure it names, and is the code that failure reads as.
     #[test]
     fn a_store_code_keeps_io_pimdirs_spelling() {

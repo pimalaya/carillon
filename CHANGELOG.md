@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   Alarms are resolved over the next 48 hours and kept current as the calendar changes, the bodies read only when this hook is set. They wait on the system's wall-clock timer through ceichas, so time asleep counts and a clock change is followed. The hook reads `$summary`, `$kind`, `$trigger`, `$at`, `$uid`, `$etag`, `$recurrenceId`, `$alarm`, `$alarmUid` and `$action`. Nothing is stored: an alarm due while carillon was not running never fires, and one reached more than 15 minutes late (a machine asleep) is dropped with a log line. Cancelled events, completed tasks, acknowledged alarms and `EMAIL` alarms never fire.
 
-- Added the `pimdir` backend, on by default, firing the alarms of one calendar of a local pimdir store another tool keeps in sync: `pimdir.root`, `pimdir.calendar`, `pimdir.watch.poll.interval` and `pimdir.hooks.on-alarm-trigger`. The store is read and never written. It reads stores of pimdir draft-11, the ones neverest writes (io-pimdir 0.13), and refuses a store of another draft (`store-version`) naming its root.
+- Added the `pimdir` backend, on by default, firing the alarms of one calendar of a local pimdir store another tool keeps in sync: `pimdir.root`, `pimdir.calendar`, `pimdir.watch.poll.interval` and `pimdir.hooks.on-alarm-trigger`. The store is read and never written. It reads stores of pimdir draft-13, the ones neverest writes (io-pimdir 0.14), and refuses a store of another draft, draft-11 included (`store-version`), naming its root.
 - Added `mailbox-not-found`, `calendar-not-found` and `addressbook-not-found`, coding a watched collection that does not exist wherever the backend can tell: an IMAP `NONEXISTENT`, a Maildir folder that is no directory, a DAV 404 on the collection, a JMAP, Gmail, Google Calendar, Google People or Microsoft Graph collection no listing names (Graph answering its direct read 404 or 400 `ErrorInvalidIdMalformed`), a pimdir calendar the store does not hold. A watch's `session-lost` event and a `check` row carry them.
 - Added the pimdir codes himalaya relays to the failure codes: `store-busy`, `store-owned`, `store-staging`, `store-in-flight`, `store-reset`, `lock-replaced`, `item-duplicate`, `flag-invalid`, `action-malformed`, `conflict-unread`, `unsupported`, `no-performer`, `ambiguous-performer`, `index-missing`, `index-outdated`, `index-version`, `index-zone-unknown`, `index-fts5-missing`, `query-refused`, `query-unanswerable` and `tag-refused`, so the `carillon-error` schema names io-pimdir's vocabulary as every pimdir app does.
 - Added `caldav.home` and `carddav.home`, the home set pinned as cardamum and calendula take it: discovery is skipped and the connection opens on it, `server` being optional and unread when `home` is set. A block naming neither is refused when read.
@@ -57,6 +57,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   io-webdav 0.10 and later read a listed id percent-decoded, so the family's DAV listings print `My Book` where they printed `My%20Book`: `caldav.calendar` and `carddav.addressbook` take either. A DAV hook's `$id` keeps the spelling of the href the server serves, `%20` included.
 
 - Bumped pimalaya-config to 0.5.2: an unknown key's error lists no removed key.
+
+- Bumped pimalaya-cli to 0.6.0, whose listing frame carillon does not print: no output moves.
+
+- Bumped io-imap to 0.11.2: an IMAP watch takes the QRESYNC path only when the server's `ENABLED` names QRESYNC, and diffs the whole mailbox otherwise, where a server answering its `ENABLE` with a bare `OK` had every arrival, flag change and expunge lost.
+
+- Bumped io-pimdir to 0.14.0 (pimdir draft-13): a pimdir watch reads the stores the current neverest writes, and refuses a draft-11 one (`store-version`).
+
+- Bumped io-gcal to 0.5.1, io-gpeople to 0.8.1 and io-msgraph to 0.9.2: their changes write series and update persons, which a watch never does, so no watch moves.
 
 - Changed an IMAP watch reopened after a lost connection to resume from what the lost one knew.
 

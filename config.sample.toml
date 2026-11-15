@@ -365,7 +365,7 @@ imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
 
 # A pimdir store another tool keeps in sync, read and never written. Only its
 # alarms fire, through the one hook it has. Requires the `pimdir` cargo feature.
-# The store is one of pimdir draft-11, the one neverest writes; another draft is
+# The store is one of pimdir draft-13, the one neverest writes; another draft is
 # refused.
 
 # The directory holding the store. Required.

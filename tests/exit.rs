@@ -110,8 +110,8 @@ fn a_failed_check_in_text_prints_its_report_alone_and_exits_3() {
     assert!(!stdout.contains("Error:"), "{stdout}");
 }
 
-/// A pimdir store another draft of the format stamped is refused with
-/// io-pimdir's code, which the row carries.
+/// A pimdir store of draft-11, the draft carillon read before draft-13, is
+/// refused with io-pimdir's code, which the row carries.
 #[cfg(feature = "pimdir")]
 #[test]
 fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
@@ -124,7 +124,7 @@ fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
         .unwrap()
         .execute(
             "UPDATE store_meta SET format_version = ?1",
-            ["storage-draft-08"],
+            ["storage-draft-11"],
         )
         .unwrap();
 
