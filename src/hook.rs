@@ -390,7 +390,7 @@ pub fn run_alarm(
 pub fn rfc3339(instant: i64, zone: &TimeZone) -> String {
     match Timestamp::from_second(instant) {
         Ok(at) => at
-            .to_zoned(zone.clone())
+            .to_zoned_datetime(zone.clone())
             .strftime("%Y-%m-%dT%H:%M:%S%:z")
             .to_string(),
         Err(_) => String::new(),

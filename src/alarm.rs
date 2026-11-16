@@ -161,7 +161,7 @@ impl AlarmBook {
     /// An empty book, floating times resolving in the system's zone.
     pub fn new() -> Self {
         let through = Timestamp::now()
-            .to_zoned(TimeZone::UTC)
+            .to_zoned_datetime(TimeZone::UTC)
             .year()
             .saturating_add(ZONE_YEARS);
         let through = i32::from(through);
@@ -680,7 +680,7 @@ fn text<'a>(component: &'a IcalComponent<'_>, kind: IcalPropKind) -> Option<&'a 
 /// The civil text of an identity, as `2026-10-30T09:00:00`.
 fn civil(id: IcalRecurDateTime) -> String {
     match Timestamp::from_second(id.seconds()) {
-        Ok(at) => at.to_zoned(TimeZone::UTC).datetime().to_string(),
+        Ok(at) => at.to_zoned_datetime(TimeZone::UTC).datetime().to_string(),
         Err(_) => id.seconds().to_string(),
     }
 }
