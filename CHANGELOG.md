@@ -63,7 +63,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Bumped io-imap to 0.11.2: an IMAP watch takes the QRESYNC path only when the server's `ENABLED` names QRESYNC, and diffs the whole mailbox otherwise, where a server answering its `ENABLE` with a bare `OK` had every arrival, flag change and expunge lost.
 
-- Bumped io-pimdir to 0.14.0 (pimdir draft-13): a pimdir watch reads the stores the current neverest writes, and refuses a draft-11 one (`store-version`).
+- Bumped io-pimdir to 0.14.1 (pimdir draft-13): a pimdir watch reads the stores the current neverest writes, and refuses a draft-11 one (`store-version`).
 
 - Bumped io-gcal to 0.5.1, io-gpeople to 0.8.1 and io-msgraph to 0.9.2: their changes write series and update persons, which a watch never does, so no watch moves.
 
