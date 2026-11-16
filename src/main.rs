@@ -33,16 +33,18 @@
 //! what moved meanwhile. stream holds what it prints: one event per thing
 //! a session observed, then one result once a signal stopped it.
 //!
-//! The backends: imap, jmap, maildir, dav, msgraph, gmail, gcal, gpeople
-//! and pimdir, each behind its cargo feature, learning about changes its
-//! own way and reporting them in the one vocabulary event defines. How a
-//! change is learned is the protocol crate's; what to do about it is
-//! here. poll holds the sleep every polled backend waits on, and picture
-//! what a REST change feed (a Graph delta link, a Google sync token) is
-//! reconciled against.
+//! The backends: imap, jmap, maildir, caldav, carddav, msgraph, gmail,
+//! gcal, gpeople and pimdir, each behind the cargo feature named as its
+//! configuration block, learning about changes its own way and reporting
+//! them in the one vocabulary event defines. How a change is learned is
+//! the protocol crate's; what to do about it is here. poll holds the sleep
+//! every polled backend waits on, and picture what a REST change feed (a
+//! Graph delta link, a Google sync token) is reconciled against.
 //!
 //! The dav module serves the two configured DAV backends, CalDAV and
-//! CardDAV being one poll over collections that differ in what they hold.
+//! CardDAV being one poll over collections that differ in what they hold,
+//! built with either feature; reading the alarms of a calendar is the
+//! caldav feature's alone.
 //!
 //! alarm fires the alarms of a calendar: CalDAV and pimdir read the bodies
 //! of their members into its book, and a thread per account, living
@@ -71,7 +73,7 @@ mod alarm;
 mod backend;
 mod cli;
 mod config;
-#[cfg(feature = "dav")]
+#[cfg(dav)]
 mod dav;
 mod error;
 mod event;
@@ -95,13 +97,7 @@ mod msgraph;
 mod picture;
 #[cfg(feature = "pimdir")]
 mod pimdir;
-#[cfg(any(
-    feature = "jmap",
-    feature = "maildir",
-    feature = "dav",
-    feature = "pimdir",
-    api
-))]
+#[cfg(any(feature = "jmap", feature = "maildir", dav, feature = "pimdir", api))]
 mod poll;
 #[cfg(all(test, api))]
 mod scripted;

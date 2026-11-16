@@ -35,15 +35,12 @@ use io_http::{
 use io_webdav::{
     client::WebdavClientStd,
     coroutine::{WebdavCoroutine, WebdavCoroutineState, WebdavYield},
-    rfc4791::{
-        calendar::{SUPPORTED_CALENDAR_COMPONENT_SET, home_set::CaldavCalendarHomeSet},
-        item::{CaldavItemEntry, join_path, list::CaldavItemList, multiget::CaldavItemMultiget},
-    },
+    rfc4791::calendar::{SUPPORTED_CALENDAR_COMPONENT_SET, home_set::CaldavCalendarHomeSet},
     rfc4918::{
         DAV, GETETAG, WebdavAuth, WebdavMultistatus, WebdavProperty, check_collection_id,
         collection_path, coroutine::WebdavRedirectYield,
-        follow_redirects::WebdavFollowRedirectsError, id_from_location, propfind::WebdavPropfind,
-        send::WebdavSendError, typed::WebdavUnreadableEntry,
+        follow_redirects::WebdavFollowRedirectsError, propfind::WebdavPropfind,
+        send::WebdavSendError,
     },
     rfc5397::current_user_principal::WebdavCurrentUserPrincipal,
     rfc6352::addressbook::home_set::CarddavAddressbookHomeSet,
@@ -51,6 +48,13 @@ use io_webdav::{
         WebdavSyncChange, WebdavSyncCollection, WebdavSyncCollectionError,
         WebdavSyncCollectionOptions, WebdavSyncDelta,
     },
+};
+#[cfg(feature = "caldav")]
+use io_webdav::{
+    rfc4791::item::{
+        CaldavItemEntry, join_path, list::CaldavItemList, multiget::CaldavItemMultiget,
+    },
+    rfc4918::{id_from_location, typed::WebdavUnreadableEntry},
 };
 use log::{debug, trace, warn};
 use pimalaya_config::secret::SecretResolver;
@@ -61,8 +65,9 @@ use pimalaya_stream::{
 use secrecy::ExposeSecret;
 use url::Url;
 
+#[cfg(feature = "caldav")]
+use crate::alarm::{AlarmBook, AlarmShared};
 use crate::{
-    alarm::{AlarmBook, AlarmShared},
     config::{DavAuthConfig, DavServer, ProxyConfig},
     error::ErrorCode,
     event::{ItemSummary, WatchDomain, WatchEvent},
@@ -87,12 +92,14 @@ const GETCONTENTTYPE: WebdavProperty = WebdavProperty {
 };
 
 /// What the watched collection holds, which is what its members are
-/// called.
+/// called. Each kind is built by its own feature, the poll serving both.
 pub enum DavKind {
     /// A CalDAV calendar, carrying the domains its hooks name so that
     /// a calendar not holding one of them can say so.
+    #[cfg_attr(not(feature = "caldav"), allow(dead_code))]
     Calendar(Vec<WatchDomain>),
     /// A CardDAV addressbook, whose members are all cards.
+    #[cfg_attr(not(feature = "carddav"), allow(dead_code))]
     Addressbook,
 }
 
@@ -113,6 +120,9 @@ pub struct DavTarget<'a> {
     pub collection: &'a str,
     /// What it holds.
     pub kind: DavKind,
+    /// The alarms of a calendar, kept current when given.
+    #[cfg(feature = "caldav")]
+    pub alarms: Option<&'a AlarmShared>,
 }
 
 /// The home set a collection named by its id is looked up under.
@@ -186,7 +196,8 @@ pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<Webd
 }
 
 /// Watches the configured collection until `shutdown` is set, calling
-/// `on_event` for every change, and keeping `alarms` current when given.
+/// `on_event` for every change, and keeping the target's `alarms` current
+/// when given.
 ///
 /// The first enumeration is the baseline, so it reports nothing.
 /// Everything after is read against that picture. A round that fails is
@@ -208,17 +219,22 @@ pub fn watch(
     target: DavTarget<'_>,
     interval: Option<Duration>,
     shutdown: &Arc<AtomicBool>,
-    alarms: Option<&AlarmShared>,
     on_open: impl FnOnce(),
     mut on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
-    let DavTarget { collection, kind } = target;
+    let DavTarget {
+        collection,
+        kind,
+        #[cfg(feature = "caldav")]
+        alarms,
+    } = target;
     check(kind.home(), collection)?;
     let mut client = open(config, &mut SecretResolver::new())?;
     let collection = locate(&mut client, config.home, kind.home(), collection, shutdown)?;
     let interval = interval.unwrap_or(POLL_INTERVAL);
     let mut watched = Watched::open(&mut client, collection, kind, shutdown)?;
 
+    #[cfg(feature = "caldav")]
     if let Some(alarms) = alarms {
         alarms.replace(read_alarms(&mut client, &watched.collection, shutdown)?);
     }
@@ -230,8 +246,10 @@ pub fn watch(
             break;
         }
 
+        #[cfg(feature = "caldav")]
         let mut moved = BTreeMap::new();
         let mut report = |event: WatchEvent, summary: Option<ItemSummary>| {
+            #[cfg(feature = "caldav")]
             if alarms.is_some() {
                 let removed = matches!(event, WatchEvent::ItemRemoved { .. });
                 moved.insert(event.id().to_owned(), removed);
@@ -250,6 +268,7 @@ pub fn watch(
             watched.round(&mut client, shutdown, &mut report)?;
         }
 
+        #[cfg(feature = "caldav")]
         if let Some(alarms) = alarms
             && !moved.is_empty()
         {
@@ -266,6 +285,7 @@ pub fn watch(
 /// §9.7.1), so each component holding an alarm takes a query of its own.
 /// A server refusing the filter is asked for every member instead, the
 /// book keeping only those holding an alarm.
+#[cfg(feature = "caldav")]
 fn read_alarms(
     client: &mut WebdavClientStd,
     collection: &str,
@@ -306,6 +326,7 @@ fn read_alarms(
 
 /// Reads again the members a round reported added or changed, by href,
 /// and forgets the ones it reported removed.
+#[cfg(feature = "caldav")]
 fn refresh_alarms(
     client: &mut WebdavClientStd,
     collection: &str,
@@ -348,12 +369,14 @@ fn refresh_alarms(
 /// The id of the member at `href`, which it is keyed by whichever report
 /// named it: its last segment read as io-webdav reads a listed one
 /// (`id_from_location`), decoded when the decoding encodes back to it.
+#[cfg(feature = "caldav")]
 fn resource(href: &str) -> String {
     id_from_location(href).unwrap_or_default()
 }
 
 /// Runs one `calendar-query` report for the members `filter` matches,
 /// with their bodies (RFC 4791 §7.8).
+#[cfg(feature = "caldav")]
 fn query(
     client: &mut WebdavClientStd,
     collection: &str,
@@ -380,6 +403,7 @@ fn query(
 
 /// Runs one `calendar-multiget` report for the members named, with their
 /// bodies (RFC 4791 §7.9).
+#[cfg(feature = "caldav")]
 fn multiget(
     client: &mut WebdavClientStd,
     collection: &str,
@@ -401,6 +425,7 @@ fn multiget(
 
 /// Warns of each member a report could not read, which the watch leaves
 /// out as it did before the server named them.
+#[cfg(feature = "caldav")]
 fn skip_unreadable(unreadable: &[WebdavUnreadableEntry]) {
     for entry in unreadable {
         let status = entry.status.map_or(String::new(), |s| format!(" ({s})"));
@@ -1352,7 +1377,9 @@ fn names_precondition(body: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "caldav")]
     use ceichas::timer::CeichasTimer;
+    #[cfg(feature = "caldav")]
     use jiff::Timestamp;
 
     use crate::dav::*;
@@ -1519,8 +1546,10 @@ mod tests {
             let target = DavTarget {
                 collection: id,
                 kind: DavKind::Addressbook,
+                #[cfg(feature = "caldav")]
+                alarms: None,
             };
-            let watched = watch(config, target, None, &shutdown, None, || (), |_, _| ());
+            let watched = watch(config, target, None, &shutdown, || (), |_, _| ());
             let err = watched.err().unwrap_or_else(|| panic!("{id:?} watched"));
             assert_eq!(
                 Some(ErrorCode::AddressbookNotFound),
@@ -1811,6 +1840,7 @@ mod tests {
     }
 
     /// An instant of 2026-11-05 written in UTC, in seconds.
+    #[cfg(feature = "caldav")]
     fn at(time: &str) -> i64 {
         format!("2026-11-05T{time}Z")
             .parse::<Timestamp>()
@@ -1820,6 +1850,7 @@ mod tests {
 
     /// An event starting on 2026-11-05 at `start` (UTC, `HHMMSS`), with one
     /// `-PT15M` display alarm.
+    #[cfg(feature = "caldav")]
     fn alarmed(start: &str) -> String {
         format!(
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nBEGIN:VEVENT\r\nUID:standup\r\nDTSTAMP:20261101T000000Z\r\nDTSTART:20261105T{start}Z\r\nDURATION:PT30M\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:x\r\nTRIGGER:-PT15M\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
@@ -1828,6 +1859,7 @@ mod tests {
 
     /// Runs one round of `watched`, then moves the alarms by what it
     /// reported, as the watch does, returning the events.
+    #[cfg(feature = "caldav")]
     fn follow(
         client: &mut WebdavClientStd,
         watched: &mut Watched,
@@ -1855,6 +1887,7 @@ mod tests {
     /// multiget name it, by the id io-webdav reads from the href: its
     /// alarm moves with a change and goes with a removal, and a hook still
     /// names it by its href as served.
+    #[cfg(feature = "caldav")]
     #[test]
     fn an_alarm_follows_a_member_whose_href_holds_an_escape() {
         let href = String::from("/cal/alice/work/Daily%20standup.ics");

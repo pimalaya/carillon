@@ -72,7 +72,7 @@ use crate::{
     event::{ItemSummary, WatchEvent},
     stream::{WatchEvents, WatchMethod, WatchOutput, WatchStop},
 };
-#[cfg(feature = "dav")]
+#[cfg(dav)]
 use crate::{
     config::DavWatchConfig,
     dav::{self, DavKind, DavTarget},
@@ -373,7 +373,7 @@ fn watch_session(
 
     #[cfg(not(feature = "imap"))]
     if backend.allows_imap() && config.imap.is_some() {
-        return Err(error::backend_not_built("imap", "imap"));
+        return Err(error::backend_not_built("imap"));
     }
 
     #[cfg(feature = "jmap")]
@@ -422,7 +422,7 @@ fn watch_session(
 
     #[cfg(not(feature = "jmap"))]
     if backend.allows_jmap() && config.jmap.is_some() {
-        return Err(error::backend_not_built("jmap", "jmap"));
+        return Err(error::backend_not_built("jmap"));
     }
 
     #[cfg(feature = "maildir")]
@@ -455,10 +455,10 @@ fn watch_session(
 
     #[cfg(not(feature = "maildir"))]
     if backend.allows_maildir() && config.maildir.is_some() {
-        return Err(error::backend_not_built("maildir", "maildir"));
+        return Err(error::backend_not_built("maildir"));
     }
 
-    #[cfg(feature = "dav")]
+    #[cfg(feature = "caldav")]
     if backend.allows_caldav() {
         if let Some(caldav_config) = &config.caldav {
             let collection = caldav_config.collection();
@@ -475,10 +475,10 @@ fn watch_session(
                 DavTarget {
                     collection: collection.value,
                     kind: DavKind::Calendar(caldav_config.hooks.domains()),
+                    alarms: shared,
                 },
                 dav_interval(&caldav_config.watch),
                 shutdown,
-                shared,
                 || events.opened("caldav", WatchMethod::Poll, vec![collection]),
                 &mut on_event,
             );
@@ -489,12 +489,12 @@ fn watch_session(
         }
     }
 
-    #[cfg(not(feature = "dav"))]
+    #[cfg(not(feature = "caldav"))]
     if backend.allows_caldav() && config.caldav.is_some() {
-        return Err(error::backend_not_built("caldav", "dav"));
+        return Err(error::backend_not_built("caldav"));
     }
 
-    #[cfg(feature = "dav")]
+    #[cfg(feature = "carddav")]
     if backend.allows_carddav() {
         if let Some(carddav_config) = &config.carddav {
             let collection = carddav_config.collection();
@@ -507,10 +507,11 @@ fn watch_session(
                 DavTarget {
                     collection: collection.value,
                     kind: DavKind::Addressbook,
+                    #[cfg(feature = "caldav")]
+                    alarms: None,
                 },
                 dav_interval(&carddav_config.watch),
                 shutdown,
-                None,
                 || events.opened("carddav", WatchMethod::Poll, vec![collection]),
                 &mut on_event,
             );
@@ -521,9 +522,9 @@ fn watch_session(
         }
     }
 
-    #[cfg(not(feature = "dav"))]
+    #[cfg(not(feature = "carddav"))]
     if backend.allows_carddav() && config.carddav.is_some() {
-        return Err(error::backend_not_built("carddav", "dav"));
+        return Err(error::backend_not_built("carddav"));
     }
 
     #[cfg(feature = "msgraph")]
@@ -562,7 +563,7 @@ fn watch_session(
 
     #[cfg(not(feature = "msgraph"))]
     if backend.allows_msgraph() && config.msgraph.is_some() {
-        return Err(error::backend_not_built("msgraph", "msgraph"));
+        return Err(error::backend_not_built("msgraph"));
     }
 
     #[cfg(feature = "gmail")]
@@ -593,7 +594,7 @@ fn watch_session(
 
     #[cfg(not(feature = "gmail"))]
     if backend.allows_gmail() && config.gmail.is_some() {
-        return Err(error::backend_not_built("gmail", "gmail"));
+        return Err(error::backend_not_built("gmail"));
     }
 
     #[cfg(feature = "gcal")]
@@ -621,7 +622,7 @@ fn watch_session(
 
     #[cfg(not(feature = "gcal"))]
     if backend.allows_gcal() && config.gcal.is_some() {
-        return Err(error::backend_not_built("gcal", "gcal"));
+        return Err(error::backend_not_built("gcal"));
     }
 
     #[cfg(feature = "gpeople")]
@@ -649,7 +650,7 @@ fn watch_session(
 
     #[cfg(not(feature = "gpeople"))]
     if backend.allows_gpeople() && config.gpeople.is_some() {
-        return Err(error::backend_not_built("gpeople", "gpeople"));
+        return Err(error::backend_not_built("gpeople"));
     }
 
     #[cfg(feature = "pimdir")]
@@ -672,7 +673,7 @@ fn watch_session(
 
     #[cfg(not(feature = "pimdir"))]
     if backend.allows_pimdir() && config.pimdir.is_some() {
-        return Err(error::backend_not_built("pimdir", "pimdir"));
+        return Err(error::backend_not_built("pimdir"));
     }
 
     bail!(
@@ -787,7 +788,7 @@ impl AlarmRunner {
 
 /// The poll interval a DAV backend was configured with, WebDAV having
 /// the one method whatever domain it holds.
-#[cfg(feature = "dav")]
+#[cfg(dav)]
 fn dav_interval(watch: &Option<DavWatchConfig>) -> Option<Duration> {
     let DavWatchConfig::Poll(poll) = watch
         .clone()

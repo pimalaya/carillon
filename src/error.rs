@@ -53,18 +53,13 @@ pub enum ErrorCode {
     /// `quota-not-exceeded` (RFC 4331 §6), Graph's `ErrorQuotaExceeded`, or
     /// an IMAP `OVERQUOTA` (RFC 5530 §3).
     #[cfg_attr(
-        not(any(
-            feature = "dav",
-            feature = "imap",
-            feature = "jmap",
-            feature = "msgraph"
-        )),
+        not(any(dav, feature = "imap", feature = "jmap", feature = "msgraph")),
         allow(dead_code)
     )]
     QuotaExceeded,
     /// The server throttled the request: an HTTP 429, or a Google 403
     /// naming a rate limit or a quota. carillon sends no request twice.
-    #[cfg_attr(not(any(feature = "dav", feature = "jmap", api)), allow(dead_code))]
+    #[cfg_attr(not(any(dav, feature = "jmap", api)), allow(dead_code))]
     RateLimited,
     /// The mailbox a backend watches does not exist: nothing was watched.
     #[cfg_attr(
@@ -82,7 +77,7 @@ pub enum ErrorCode {
     #[cfg_attr(
         not(any(
             feature = "jmap",
-            feature = "dav",
+            dav,
             feature = "msgraph",
             feature = "gcal",
             feature = "pimdir"
@@ -93,12 +88,7 @@ pub enum ErrorCode {
     /// The addressbook a backend watches does not exist: nothing was
     /// watched.
     #[cfg_attr(
-        not(any(
-            feature = "jmap",
-            feature = "dav",
-            feature = "msgraph",
-            feature = "gpeople"
-        )),
+        not(any(feature = "jmap", dav, feature = "msgraph", feature = "gpeople")),
         allow(dead_code)
     )]
     AddressbookNotFound,
@@ -213,7 +203,8 @@ pub enum ErrorCode {
             feature = "imap",
             feature = "jmap",
             feature = "maildir",
-            feature = "dav",
+            feature = "caldav",
+            feature = "carddav",
             feature = "msgraph",
             feature = "gmail",
             feature = "gcal",
@@ -284,22 +275,23 @@ impl fmt::Display for ErrorCode {
 }
 
 /// The failure of a command reaching the `backend` block of an account,
-/// which this build leaves out with its cargo `feature`.
+/// which this build leaves out with its cargo feature, named as the block.
 #[cfg(not(all(
     feature = "imap",
     feature = "jmap",
     feature = "maildir",
-    feature = "dav",
+    feature = "caldav",
+    feature = "carddav",
     feature = "msgraph",
     feature = "gmail",
     feature = "gcal",
     feature = "gpeople",
     feature = "pimdir"
 )))]
-pub fn backend_not_built(backend: &str, feature: &str) -> Error {
+pub fn backend_not_built(backend: &str) -> Error {
     let message = format!(
         "This build leaves out the `{backend}` backend, rebuild with \
-         `--features {feature}`"
+         `--features {backend}`"
     );
 
     CodedError::new(ErrorCode::BackendNotBuilt, message).into()
@@ -333,7 +325,7 @@ pub fn not_found(domain: WatchDomain, message: impl Into<String>) -> Error {
 /// `err`, a backend's answer that the watched collection of `domain` does
 /// not exist, coded so, its messages kept.
 #[cfg_attr(
-    not(any(feature = "maildir", feature = "dav", feature = "msgraph")),
+    not(any(feature = "maildir", dav, feature = "msgraph")),
     allow(dead_code)
 )]
 pub fn not_found_from(domain: WatchDomain, err: Error) -> Error {
@@ -354,7 +346,7 @@ type Reader = fn(&(dyn std::error::Error + 'static)) -> Option<ErrorCode>;
 fn typed_code(err: &Error) -> Option<ErrorCode> {
     let readers: &[Reader] = &[
         account_code,
-        #[cfg(feature = "dav")]
+        #[cfg(dav)]
         crate::dav::refusal_code,
         #[cfg(feature = "gcal")]
         crate::gcal::refusal_code,

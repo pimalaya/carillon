@@ -178,6 +178,19 @@ carillon watch
 {"stoppedBy":"signal"}
 ```
 
+### Building and packaging
+
+- **The `dav` cargo feature is split into `caldav` and `carddav`**, each named as the configuration block it builds, as cardamum's `carddav` and calendula's `caldav` are: `caldav` builds the `caldav` block and the alarms of a calendar, `carddav` the `carddav` block, and both are in the default features. `--features dav` no longer exists and fails the build. No configuration key changes, and a build leaving one out names that feature when a command reaches its block.
+
+```sh
+# 0.2
+cargo build --no-default-features --features dav,rustls-ring
+# 1.0, both DAV backends
+cargo build --no-default-features --features caldav,carddav,rustls-ring
+# 1.0, calendars and their alarms only
+cargo build --no-default-features --features caldav,rustls-ring
+```
+
 ## From v0.1 to v0.2
 
 Nothing to change: a 0.1 configuration loads as it is, every key it read is still read, and the new backends and keys are additions.

@@ -4,8 +4,10 @@
 //! build leaves out: the block loads, a misspelt key beside it is still
 //! refused, `account list` lists it as not built, and `account check`
 //! reaching it fails its row coded `backend-not-built`, naming the cargo
-//! feature. These run on a build without the `imap` feature, such as
-//! `cargo test --no-default-features --features rustls-ring,maildir`.
+//! feature named as the block. These run on a build without the `imap`
+//! feature, such as `cargo test --no-default-features --features
+//! rustls-ring,maildir`, the DAV blocks checked when their feature is left
+//! out too.
 
 #![cfg(not(feature = "imap"))]
 
@@ -56,6 +58,41 @@ fn a_check_reaching_it_fails_its_row_naming_the_feature() {
     assert_eq!(row["ok"], false, "{json}");
     assert_eq!(row["code"], "backend-not-built", "{json}");
     assert!(error.contains("`--features imap`"), "{error}");
+}
+
+/// A DAV block names the feature built as its table, `caldav` or
+/// `carddav`, each DAV backend building without the other.
+#[test]
+fn a_dav_check_names_the_feature_of_its_block() {
+    let blocks = [
+        (
+            "caldav",
+            "caldav.server = \"https://dav.example.org\"\ncaldav.calendar = \"work\"\n",
+            cfg!(feature = "caldav"),
+        ),
+        (
+            "carddav",
+            "carddav.server = \"https://dav.example.org\"\ncarddav.addressbook = \"default\"\n",
+            cfg!(feature = "carddav"),
+        ),
+    ];
+
+    for (name, block, built) in blocks {
+        if built {
+            continue;
+        }
+
+        let toml = format!("[accounts.a]\ndefault = true\n{block}");
+        let output = run(&toml, &["account", "check"]);
+        let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let row = &json["backends"][0];
+        let error = row["error"].as_str().unwrap();
+
+        assert_eq!(output.status.code(), Some(3), "{json}");
+        assert_eq!(row["backend"], name, "{json}");
+        assert_eq!(row["code"], "backend-not-built", "{json}");
+        assert!(error.contains(&format!("`--features {name}`")), "{error}");
+    }
 }
 
 /// The listing names the block under `notBuilt`, not among the backends

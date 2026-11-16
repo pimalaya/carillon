@@ -137,7 +137,7 @@ fn account_list_prints_every_account_and_its_backends() {
     let json: Value = serde_json::from_str(&stdout).unwrap();
     let declared = [
         ("maildir", cfg!(feature = "maildir")),
-        ("caldav", cfg!(feature = "dav")),
+        ("caldav", cfg!(feature = "caldav")),
     ];
     let expected = serde_json::json!({"accounts": [
         {"name": "perso", "default": false, "backends": [], "notBuilt": []},
@@ -153,7 +153,7 @@ fn account_list_prints_every_account_and_its_backends() {
 
 /// The text is the family's: one line per account and no header, a
 /// backend left out marked, `default` on the default account.
-#[cfg(all(feature = "maildir", feature = "dav"))]
+#[cfg(all(feature = "maildir", feature = "caldav"))]
 #[test]
 fn account_list_prints_the_familys_columns() {
     let home = TempDir::new().unwrap();

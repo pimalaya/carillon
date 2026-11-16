@@ -65,9 +65,9 @@ jobs:
             "--no-default-features --features imap,rustls-ring"
             "--no-default-features --features jmap,native-tls"
             "--no-default-features --features maildir"
-            "--no-default-features --features dav,rustls-aws"
+            "--no-default-features --features caldav,rustls-aws"
           )
-          for backend in imap jmap maildir dav msgraph gmail gcal gpeople pimdir; do
+          for backend in imap jmap maildir caldav carddav msgraph gmail gcal gpeople pimdir; do
             sets+=("--no-default-features --features rustls-ring,$backend")
           done
           for set in "${sets[@]}"; do

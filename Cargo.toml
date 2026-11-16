@@ -12,14 +12,15 @@ homepage = "https://pimalaya.org"
 repository = "https://github.com/pimalaya/carillon"
 
 [features]
-default = ["rustls-ring", "imap", "jmap", "maildir", "dav", "msgraph", "gmail", "gcal", "gpeople", "pimdir", "notify", "vendored"]
+default = ["rustls-ring", "imap", "jmap", "maildir", "caldav", "carddav", "msgraph", "gmail", "gcal", "gpeople", "pimdir", "notify", "vendored"]
 native-tls = ["pimalaya-stream/native-tls", "io-http?/native-tls", "io-imap?/native-tls", "io-jmap?/native-tls", "io-webdav?/native-tls", "io-msgraph?/native-tls", "io-gmail?/native-tls", "io-gcal?/native-tls", "io-gpeople?/native-tls"]
 rustls-aws = ["pimalaya-stream/rustls-aws", "io-http?/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws", "io-webdav?/rustls-aws", "io-msgraph?/rustls-aws", "io-gmail?/rustls-aws", "io-gcal?/rustls-aws", "io-gpeople?/rustls-aws"]
 rustls-ring = ["pimalaya-stream/rustls-ring", "io-http?/rustls-ring", "io-imap?/rustls-ring", "io-jmap?/rustls-ring", "io-webdav?/rustls-ring", "io-msgraph?/rustls-ring", "io-gmail?/rustls-ring", "io-gcal?/rustls-ring", "io-gpeople?/rustls-ring"]
 imap = ["dep:io-imap", "io-imap/client", "io-imap/scram"]
 jmap = ["dep:base64", "dep:io-jmap", "io-jmap/client"]
 maildir = ["dep:io-maildir", "io-maildir/client", "io-maildir/parser"]
-dav = ["dep:ceichas", "dep:ical-rs", "dep:io-http", "dep:io-webdav", "dep:jiff", "io-webdav/client"]
+caldav = ["dep:ceichas", "dep:ical-rs", "dep:io-http", "dep:io-webdav", "dep:jiff", "io-webdav/client"]
+carddav = ["dep:io-http", "dep:io-webdav", "io-webdav/client"]
 msgraph = ["dep:io-msgraph", "io-msgraph/client"]
 gmail = ["dep:io-gmail", "io-gmail/client"]
 gcal = ["dep:io-gcal", "io-gcal/client"]

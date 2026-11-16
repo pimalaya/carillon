@@ -60,7 +60,8 @@ use serde::Deserialize;
     feature = "imap",
     feature = "jmap",
     feature = "maildir",
-    feature = "dav",
+    feature = "caldav",
+    feature = "carddav",
     feature = "msgraph",
     feature = "gmail",
     feature = "gcal",
@@ -68,10 +69,10 @@ use serde::Deserialize;
     feature = "pimdir"
 )))]
 use serde::de;
-#[cfg(feature = "dav")]
+#[cfg(dav)]
 use url::Url;
 
-#[cfg(any(feature = "jmap", feature = "dav", api))]
+#[cfg(any(feature = "jmap", feature = "caldav", api))]
 use crate::event::WatchDomain;
 use crate::{
     event::WatchEvent,
@@ -184,16 +185,16 @@ pub struct AccountConfig {
     #[cfg(not(feature = "maildir"))]
     #[serde(default)]
     pub maildir: Option<de::IgnoredAny>,
-    #[cfg(feature = "dav")]
+    #[cfg(feature = "caldav")]
     #[serde(default)]
     pub caldav: Option<CaldavConfig>,
-    #[cfg(not(feature = "dav"))]
+    #[cfg(not(feature = "caldav"))]
     #[serde(default)]
     pub caldav: Option<de::IgnoredAny>,
-    #[cfg(feature = "dav")]
+    #[cfg(feature = "carddav")]
     #[serde(default)]
     pub carddav: Option<CarddavConfig>,
-    #[cfg(not(feature = "dav"))]
+    #[cfg(not(feature = "carddav"))]
     #[serde(default)]
     pub carddav: Option<de::IgnoredAny>,
     #[cfg(feature = "msgraph")]
@@ -359,8 +360,8 @@ impl AccountConfig {
             ("imap", self.imap.is_some(), cfg!(feature = "imap")),
             ("jmap", self.jmap.is_some(), cfg!(feature = "jmap")),
             ("maildir", self.maildir.is_some(), cfg!(feature = "maildir")),
-            ("caldav", self.caldav.is_some(), cfg!(feature = "dav")),
-            ("carddav", self.carddav.is_some(), cfg!(feature = "dav")),
+            ("caldav", self.caldav.is_some(), cfg!(feature = "caldav")),
+            ("carddav", self.carddav.is_some(), cfg!(feature = "carddav")),
             ("msgraph", self.msgraph.is_some(), cfg!(feature = "msgraph")),
             ("gmail", self.gmail.is_some(), cfg!(feature = "gmail")),
             ("gcal", self.gcal.is_some(), cfg!(feature = "gcal")),
@@ -403,9 +404,9 @@ impl AccountConfig {
             self.imap.as_mut().map(|c| &mut c.proxy),
             #[cfg(feature = "jmap")]
             self.jmap.as_mut().map(|c| &mut c.proxy),
-            #[cfg(feature = "dav")]
+            #[cfg(feature = "caldav")]
             self.caldav.as_mut().map(|c| &mut c.proxy),
-            #[cfg(feature = "dav")]
+            #[cfg(feature = "carddav")]
             self.carddav.as_mut().map(|c| &mut c.proxy),
             #[cfg(feature = "msgraph")]
             self.msgraph.as_mut().map(|c| &mut c.proxy),
@@ -440,13 +441,13 @@ impl AccountConfig {
             maildir.hooks.validate()?;
         }
 
-        #[cfg(feature = "dav")]
+        #[cfg(feature = "caldav")]
         if let Some(caldav) = &self.caldav {
             caldav.server().validate("caldav")?;
             caldav.hooks.validate()?;
         }
 
-        #[cfg(feature = "dav")]
+        #[cfg(feature = "carddav")]
         if let Some(carddav) = &self.carddav {
             carddav.server().validate("carddav")?;
             carddav.hooks.validate()?;
@@ -1107,7 +1108,7 @@ impl PimdirConfig {
     }
 }
 
-#[cfg(feature = "dav")]
+#[cfg(feature = "caldav")]
 impl CaldavConfig {
     /// What CalDAV calls the collection it watches.
     pub const COLLECTION: &'static str = "calendar";
@@ -1121,7 +1122,7 @@ impl CaldavConfig {
     }
 }
 
-#[cfg(feature = "dav")]
+#[cfg(feature = "carddav")]
 impl CarddavConfig {
     /// What CardDAV calls the collection it watches.
     pub const COLLECTION: &'static str = "addressbook";
@@ -1271,7 +1272,7 @@ pub struct PimdirHookConfig {
 }
 
 /// Hooks a CalDAV watch fires, one set per component a calendar holds.
-#[cfg(feature = "dav")]
+#[cfg(feature = "caldav")]
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CaldavHookConfig {
@@ -1311,7 +1312,7 @@ pub struct CaldavHookConfig {
 }
 
 /// Hooks a CardDAV watch fires.
-#[cfg(feature = "dav")]
+#[cfg(feature = "carddav")]
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CarddavHookConfig {
@@ -1467,7 +1468,7 @@ impl MaildirHookConfig {
     }
 }
 
-#[cfg(feature = "dav")]
+#[cfg(feature = "caldav")]
 impl CaldavHookConfig {
     /// The hook `event` calls for, which on a calendar depends on the
     /// component its member turned out to be.
@@ -1526,7 +1527,7 @@ impl CaldavHookConfig {
     }
 }
 
-#[cfg(feature = "dav")]
+#[cfg(feature = "carddav")]
 impl CarddavHookConfig {
     /// The hook `event` calls for, when one is configured.
     pub fn get(&self, event: &WatchEvent) -> Option<Hook<'_>> {
@@ -1679,7 +1680,7 @@ impl PimdirHookConfig {
     }
 }
 
-#[cfg(feature = "dav")]
+#[cfg(feature = "caldav")]
 impl CaldavHookConfig {
     /// Refuses a notification naming what its event cannot fill.
     pub fn validate(&self) -> Result<()> {
@@ -1713,7 +1714,7 @@ impl CaldavHookConfig {
     }
 }
 
-#[cfg(feature = "dav")]
+#[cfg(feature = "carddav")]
 impl CarddavHookConfig {
     /// Refuses a notification naming what its event cannot fill.
     pub fn validate(&self) -> Result<()> {
@@ -1780,7 +1781,7 @@ pub struct FlagHook {
 
 /// CalDAV configuration: one watched calendar, polled through RFC 6578
 /// `sync-collection`.
-#[cfg(feature = "dav")]
+#[cfg(feature = "caldav")]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CaldavConfig {
@@ -1824,7 +1825,7 @@ pub struct CaldavConfig {
 }
 
 /// CardDAV configuration: one watched addressbook, polled the same way.
-#[cfg(feature = "dav")]
+#[cfg(feature = "carddav")]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CarddavConfig {
@@ -1870,7 +1871,7 @@ pub struct CarddavConfig {
 
 /// The transport half of a DAV backend, shared by a calendar and an
 /// addressbook.
-#[cfg(feature = "dav")]
+#[cfg(dav)]
 #[derive(Clone, Copy)]
 pub struct DavServer<'a> {
     /// The URL discovery starts from, unread when `home` is pinned.
@@ -1883,7 +1884,7 @@ pub struct DavServer<'a> {
     pub auth: &'a DavAuthConfig,
 }
 
-#[cfg(feature = "dav")]
+#[cfg(dav)]
 impl DavServer<'_> {
     /// Refuses a block naming neither the URL discovery starts from nor
     /// the home set it would find, `backend` naming the block.
@@ -1896,7 +1897,7 @@ impl DavServer<'_> {
     }
 }
 
-#[cfg(feature = "dav")]
+#[cfg(feature = "caldav")]
 impl CaldavConfig {
     /// What it takes to open a connection to this server.
     pub fn server(&self) -> DavServer<'_> {
@@ -1911,7 +1912,7 @@ impl CaldavConfig {
     }
 }
 
-#[cfg(feature = "dav")]
+#[cfg(feature = "carddav")]
 impl CarddavConfig {
     /// What it takes to open a connection to this server.
     pub fn server(&self) -> DavServer<'_> {
@@ -1927,7 +1928,7 @@ impl CarddavConfig {
 }
 
 /// The credential presented to the DAV server.
-#[cfg(feature = "dav")]
+#[cfg(dav)]
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DavAuthConfig {
@@ -1991,7 +1992,7 @@ pub enum PimdirWatchConfig {
 }
 
 /// How a WebDAV account learns about a change.
-#[cfg(feature = "dav")]
+#[cfg(dav)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DavWatchConfig {
@@ -2656,7 +2657,7 @@ mod tests {
         assert!(err.to_string().contains("`notify` cargo feature"), "{err}");
     }
 
-    #[cfg(all(feature = "dav", feature = "pimdir"))]
+    #[cfg(all(feature = "caldav", feature = "carddav", feature = "pimdir"))]
     #[test]
     fn an_alarm_hook_is_a_calendar_s() {
         let read = |block: &str| -> Result<Config> {
@@ -2969,7 +2970,7 @@ mod tests {
 
     /// A DAV block takes `server`, `home` or both, and is refused naming
     /// both when it takes neither.
-    #[cfg(feature = "dav")]
+    #[cfg(all(feature = "caldav", feature = "carddav"))]
     #[test]
     fn a_dav_block_takes_a_server_or_a_pinned_home() {
         let home = "caldav.calendar = \"work\"\n\
@@ -3006,7 +3007,7 @@ mod tests {
     /// 0.2 read it.
     #[test]
     fn a_hook_spelling_before_1_0_is_refused_by_name() {
-        #[cfg_attr(not(any(feature = "dav", feature = "jmap")), allow(unused_mut))]
+        #[cfg_attr(not(any(feature = "caldav", feature = "jmap")), allow(unused_mut))]
         let mut cases = vec![
             (
                 "imap.hook.on-message-add.command = \"true\"\n",
@@ -3025,7 +3026,7 @@ mod tests {
             ),
         ];
 
-        #[cfg(feature = "dav")]
+        #[cfg(feature = "caldav")]
         cases.push((
             "caldav.server = \"https://dav.example.org\"\n\
              caldav.calendar = \"work\"\n\
@@ -3067,7 +3068,8 @@ mod tests {
     #[cfg(all(
         feature = "jmap",
         feature = "maildir",
-        feature = "dav",
+        feature = "caldav",
+        feature = "carddav",
         feature = "msgraph",
         feature = "gmail",
         feature = "gcal",

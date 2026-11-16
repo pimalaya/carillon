@@ -9,7 +9,7 @@
 //! per-backend report.
 
 use std::path::PathBuf;
-#[cfg(feature = "dav")]
+#[cfg(dav)]
 use std::sync::{Arc, atomic::AtomicBool};
 
 use anyhow::{Result, bail};
@@ -40,7 +40,7 @@ use crate::{
     config::Config,
     error::{self, ErrorCode},
 };
-#[cfg(feature = "dav")]
+#[cfg(dav)]
 use crate::{
     config::DavServer,
     dav::{self, DavHome},
@@ -91,7 +91,7 @@ impl AccountCheckCommand {
 
         #[cfg(not(feature = "imap"))]
         if backend.allows_imap() && account_config.imap.is_some() {
-            let err = error::backend_not_built("imap", "imap");
+            let err = error::backend_not_built("imap");
             report.backends.push(row("imap", Err(err)));
         }
 
@@ -104,7 +104,7 @@ impl AccountCheckCommand {
 
         #[cfg(not(feature = "jmap"))]
         if backend.allows_jmap() && account_config.jmap.is_some() {
-            let err = error::backend_not_built("jmap", "jmap");
+            let err = error::backend_not_built("jmap");
             report.backends.push(row("jmap", Err(err)));
         }
 
@@ -117,11 +117,11 @@ impl AccountCheckCommand {
 
         #[cfg(not(feature = "maildir"))]
         if backend.allows_maildir() && account_config.maildir.is_some() {
-            let err = error::backend_not_built("maildir", "maildir");
+            let err = error::backend_not_built("maildir");
             report.backends.push(row("maildir", Err(err)));
         }
 
-        #[cfg(feature = "dav")]
+        #[cfg(feature = "caldav")]
         if backend.allows_caldav()
             && let Some(caldav_config) = account_config.caldav.clone()
         {
@@ -134,13 +134,13 @@ impl AccountCheckCommand {
             ));
         }
 
-        #[cfg(not(feature = "dav"))]
+        #[cfg(not(feature = "caldav"))]
         if backend.allows_caldav() && account_config.caldav.is_some() {
-            let err = error::backend_not_built("caldav", "dav");
+            let err = error::backend_not_built("caldav");
             report.backends.push(row("caldav", Err(err)));
         }
 
-        #[cfg(feature = "dav")]
+        #[cfg(feature = "carddav")]
         if backend.allows_carddav()
             && let Some(carddav_config) = account_config.carddav.clone()
         {
@@ -153,9 +153,9 @@ impl AccountCheckCommand {
             ));
         }
 
-        #[cfg(not(feature = "dav"))]
+        #[cfg(not(feature = "carddav"))]
         if backend.allows_carddav() && account_config.carddav.is_some() {
-            let err = error::backend_not_built("carddav", "dav");
+            let err = error::backend_not_built("carddav");
             report.backends.push(row("carddav", Err(err)));
         }
 
@@ -169,7 +169,7 @@ impl AccountCheckCommand {
 
         #[cfg(not(feature = "msgraph"))]
         if backend.allows_msgraph() && account_config.msgraph.is_some() {
-            let err = error::backend_not_built("msgraph", "msgraph");
+            let err = error::backend_not_built("msgraph");
             report.backends.push(row("msgraph", Err(err)));
         }
 
@@ -183,7 +183,7 @@ impl AccountCheckCommand {
 
         #[cfg(not(feature = "gmail"))]
         if backend.allows_gmail() && account_config.gmail.is_some() {
-            let err = error::backend_not_built("gmail", "gmail");
+            let err = error::backend_not_built("gmail");
             report.backends.push(row("gmail", Err(err)));
         }
 
@@ -197,7 +197,7 @@ impl AccountCheckCommand {
 
         #[cfg(not(feature = "gcal"))]
         if backend.allows_gcal() && account_config.gcal.is_some() {
-            let err = error::backend_not_built("gcal", "gcal");
+            let err = error::backend_not_built("gcal");
             report.backends.push(row("gcal", Err(err)));
         }
 
@@ -211,7 +211,7 @@ impl AccountCheckCommand {
 
         #[cfg(not(feature = "gpeople"))]
         if backend.allows_gpeople() && account_config.gpeople.is_some() {
-            let err = error::backend_not_built("gpeople", "gpeople");
+            let err = error::backend_not_built("gpeople");
             report.backends.push(row("gpeople", Err(err)));
         }
 
@@ -225,7 +225,7 @@ impl AccountCheckCommand {
 
         #[cfg(not(feature = "pimdir"))]
         if backend.allows_pimdir() && account_config.pimdir.is_some() {
-            let err = error::backend_not_built("pimdir", "pimdir");
+            let err = error::backend_not_built("pimdir");
             report.backends.push(row("pimdir", Err(err)));
         }
 
@@ -283,7 +283,7 @@ fn check_maildir(maildir_config: MaildirConfig) -> BackendCheck<ErrorCode> {
     row("maildir", result)
 }
 
-#[cfg(feature = "dav")]
+#[cfg(dav)]
 fn check_dav(
     backend: &'static str,
     home: DavHome,

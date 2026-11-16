@@ -117,3 +117,32 @@ impl fmt::Display for Backend {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::ValueEnum;
+    use toml::Table;
+
+    use super::Backend;
+
+    /// Every backend is built by the cargo feature named as its block,
+    /// which is the feature a build leaving it out names.
+    #[test]
+    fn every_backend_is_built_by_the_feature_named_as_its_block() {
+        let manifest: Table = include_str!("../Cargo.toml").parse().unwrap();
+        let features = manifest["features"].as_table().unwrap();
+        let defaults = features["default"].as_array().unwrap();
+
+        for backend in Backend::value_variants() {
+            if *backend == Backend::Auto {
+                continue;
+            }
+
+            let name = backend.to_string();
+            assert!(features.contains_key(&name), "no `{name}` feature");
+            assert!(defaults.iter().any(|f| f.as_str() == Some(&name)), "{name}");
+        }
+
+        assert!(!features.contains_key("dav"), "a `dav` feature");
+    }
+}

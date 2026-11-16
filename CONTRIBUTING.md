@@ -22,16 +22,16 @@ The clap, printer and logger primitives come from [pimalaya/cli](https://github.
 
 ## Feature matrix
 
-Every backend is a cargo feature, and so is every TLS provider. A change touching one of them is built against the others before it lands, since the default set hides what a narrower one breaks:
+Every backend is a cargo feature named as its configuration block (`caldav` and `carddav` build apart, `caldav` alone reading the alarms of a calendar), and so is every TLS provider. A change touching one of them is built against the others before it lands, since the default set hides what a narrower one breaks:
 
 ```sh
 cargo build --no-default-features --features imap,rustls-ring
 cargo build --no-default-features --features jmap,native-tls
 cargo build --no-default-features --features maildir
-cargo build --no-default-features --features dav,rustls-aws
+cargo build --no-default-features --features caldav,rustls-aws
 ```
 
-The CI `features` job of .github/workflows/tests.yml runs clippy over these sets, the default and all features, and each backend alone with rustls-ring, then the tests of a build without imap (tests/backend_not_built.rs).
+The CI `features` job of .github/workflows/tests.yml runs clippy over these sets, the default and all features, and each backend alone with rustls-ring, then the tests of a build without imap (tests/backend_not_built.rs), which leaves both DAV backends out too.
 
 ## Watching against a real server
 
