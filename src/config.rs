@@ -70,7 +70,9 @@ use serde::Deserialize;
 )))]
 use serde::de;
 #[cfg(dav)]
-use url::Url;
+use serde::{Deserializer, de::Error as _};
+#[cfg(any(dav, feature = "jmap"))]
+use url::{ParseError, Url};
 
 #[cfg(any(feature = "jmap", feature = "caldav", api))]
 use crate::event::WatchDomain;
@@ -1794,6 +1796,7 @@ pub struct CaldavConfig {
     pub server: Option<String>,
     /// The calendar home set, pinned: discovery is skipped and the
     /// connection opens on it, `server` left unread.
+    #[serde(default, deserialize_with = "ascii_url")]
     pub home: Option<Url>,
     #[serde(default)]
     pub tls: TlsConfig,
@@ -1839,6 +1842,7 @@ pub struct CarddavConfig {
     pub server: Option<String>,
     /// The addressbook home set, pinned: discovery is skipped and the
     /// connection opens on it, `server` left unread.
+    #[serde(default, deserialize_with = "ascii_url")]
     pub home: Option<Url>,
     #[serde(default)]
     pub tls: TlsConfig,
@@ -1924,6 +1928,43 @@ impl CarddavConfig {
             proxy: self.proxy.as_ref(),
             auth: &self.auth,
         }
+    }
+}
+
+/// Parses `input` into a URL, a host that is not ASCII refused with the
+/// way out: its Punycode form, url linking no Unicode IDNA back end.
+#[cfg(any(dav, feature = "jmap"))]
+pub fn parse_url(input: &str) -> Result<Url> {
+    match Url::parse(input) {
+        Err(ParseError::IdnaError) => bail!(
+            "Host `{}` is not ASCII: write it in its Punycode form (xn--...)",
+            host_of(input)
+        ),
+        result => Ok(result?),
+    }
+}
+
+/// Deserializes an optional URL through [`parse_url`].
+#[cfg(dav)]
+fn ascii_url<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Url>, D::Error> {
+    let input = String::deserialize(deserializer)?;
+    let url = parse_url(&input).map_err(D::Error::custom)?;
+    Ok(Some(url))
+}
+
+/// The host `input` names, as written: what follows the scheme, short of
+/// the path, the user info and the port.
+#[cfg(any(dav, feature = "jmap"))]
+fn host_of(input: &str) -> &str {
+    let rest = input.split_once("://").map_or(input, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+
+    match host.rsplit_once(':') {
+        Some((name, port)) if port.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => host,
     }
 }
 
@@ -2966,6 +3007,45 @@ mod tests {
                     imap.hooks.on-message-add.command = \"true\"\n";
         let err = toml::from_str::<Config>(&document(both)).expect_err("two commands");
         assert!(err.to_string().contains("command"), "{err}");
+    }
+
+    /// A DAV block with no `auth` loads, sending no credential, as
+    /// `auth = "none"` does.
+    #[cfg(all(feature = "caldav", feature = "carddav"))]
+    #[test]
+    fn a_dav_block_without_auth_loads() {
+        let blocks = "caldav.calendar = \"work\"\n\
+                      caldav.server = \"http://localhost:5232\"\n\
+                      carddav.addressbook = \"book\"\n\
+                      carddav.home = \"http://localhost:5232/alice/\"\n";
+        let config: Config = toml::from_str(&document(blocks)).expect("no auth");
+        let account = &config.accounts["perso"];
+
+        let caldav = account.caldav.as_ref().unwrap();
+        assert!(matches!(caldav.auth, DavAuthConfig::None));
+        let carddav = account.carddav.as_ref().unwrap();
+        assert!(matches!(carddav.auth, DavAuthConfig::None));
+    }
+
+    /// A DAV `home` and a JMAP `server` whose host is not ASCII are
+    /// refused, naming the host and its Punycode form as the way out.
+    #[cfg(all(feature = "caldav", feature = "jmap"))]
+    #[test]
+    fn a_non_ascii_host_names_its_punycode_form() {
+        let hint = "Host `b\u{fc}cher.example` is not ASCII: write it in its Punycode form";
+
+        for server in ["https://b\u{fc}cher.example/jmap", "b\u{fc}cher.example"] {
+            let err = crate::jmap::parse_server(server).unwrap_err();
+            assert!(err.to_string().contains(hint), "{server}: {err}");
+        }
+
+        let home = "caldav.calendar = \"work\"\n\
+                    caldav.home = \"https://alice@b\u{fc}cher.example:8443/cal/\"\n";
+        let err = toml::from_str::<Config>(&document(home)).unwrap_err();
+        assert!(err.to_string().contains(hint), "{err}");
+
+        let url = crate::jmap::parse_server("https://xn--bcher-kva.example/jmap").unwrap();
+        assert_eq!(Some("xn--bcher-kva.example"), url.host_str());
     }
 
     /// A DAV block takes `server`, `home` or both, and is refused naming

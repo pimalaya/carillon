@@ -55,6 +55,7 @@ io-gcal = { version = "0.5.2", default-features = false, optional = true }
 io-gmail = { version = "0.9", default-features = false, optional = true }
 io-gpeople = { version = "0.8.1", default-features = false, optional = true }
 ical-rs = { version = "0.7.1", default-features = false, features = ["parser", "tzdb"], optional = true }
+idna_adapter = { version = "=1.0.0", default-features = false }
 io-imap = { version = "0.11.2", default-features = false, optional = true }
 io-jmap = { version = "0.10", default-features = false, optional = true }
 io-maildir = { version = "0.5", default-features = false, optional = true }

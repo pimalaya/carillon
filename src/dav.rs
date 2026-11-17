@@ -68,7 +68,7 @@ use url::Url;
 #[cfg(feature = "caldav")]
 use crate::alarm::{AlarmBook, AlarmShared};
 use crate::{
-    config::{DavAuthConfig, DavServer, ProxyConfig},
+    config::{DavAuthConfig, DavServer, ProxyConfig, parse_url},
     error::ErrorCode,
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,
@@ -148,7 +148,7 @@ pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<Webd
     let url = match (config.home, config.server) {
         (Some(home), _) => home.clone(),
         (None, Some(server)) => {
-            Url::parse(server).with_context(|| format!("Invalid DAV server URL `{server}`"))?
+            parse_url(server).with_context(|| format!("Invalid DAV server URL `{server}`"))?
         }
         (None, None) => bail!("A DAV backend needs `server`, or `home` to pin its home set"),
     };
@@ -214,7 +214,21 @@ pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<Webd
 /// `on_open` is called once the session is up and its collection read,
 /// right before the first wait. A collection id naming no collection is
 /// refused before the connection is opened.
+/// A 401 to a block with no `auth` says the block configures none.
 pub fn watch(
+    config: DavServer<'_>,
+    target: DavTarget<'_>,
+    interval: Option<Duration>,
+    shutdown: &Arc<AtomicBool>,
+    on_open: impl FnOnce(),
+    on_event: impl FnMut(WatchEvent, Option<ItemSummary>),
+) -> Result<()> {
+    watch_collection(config, target, interval, shutdown, on_open, on_event)
+        .map_err(|err| unauthenticated(err, config.auth))
+}
+
+/// The watch of [`watch`], its failure as the server caused it.
+fn watch_collection(
     config: DavServer<'_>,
     target: DavTarget<'_>,
     interval: Option<Duration>,
@@ -1112,7 +1126,20 @@ fn is_timeout(err: &io::Error) -> bool {
 /// where the configuration says. A server with no `sync-collection` is
 /// listed instead, as the watch would, and a collection id naming no
 /// collection is refused before the connection is opened.
+/// A 401 to a block with no `auth` says the block configures none.
 pub fn probe(
+    config: DavServer<'_>,
+    home: DavHome,
+    collection: &str,
+    shutdown: &Arc<AtomicBool>,
+    resolver: &mut SecretResolver,
+) -> Result<()> {
+    probe_collection(config, home, collection, shutdown, resolver)
+        .map_err(|err| unauthenticated(err, config.auth))
+}
+
+/// The probe of [`probe`], its failure as the server caused it.
+fn probe_collection(
     config: DavServer<'_>,
     home: DavHome,
     collection: &str,
@@ -1367,6 +1394,21 @@ pub(crate) fn refusal_code(cause: &(dyn error::Error + 'static)) -> Option<Error
         }
         _ => None,
     }
+}
+
+/// `err` under a message saying the account configures no `auth`, when
+/// the server answered a request 401 (RFC 9110 §15.5.2) and `auth` sent
+/// no credential; any other failure is `err` unchanged, its code kept.
+fn unauthenticated(err: Error, auth: &DavAuthConfig) -> Error {
+    let asked = |cause: &(dyn error::Error + 'static)| matches!(refused(cause), Some((401, _)));
+
+    if !matches!(auth, DavAuthConfig::None) || !err.chain().any(asked) {
+        return err;
+    }
+
+    err.context(
+        "DAV server answered 401: it asks for credentials, and the account configures no `auth`",
+    )
 }
 
 /// Whether a refusal's body is a `DAV:error` element, which names the
@@ -2034,6 +2076,51 @@ mod tests {
             crate::error::code(&addressbook),
             "{addressbook:#}"
         );
+    }
+
+    /// A 401 to a block with no `auth` says the account configures none,
+    /// still uncoded; a credential refused says nothing of the kind.
+    #[test]
+    fn a_401_without_auth_names_the_missing_auth() {
+        let addr = fake::refusing("401 Unauthorized", "");
+        let server = format!("http://{addr}/");
+        let tls = crate::config::TlsConfig::default();
+        let probed = |auth: &DavAuthConfig| {
+            let config = DavServer {
+                server: Some(&server),
+                home: None,
+                tls: &tls,
+                alpn: None,
+                proxy: None,
+                auth,
+            };
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let mut resolver = SecretResolver::new();
+            probe(
+                config,
+                DavHome::Addressbooks,
+                "book",
+                &shutdown,
+                &mut resolver,
+            )
+            .unwrap_err()
+        };
+
+        let err = probed(&DavAuthConfig::None);
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("answered 401: it asks for credentials")
+                && message.contains("the account configures no `auth`"),
+            "{message}"
+        );
+        assert_eq!(None, crate::error::code(&err), "{message}");
+
+        let basic = DavAuthConfig::Basic {
+            username: String::from("alice"),
+            password: pimalaya_config::secret::Secret::Raw("made-up".into()),
+        };
+        let err = probed(&basic);
+        assert!(!format!("{err:#}").contains("no `auth`"), "{err:#}");
     }
 
     /// A pinned home set is where a collection id is read, with no

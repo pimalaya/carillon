@@ -173,6 +173,14 @@ The daemon SHALL watch a WebDAV collection by polling an RFC 6578 `sync-collecti
 - **WHEN** the next round runs
 - **THEN** it reconnects and runs again from the same token, and the session is given up only if that also fails
 
+### Requirement: A DAV block may send no credential
+`caldav.auth` and `carddav.auth` SHALL be optional, a block naming none sending no `Authorization` header, as `auth = "none"` does: a server asking for no credential (Radicale with `auth = none`, a server behind a VPN or an authenticating reverse proxy) needs no key for it, as cardamum and calendula read their DAV blocks. A server answering a request 401 to a block sending no credential SHALL fail the watch and `account check` with a message saying so, "DAV server answered 401: it asks for credentials, and the account configures no `auth`", above io-webdav's `WebDAV server returned HTTP 401`, its code unchanged (`null`). A block naming a credential the server refuses fails as before, without the sentence.
+
+#### Scenario: A server asking for credentials a block does not give
+- **GIVEN** a CardDAV account naming no `auth`, its server answering 401
+- **WHEN** `carillon account check` runs
+- **THEN** the `carddav` row fails uncoded, its error saying the server asks for credentials and the account configures no `auth`
+
 ### Requirement: Arrivals are resolved only when a hook wants them
 A watch learns that an item arrived, and sometimes what it says. A backend SHALL report an arrival together with the summary it already read, and SHALL read one it does not have only when the active backend configures the arrival hook of that domain. JMAP SHALL take its summary from the `Email/get` its round already makes, asking for the envelope properties only when a hook wants them. IMAP SHALL read one on a second connection, never the one holding the watch, an IMAP delta naming a UID and nothing more. A backend that can read no envelope SHALL leave the summary empty, and a resolution failure SHALL degrade to an unresolved event rather than ending the watch.
 

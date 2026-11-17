@@ -63,7 +63,7 @@ use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 
 use crate::{
-    config::{JmapAuthConfig, JmapConfig, ProxyConfig},
+    config::{JmapAuthConfig, JmapConfig, ProxyConfig, parse_url},
     error::{self, ErrorCode},
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,
@@ -128,14 +128,13 @@ pub fn http_auth(config: JmapAuthConfig, resolver: &mut SecretResolver) -> Resul
 /// Parses a JMAP server string into a URL.
 ///
 /// A bare authority is discovered through `GET /.well-known/jmap`, a full
-/// URL points straight at the session endpoint.
+/// URL points straight at the session endpoint. A host that is not ASCII is
+/// refused, naming its Punycode form ([`parse_url`]).
 pub fn parse_server(server: &str) -> Result<Url> {
     match Url::parse(server) {
         Ok(url) => Ok(url),
-        Err(url::ParseError::RelativeUrlWithoutBase) => {
-            Ok(Url::parse(&format!("https://{server}"))?)
-        }
-        Err(err) => Err(err.into()),
+        Err(url::ParseError::RelativeUrlWithoutBase) => parse_url(&format!("https://{server}")),
+        Err(_) => parse_url(server),
     }
 }
 
