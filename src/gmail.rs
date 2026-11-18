@@ -36,6 +36,7 @@ use io_gmail::v1::{
     send::GmailSendError,
 };
 use log::{debug, trace, warn};
+use mime::{codec::rfc2047, tree::field::address::parse_addresses};
 use pimalaya_config::secret::SecretResolver;
 use secrecy::ExposeSecret;
 
@@ -323,33 +324,30 @@ fn summarize(message: &GmailMessage) -> ItemSummary {
     };
 
     let (from_name, from_addr) = header("From").map(party).unwrap_or_default();
-    let to = header("To").and_then(|to| to.split(',').next());
-    let (to_name, to_addr) = to.map(party).unwrap_or_default();
+    let (to_name, to_addr) = header("To").map(party).unwrap_or_default();
+    let subject =
+        header("Subject").map(|subject| rfc2047::decode_text(subject.as_bytes()).into_owned());
 
     ItemSummary {
         from_name,
         from_addr,
         to_name,
         to_addr,
-        subject: header("Subject").map(String::from),
+        subject,
         date: header("Date").map(String::from),
     }
 }
 
-/// Splits a `Name <address>` header value into its name and address.
+/// Reads the first mailbox of an address list header into its name, RFC
+/// 2047 encoded words decoded, and its address (RFC 5322 §3.4).
 fn party(value: &str) -> (Option<String>, Option<String>) {
-    let Some((name, address)) = value.rsplit_once('<') else {
-        let address = value.trim();
-        return (None, (!address.is_empty()).then(|| address.to_string()));
+    let list = parse_addresses(value.as_bytes());
+    let Some(mailbox) = list.first() else {
+        return (None, None);
     };
 
-    let name = name.trim().trim_matches('"').trim();
-    let address = address.trim_end().trim_end_matches('>').trim();
-
-    (
-        (!name.is_empty()).then(|| name.to_string()),
-        (!address.is_empty()).then(|| address.to_string()),
-    )
+    let name = mailbox.name.clone().filter(|name| !name.is_empty());
+    (name, mailbox.address.clone())
 }
 
 /// Resolves a label by name, case-insensitively, or by id.
@@ -556,6 +554,26 @@ mod tests {
             (None, Some(String::from("bob@example.org"))),
             party("bob@example.org")
         );
+    }
+
+    #[test]
+    fn a_to_of_several_addresses_reads_as_its_first_and_names_decode() {
+        let message: GmailMessage = serde_json::from_str(
+            r#"{"id":"A","payload":{"headers":[
+                {"name":"Subject","value":"=?UTF-8?Q?R=C3=A9union?="},
+                {"name":"From","value":"=?ISO-8859-1?Q?Andr=E9?= <andre@example.org>"},
+                {"name":"To","value":"\"Doe, Jane\" <jane@example.org>, bob@example.org"}
+            ]}}"#,
+        )
+        .unwrap();
+
+        let summary = summarize(&message);
+
+        assert_eq!(Some("Réunion"), summary.subject.as_deref());
+        assert_eq!(Some("André"), summary.from_name.as_deref());
+        assert_eq!(Some("andre@example.org"), summary.from_addr.as_deref());
+        assert_eq!(Some("Doe, Jane"), summary.to_name.as_deref());
+        assert_eq!(Some("jane@example.org"), summary.to_addr.as_deref());
     }
 
     /// The failure a watch meets arming against a single answer.

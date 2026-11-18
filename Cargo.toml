@@ -22,7 +22,7 @@ maildir = ["dep:io-maildir", "io-maildir/client", "io-maildir/parser"]
 caldav = ["dep:ceichas", "dep:ical-rs", "dep:io-http", "dep:io-webdav", "dep:jiff", "io-webdav/client"]
 carddav = ["dep:io-http", "dep:io-webdav", "io-webdav/client"]
 msgraph = ["dep:io-msgraph", "io-msgraph/client"]
-gmail = ["dep:io-gmail", "io-gmail/client"]
+gmail = ["dep:io-gmail", "dep:mime-rs", "io-gmail/client"]
 gcal = ["dep:io-gcal", "io-gcal/client"]
 gpeople = ["dep:io-gpeople", "io-gpeople/client"]
 notify = ["pimalaya-config/notify"]
@@ -65,7 +65,7 @@ io-sasl = { version = "0.2", default-features = false, features = ["scram"] }
 io-webdav = { version = "0.11.0", default-features = false, optional = true }
 jiff = { version = "1", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"], optional = true }
 log = "0.4"
-mime-rs = { version = "0.2", default-features = false, features = ["base64", "encoding"], optional = true }
+mime-rs = { version = "0.2", default-features = false, features = ["base64", "encoding", "parser"], optional = true }
 pimalaya-cli = { version = "0.6.0", default-features = false, features = ["signal", "terminal"] }
 pimalaya-config = { version = "0.5.2", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.4", default-features = false, features = ["std"] }

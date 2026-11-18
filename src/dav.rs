@@ -81,6 +81,10 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60);
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
 /// Per-read scratch buffer.
 const READ_BUF: usize = 8 * 1024;
+/// How many members one `calendar-multiget` reading what a truncated query left
+/// out names.
+#[cfg(feature = "caldav")]
+const MULTIGET_PAGE: usize = 100;
 
 /// `DAV:getcontenttype` (RFC 4918 §15.5), which a CalDAV server spells
 /// with the `component` parameter RFC 4791 §10.1 allows.
@@ -250,7 +254,7 @@ fn watch_collection(
 
     #[cfg(feature = "caldav")]
     if let Some(alarms) = alarms {
-        alarms.replace(read_alarms(&mut client, &watched.collection, shutdown)?);
+        alarms.replace(read_alarms(&mut client, &watched, shutdown)?);
     }
 
     on_open();
@@ -298,39 +302,63 @@ fn watch_collection(
 /// The comp-filters of one `calendar-query` must all match (RFC 4791
 /// §9.7.1), so each component holding an alarm takes a query of its own.
 /// A server refusing the filter is asked for every member instead, the
-/// book keeping only those holding an alarm.
+/// book keeping only those holding an alarm. A server truncating a query
+/// has the members of the picture it left out read by `calendar-multiget`,
+/// [`MULTIGET_PAGE`] at a time.
 #[cfg(feature = "caldav")]
 fn read_alarms(
     client: &mut WebdavClientStd,
-    collection: &str,
+    watched: &Watched,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<AlarmBook> {
-    let mut book = AlarmBook::new();
+    let collection = &watched.collection;
+    let mut entries = Vec::new();
+    let mut truncated = false;
 
     for component in ["VEVENT", "VTODO"] {
         let filter = format!(
             "<C:comp-filter name=\"{component}\"><C:comp-filter name=\"VALARM\"/></C:comp-filter>"
         );
 
-        let entries = match query(client, collection, &filter, shutdown) {
-            Ok(entries) => entries,
+        match query(client, collection, &filter, shutdown) {
+            Ok((found, cut)) => {
+                entries.extend(found);
+                truncated |= cut;
+            }
             Err(err) => {
                 debug!("dav server refused an alarm filter, reading every member: {err:#}");
-                book = AlarmBook::new();
-
-                for entry in query(client, collection, "", shutdown)? {
-                    let href = join_path(collection, &entry.id);
-                    book.read(&entry.id, &href, entry.etag.as_deref(), &entry.data);
-                }
-
+                (entries, truncated) = query(client, collection, "", shutdown)?;
                 break;
             }
-        };
-
-        for entry in entries {
-            let href = join_path(collection, &entry.id);
-            book.read(&entry.id, &href, entry.etag.as_deref(), &entry.data);
         }
+    }
+
+    if truncated {
+        let read: std::collections::BTreeSet<&str> =
+            entries.iter().map(|entry| entry.id.as_str()).collect();
+        let left: Vec<String> = watched
+            .known
+            .keys()
+            .map(|href| resource(href))
+            .filter(|name| !read.contains(name.as_str()))
+            .collect();
+
+        debug!(
+            "dav server truncated a calendar query, reading {} members",
+            left.len()
+        );
+
+        for page in left.chunks(MULTIGET_PAGE) {
+            let names: Vec<&str> = page.iter().map(String::as_str).collect();
+            entries.extend(multiget(client, collection, &names, shutdown)?);
+        }
+    }
+
+    let mut book = AlarmBook::new();
+
+    for entry in entries {
+        let href = join_path(collection, &entry.id);
+        book.read(&entry.id, &href, entry.etag.as_deref(), &entry.data);
     }
 
     debug!("read {} calendar members holding an alarm", book.len());
@@ -389,14 +417,15 @@ fn resource(href: &str) -> String {
 }
 
 /// Runs one `calendar-query` report for the members `filter` matches,
-/// with their bodies (RFC 4791 §7.8).
+/// with their bodies (RFC 4791 §7.8), and says whether the server truncated
+/// it.
 #[cfg(feature = "caldav")]
 fn query(
     client: &mut WebdavClientStd,
     collection: &str,
     filter: &str,
     shutdown: &Arc<AtomicBool>,
-) -> Result<Vec<CaldavItemEntry>> {
+) -> Result<(Vec<CaldavItemEntry>, bool)> {
     let mut coroutine = CaldavItemList::new(
         &client.base_url,
         client.auth(),
@@ -407,12 +436,8 @@ fn query(
 
     let listing = pump(client, &mut coroutine, shutdown)?;
 
-    if listing.truncated {
-        warn!("dav server truncated the calendar query of {collection}");
-    }
-
     skip_unreadable(&listing.unreadable);
-    Ok(listing.items.into_iter().collect())
+    Ok((listing.items.into_iter().collect(), listing.truncated))
 }
 
 /// Runs one `calendar-multiget` report for the members named, with their
@@ -1627,6 +1652,10 @@ mod tests {
         /// The requests the server answered, as method and path.
         pub type Seen = Arc<Mutex<Vec<String>>>;
 
+        /// How many bodies a `calendar-query` answers, past which it is
+        /// truncated with a 507 row (RFC 6578 §3.6).
+        const QUERY_CAP: usize = 2;
+
         /// Starts the server with no member body, returning its address.
         pub fn start(members: Members, seen: Seen) -> String {
             holding(members, Default::default(), seen)
@@ -1755,8 +1784,17 @@ mod tests {
 
             match method {
                 "REPORT" if body.contains("calendar-query") => {
-                    let held = bodies.lock().unwrap().keys().cloned().collect();
-                    read(held)
+                    let held: Vec<String> = bodies.lock().unwrap().keys().cloned().collect();
+                    let (status, mut xml) = read(held.iter().take(QUERY_CAP).cloned().collect());
+
+                    if held.len() > QUERY_CAP {
+                        xml.truncate(xml.len() - CLOSE.len());
+                        xml.push_str(&format!(
+                            "<d:response><d:href>{path}</d:href><d:status>HTTP/1.1 507 Insufficient Storage</d:status></d:response>{CLOSE}"
+                        ));
+                    }
+
+                    (status, xml)
                 }
                 "REPORT" if body.contains("calendar-multiget") => {
                     let asked = body
@@ -1954,7 +1992,7 @@ mod tests {
         let kind = DavKind::Calendar(vec![WatchDomain::Event]);
         let domains = Domains::resolve(&mut client, &collection, kind, &shutdown).unwrap();
         let mut watched = Watched::arm(&mut client, collection, domains, &shutdown).unwrap();
-        let book = read_alarms(&mut client, &watched.collection, &shutdown).unwrap();
+        let book = read_alarms(&mut client, &watched, &shutdown).unwrap();
         alarms.replace(book);
         assert_eq!(vec![(href.clone(), at("08:45:00"))], day());
 
@@ -1980,6 +2018,42 @@ mod tests {
         };
         assert_eq!(vec![removed], events);
         assert_eq!(Vec::<(String, i64)>::new(), day());
+    }
+
+    #[cfg(feature = "caldav")]
+    #[test]
+    fn a_truncated_alarm_query_reads_the_members_it_left_out() {
+        let members: fake::Members = Default::default();
+        let bodies: fake::Bodies = Default::default();
+
+        for (name, start) in [("a", "090000"), ("b", "100000"), ("c", "110000")] {
+            let href = format!("/cal/alice/work/{name}.ics");
+            members
+                .lock()
+                .unwrap()
+                .push((href.clone(), String::from("1")));
+            bodies.lock().unwrap().insert(href, alarmed(start));
+        }
+
+        let addr = fake::holding(members, bodies, Default::default());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut client = client(&addr);
+        let timer = CeichasTimer::new(Default::default()).unwrap();
+        let alarms = AlarmShared::new(timer.waker());
+
+        let collection = locate(&mut client, None, DavHome::Calendars, "work", &shutdown).unwrap();
+        let kind = DavKind::Calendar(vec![WatchDomain::Event]);
+        let domains = Domains::resolve(&mut client, &collection, kind, &shutdown).unwrap();
+        let watched = Watched::arm(&mut client, collection, domains, &shutdown).unwrap();
+        alarms.replace(read_alarms(&mut client, &watched, &shutdown).unwrap());
+
+        let mut fired: Vec<i64> = alarms
+            .triggers(at("00:00:00"), at("23:00:00"))
+            .into_iter()
+            .map(|(_, at)| at)
+            .collect();
+        fired.sort();
+        assert_eq!(vec![at("08:45:00"), at("09:45:00"), at("10:45:00")], fired);
     }
 
     /// The failure a watch of `kind` meets on a server answering every

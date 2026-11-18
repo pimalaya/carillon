@@ -92,6 +92,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed a Gmail arrival reading `$recipient` from `To` cut at its first comma, so `"Doe, Jane" <jane@example.org>, bob@example.org` gave `"Doe`: `To` and `From` are read as an address list, their first mailbox taken as on the other backends.
+- Fixed a Gmail arrival handing its hook RFC 2047 encoded words, were the API to leave any: `$subject` and the names are decoded as on IMAP.
+- Fixed a CalDAV server truncating the alarm `calendar-query` leaving the alarms of the members it left out unfired for the session: they are read by `calendar-multiget`.
 - Fixed an IMAP arrival handing its hook the subject and names as RFC 2047 encoded words (`=?UTF-8?Q?R=C3=A9union?=`): `$subject`, `$senderName`, `$recipientName`, `$sender` and `$recipient` are decoded, as the other mail backends and himalaya read them.
 - Fixed a JMAP collection larger than one page being watched as its first page: the baseline is listed page by page, and read again when its count does not end at the server's `total`.
 - Fixed a JMAP item moving while its collection was first listed being lost: the state is read before the listing, so the first round reports it.

@@ -1274,6 +1274,7 @@ checksum = "64fab22816df54ec4d6650ed93ac149d33b2844315959c2f4aa773b721482ccc"
 dependencies = [
  "base64-codec",
  "encoding_rs",
+ "memchr",
  "quoted-printable-codec",
  "simd-cpu",
 ]
