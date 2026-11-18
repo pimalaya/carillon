@@ -1,20 +1,3 @@
-[advisories]
-ignore = [
-  # Marvin: RSA key recovery through timing sidechannels, with no
-  # patched version, so it cannot be resolved by upgrading.
-  #
-  # rsa reaches this crate only as a dev dependency, through io-oauth's
-  # jwt-bearer feature, and only to sign the assertion the live tests
-  # trade for an access token. It signs locally and never decrypts, so
-  # there is no network-observable oracle to time.
-  { id = "RUSTSEC-2023-0071", reason = "dev-only JWT signing, no decryption oracle exposed" },
-
-  # chrono is unmaintained, not vulnerable, with no maintained release to
-  # move to. imap-types exposes it in its API (duesee/imap-codec#752), and
-  # the family moves its own code to jiff.
-  { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, see duesee/imap-codec#752" },
-]
-
 [sources]
 allow-org.github = ["pimalaya"]
 unknown-git = "deny"
@@ -22,7 +5,6 @@ unknown-registry = "deny"
 
 [licenses]
 allow = [
-  "0BSD",
   "Apache-2.0 WITH LLVM-exception",
   "Apache-2.0",
   "BSD-3-Clause",
@@ -32,4 +14,12 @@ allow = [
   "MPL-2.0",
   "Unicode-3.0",
   "Zlib",
+]
+
+[advisories]
+# chrono is unmaintained, not vulnerable, with no maintained release to
+# move to. imap-types exposes it in its API (duesee/imap-codec#752), and
+# the family moves its own code to jiff.
+ignore = [
+  { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, see duesee/imap-codec#752" },
 ]
