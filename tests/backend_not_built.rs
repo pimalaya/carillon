@@ -114,7 +114,7 @@ fn a_backend_pinned_away_from_it_leaves_it_unread() {
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(output.status.code(), Some(1), "{json}");
-    assert_eq!(json["code"], Value::Null, "{json}");
+    assert_eq!(json["code"], "capability-missing", "{json}");
     assert!(json["error"].as_str().unwrap().contains("`jmap`"), "{json}");
 }
 
