@@ -121,6 +121,7 @@ use pimalaya_cli::{
     welcome::{is_wanted, shipped_sample},
 };
 use pimalaya_config::toml::ConfigMissingError;
+use simd_cpu::SimdCpu;
 
 use crate::{
     backend::Backend,
@@ -128,7 +129,11 @@ use crate::{
     error::ErrorCode,
 };
 
+/// Installs the SIMD CPU token first, for the codecs mail parsing reaches,
+/// then parses and runs the command.
 fn main() {
+    let _ = SimdCpu::install_detected();
+
     let cli = parse::<Cli>();
     let mut printer = StdoutPrinter::new(&cli.json);
 

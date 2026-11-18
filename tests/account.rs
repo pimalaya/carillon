@@ -12,6 +12,9 @@ use std::{
     fs,
     path::Path,
     process::{Command, Output, Stdio},
+};
+#[cfg(feature = "imap")]
+use std::{
     thread,
     time::{Duration, Instant},
 };
