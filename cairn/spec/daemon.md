@@ -187,7 +187,7 @@ The daemon SHALL watch a WebDAV collection by polling an RFC 6578 `sync-collecti
 - **THEN** the `carddav` row fails uncoded, its error saying the server asks for credentials and the account configures no `auth`
 
 ### Requirement: Arrivals are resolved only when a hook wants them
-A watch learns that an item arrived, and sometimes what it says. A backend SHALL report an arrival together with the summary it already read, and SHALL read one it does not have only when the active backend configures the arrival hook of that domain. JMAP SHALL take its summary from the `Email/get` its round already makes, asking for the envelope properties only when a hook wants them. IMAP SHALL read one on a second connection, never the one holding the watch, an IMAP delta naming a UID and nothing more. A backend that can read no envelope SHALL leave the summary empty, and a resolution failure SHALL degrade to an unresolved event rather than ending the watch.
+A watch learns that an item arrived, and sometimes what it says. A backend SHALL report an arrival together with the summary it already read, and SHALL read one it does not have only when the active backend configures the arrival hook of that domain. JMAP SHALL take its summary from the `Email/get` its round already makes, asking for the envelope properties only when a hook wants them. IMAP SHALL read one on a second connection, never the one holding the watch, an IMAP delta naming a UID and nothing more. A subject and a display name SHALL reach a hook as text, RFC 2047 encoded words decoded (adjacent ones joined, RFC 2047 §6.2), as an IMAP ENVELOPE hands them encoded; an address is never decoded. A backend that can read no envelope SHALL leave the summary empty, and a resolution failure SHALL degrade to an unresolved event rather than ending the watch.
 
 #### Scenario: An account with no arrival hook
 - **GIVEN** an account whose only hook is `imap.hooks.on-flag-add`
@@ -198,6 +198,11 @@ A watch learns that an item arrived, and sometimes what it says. A backend SHALL
 - **GIVEN** a JMAP account whose `jmap.hooks.on-message-add` notification names `$subject` and `$sender`
 - **WHEN** a message arrives
 - **THEN** both are filled from the round's own `Email/get`, with no second request
+
+#### Scenario: An IMAP subject in encoded words
+- **GIVEN** an IMAP account whose `imap.hooks.on-message-add` summary reads `$subject from $senderName`
+- **WHEN** a message arrives whose ENVELOPE subject is `=?UTF-8?Q?R=C3=A9union?=` and whose sender is `=?ISO-8859-1?Q?Andr=E9?=` at `andre@example.org`
+- **THEN** the notification reads `Réunion from André`, and `$sender` reads `André <andre@example.org>`
 
 ### Requirement: Ctrl+C is prompt on every path
 `watch` SHALL install pimalaya-cli's `signal::Shutdown`: the first SIGINT (Ctrl+C), SIGTERM or SIGHUP SHALL request the shutdown, which the watch reads, and a second one SHALL end the process with 130. A requested shutdown SHALL be honoured within roughly a second on every path a watch can be waiting in: idling on a connection, sleeping between polls, backing off before a reconnect, or resolving an arrival's envelope. No path SHALL wait on a server that has stopped answering: every connection the daemon opens SHALL carry a read deadline and SHALL hand back the not-ready failures rather than letting the transport retry them away, since the deadline exists to be the wakeup that re-reads the flag.

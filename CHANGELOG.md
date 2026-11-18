@@ -92,6 +92,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed an IMAP arrival handing its hook the subject and names as RFC 2047 encoded words (`=?UTF-8?Q?R=C3=A9union?=`): `$subject`, `$senderName`, `$recipientName`, `$sender` and `$recipient` are decoded, as the other mail backends and himalaya read them.
 - Fixed a JMAP collection larger than one page being watched as its first page: the baseline is listed page by page, and read again when its count does not end at the server's `total`.
 - Fixed a JMAP item moving while its collection was first listed being lost: the state is read before the listing, so the first round reports it.
 - Fixed a JMAP watch presenting its first credential after a reconnect: a round retried on a fresh connection and every event stream present the credential resolved for them, so a rotated token no longer loses the session and the change that came with its expiry.

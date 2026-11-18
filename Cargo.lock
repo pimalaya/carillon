@@ -185,6 +185,7 @@ dependencies = [
  "io-webdav",
  "jiff",
  "log",
+ "mime-rs",
  "pimalaya-cli",
  "pimalaya-config",
  "pimalaya-stream",

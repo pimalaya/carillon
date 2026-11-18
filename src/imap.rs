@@ -48,6 +48,7 @@ use io_imap::{
 };
 use io_sasl::mechanism::Sasl;
 use log::{debug, trace};
+use mime::codec::rfc2047;
 use pimalaya_config::secret::SecretResolver;
 use url::Url;
 
@@ -465,16 +466,16 @@ fn summarize(items: Vec<MessageDataItem<'static>>) -> ItemSummary {
             continue;
         };
 
-        summary.subject = nstring(&envelope.subject);
+        summary.subject = text(&envelope.subject);
         summary.date = nstring(&envelope.date);
 
         if let Some(from) = envelope.from.first() {
-            summary.from_name = nstring(&from.name);
+            summary.from_name = text(&from.name);
             summary.from_addr = address(from);
         }
 
         if let Some(to) = envelope.to.first() {
-            summary.to_name = nstring(&to.name);
+            summary.to_name = text(&to.name);
             summary.to_addr = address(to);
         }
     }
@@ -487,6 +488,14 @@ fn address(address: &Address<'static>) -> Option<String> {
     let mailbox = nstring(&address.mailbox)?;
     let host = nstring(&address.host)?;
     Some(format!("{mailbox}@{host}"))
+}
+
+/// Reads an IMAP NString holding text or a phrase, its RFC 2047 encoded
+/// words decoded, dropping NIL and empties.
+fn text(value: &NString<'static>) -> Option<String> {
+    let value = value.0.as_ref()?;
+    let value = rfc2047::decode_text(value.as_ref()).into_owned();
+    (!value.is_empty()).then_some(value)
 }
 
 /// Reads an IMAP NString as a plain string, dropping NIL and empties.
@@ -539,6 +548,7 @@ mod tests {
         thread,
     };
 
+    use io_imap::types::envelope::Envelope;
     use pimalaya_cli::error::{ErrorReport, with_code};
     use toml::from_str;
 
@@ -811,5 +821,38 @@ mod tests {
             crate::error::code(&err),
             "{err:#}"
         );
+    }
+
+    /// An envelope address of `name`, `mailbox` and `host`.
+    fn party(name: &'static str, mailbox: &'static str, host: &'static str) -> Address<'static> {
+        Address {
+            name: NString::try_from(name).unwrap(),
+            adl: NString::NIL,
+            mailbox: NString::try_from(mailbox).unwrap(),
+            host: NString::try_from(host).unwrap(),
+        }
+    }
+
+    #[test]
+    fn an_envelope_is_read_with_its_encoded_words_decoded() {
+        let envelope = Envelope {
+            date: NString::try_from("Tue, 17 Nov 2026 09:00:00 +0100").unwrap(),
+            subject: NString::try_from("=?UTF-8?Q?R=C3=A9union?= =?UTF-8?Q?_lundi?=").unwrap(),
+            from: vec![party("=?ISO-8859-1?Q?Andr=E9?=", "andre", "example.org")],
+            sender: Vec::new(),
+            reply_to: Vec::new(),
+            to: vec![party("=?UTF-8?B?w4lsb2RpZQ==?=", "elodie", "example.org")],
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            in_reply_to: NString::NIL,
+            message_id: NString::NIL,
+        };
+
+        let summary = summarize(vec![MessageDataItem::Envelope(envelope)]);
+
+        assert_eq!(Some("Réunion lundi"), summary.subject.as_deref());
+        assert_eq!(Some("André"), summary.from_name.as_deref());
+        assert_eq!(Some("andre@example.org"), summary.from_addr.as_deref());
+        assert_eq!(Some("Élodie"), summary.to_name.as_deref());
     }
 }
