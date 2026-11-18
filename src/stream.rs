@@ -19,7 +19,7 @@ use crate::{
     config::Hook,
     error::{self, ErrorCode},
     event::{ItemSummary, WatchEvent},
-    hook::{self, HookCollection, HookFailure, HookReaction},
+    hook::{self, HookCollection, HookFailure, HookFired, HookReaction, command::HookCommands},
 };
 
 /// What `watch` prints once it stopped.
@@ -275,14 +275,21 @@ fn parts(err: &Error) -> (Option<ErrorCode>, String, Vec<String>) {
 pub struct WatchEvents {
     account: String,
     sender: Sender<WatchStreamEvent>,
+    commands: HookCommands,
 }
 
 impl WatchEvents {
-    /// The sender of `account`'s events.
-    pub fn new(account: impl Into<String>, sender: Sender<WatchStreamEvent>) -> Self {
+    /// The sender of `account`'s events, its hook commands run by
+    /// `commands`.
+    pub fn new(
+        account: impl Into<String>,
+        sender: Sender<WatchStreamEvent>,
+        commands: HookCommands,
+    ) -> Self {
         Self {
             account: account.into(),
             sender,
+            commands,
         }
     }
 
@@ -318,7 +325,8 @@ impl WatchEvents {
     }
 
     /// Reports `change` in `collection`, then fires `hook` when one is
-    /// configured for it, reporting the reactions that failed.
+    /// configured for it, reporting the reactions that failed and handing
+    /// its command to the commands.
     pub fn react(
         &self,
         hook: Option<Hook<'_>>,
@@ -333,19 +341,14 @@ impl WatchEvents {
         });
 
         if let Some(hook) = hook {
-            self.failed(hook::run(hook, change, collection, summary));
+            self.fired(hook::run(hook, change, collection, summary));
         }
     }
 
-    /// Reports the alarm `firing` of `collection`, its hook having fired
-    /// with the reactions `failures` failed.
+    /// Reports the alarm `firing` of `collection`, then what its hook
+    /// `fired`.
     #[cfg(alarm)]
-    pub fn alarm(
-        &self,
-        collection: HookCollection<'_>,
-        firing: &AlarmFiring,
-        failures: Vec<HookFailure>,
-    ) {
+    pub fn alarm(&self, collection: HookCollection<'_>, firing: &AlarmFiring, fired: HookFired) {
         let zone = jiff::tz::TimeZone::system();
 
         self.send(WatchStreamEvent::AlarmFired {
@@ -359,7 +362,25 @@ impl WatchEvents {
             trigger: hook::rfc3339(firing.trigger, &zone),
         });
 
-        self.failed(failures);
+        self.fired(fired);
+    }
+
+    /// Reports the reactions a hook failed at once, and runs its command,
+    /// one at a time per command of the account, reporting its failure.
+    fn fired(&self, fired: HookFired) {
+        self.failed(fired.failures);
+
+        let Some(job) = fired.command else {
+            return;
+        };
+
+        let key = format!("{}\n{:?}", self.account, job.command);
+        let events = self.clone();
+
+        self.commands.submit(key, job, move |error| {
+            let reaction = HookReaction::Command;
+            events.failed(vec![HookFailure { reaction, error }]);
+        });
     }
 
     /// Reports each reaction of a hook that failed.

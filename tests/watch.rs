@@ -14,7 +14,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::mpsc::{self, Receiver},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::Value;
@@ -188,6 +188,39 @@ fn a_hook_printing_to_stdout_reaches_stderr() {
 
     let stderr = fs::read_to_string(home.path().join("stderr")).unwrap();
     assert!(stderr.contains("hook-said-hi"), "{stderr}");
+}
+
+/// A hook command sleeping holds neither the next change nor a shutdown:
+/// it runs off the watch, and is sent SIGTERM when the watch stops.
+#[test]
+fn a_slow_hook_holds_neither_the_watch_nor_its_shutdown() {
+    let home = TempDir::new().unwrap();
+    let root = maildir(home.path());
+    let toml = format!(
+        "[accounts.a]\nmaildir.mailbox = \".\"\nmaildir.root = {root:?}\n\
+         maildir.watch.poll.interval = 1\n\
+         maildir.hooks.on-message-add.command = \"sleep 30\"\n"
+    );
+    let watch = Watch::start(home.path(), &toml, &["--json"]);
+
+    assert_eq!(watch.json()["event"], "session-opened");
+    thread::sleep(Duration::from_secs(2));
+    fs::write(format!("{root}/new/1700000000.1.carillon"), "\r\n").unwrap();
+    assert_eq!(watch.json()["event"], "changed");
+
+    fs::write(format!("{root}/new/1700000000.2.carillon"), "\r\n").unwrap();
+    let second = watch.lines.recv_timeout(Duration::from_secs(5));
+    let second: Value = serde_json::from_str(&second.expect("a second change in time")).unwrap();
+    assert_eq!(second["event"], "changed", "{second}");
+
+    let stopping = Instant::now();
+    let (rest, status) = watch.interrupt();
+    assert_eq!(status, Some(0), "{rest:?}");
+    assert!(
+        stopping.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        stopping.elapsed()
+    );
 }
 
 /// A session failing before it watches anything, here a mailbox the

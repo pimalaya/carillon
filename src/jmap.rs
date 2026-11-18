@@ -20,7 +20,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -78,6 +78,9 @@ const PAGE: u64 = 500;
 /// How many times a baseline is listed before a collection that keeps
 /// moving under it fails the session.
 const LISTINGS: usize = 3;
+/// How many pings an event stream may miss, nothing read, before it is taken
+/// for dead and opened again.
+const PINGS_MISSED: u64 = 3;
 /// Opens a JMAP session against the configured server, resolving its
 /// credential through `resolver`, so a caller opening several backends of
 /// one account spawns each distinct credential command once.
@@ -605,7 +608,9 @@ fn summarize(email: &JmapEmail) -> ItemSummary {
 /// is asked to stay open (`closeafter=no`) and dropped on news, since
 /// not every server ends it after a state event when asked to. A read
 /// that times out is the wakeup this loop arms to look at the shutdown
-/// flag.
+/// flag. A stream that sent nothing, its pings included, for
+/// [`PINGS_MISSED`] pings is taken for dead and handed back as ended, to
+/// be opened again.
 ///
 /// `last_event_id` is the id of the last event read, sent back so the
 /// server pushes what moved between two subscriptions (RFC 8620 §7.3).
@@ -637,6 +642,8 @@ fn subscribe(
         opts,
     )?;
 
+    let silence = (ping > 0).then(|| Duration::from_secs(ping * PINGS_MISSED));
+    let mut heard = Instant::now();
     let mut buf = [0u8; READ_BUF];
     let mut arg: Option<Vec<u8>> = None;
 
@@ -660,8 +667,16 @@ fn subscribe(
 
                 match source.stream.read(&mut buf) {
                     Ok(0) => return Ok(false),
-                    Ok(read) => arg = Some(buf[..read].to_vec()),
-                    Err(err) if is_timeout(&err) => continue,
+                    Ok(read) => {
+                        heard = Instant::now();
+                        arg = Some(buf[..read].to_vec());
+                    }
+                    Err(err) if is_timeout(&err) => {
+                        if silence.is_some_and(|silence| heard.elapsed() >= silence) {
+                            debug!("jmap event stream missed {PINGS_MISSED} pings, reopening it");
+                            return Ok(false);
+                        }
+                    }
                     Err(err) => return Err(err).context("read failed"),
                 }
             }
@@ -999,7 +1014,7 @@ mod tests {
         io::{BufRead, BufReader},
         net::{SocketAddr, TcpListener, TcpStream},
         path::Path,
-        sync::Mutex,
+        sync::{Mutex, mpsc},
         thread,
     };
 
@@ -1218,6 +1233,9 @@ mod tests {
         /// Whether a message arrives right after the listing reaches the
         /// end of the inbox.
         arrive: bool,
+        /// Whether the event stream sends its head and then nothing, as a
+        /// stream gone dead reads.
+        silent: bool,
     }
 
     /// A loopback JMAP server answering from `mock`: the session, the inbox,
@@ -1282,6 +1300,7 @@ mod tests {
 
             if path.starts_with("/es") {
                 let state = mock.held + 1;
+                let silent = mock.silent;
                 drop(mock);
                 let frame = format!(
                     "event: state\ndata: {{\"@type\":\"StateChange\",\
@@ -1290,6 +1309,7 @@ mod tests {
                 let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
                             Transfer-Encoding: chunked\r\n\r\n";
                 let chunk = format!("{head}{:x}\r\n{frame}\r\n", frame.len());
+                let chunk = if silent { String::from(head) } else { chunk };
                 stream.write_all(chunk.as_bytes()).unwrap();
                 let _ = reader.read_line(&mut String::new());
                 return;
@@ -1552,5 +1572,27 @@ mod tests {
 
         assert_eq!(2, listings);
         assert_eq!(2, known.len());
+    }
+
+    #[test]
+    fn an_event_stream_missing_its_pings_is_opened_again() {
+        let silent = Mock {
+            held: 1,
+            silent: true,
+            ..Default::default()
+        };
+        let (_client, config, _mock, _dir) = opened(silent);
+        let (sent, got) = mpsc::channel();
+
+        thread::spawn(move || {
+            let mut watched = watched(WatchDomain::Message);
+            watched.state = String::from("s1");
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let news = subscribe(&config, &[watched], 1, &mut None, &shutdown);
+            sent.send(news.map_err(|err| err.to_string())).unwrap();
+        });
+
+        let news = got.recv_timeout(Duration::from_secs(15)).unwrap();
+        assert_eq!(Ok(false), news);
     }
 }

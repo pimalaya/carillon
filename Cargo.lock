@@ -184,6 +184,7 @@ dependencies = [
  "io-sasl",
  "io-webdav",
  "jiff",
+ "libc",
  "log",
  "mime-rs",
  "pimalaya-cli",

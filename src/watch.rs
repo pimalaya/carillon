@@ -70,6 +70,7 @@ use crate::{
     config::{AccountConfig, Config},
     error::{self, ErrorCode},
     event::{ItemSummary, WatchEvent},
+    hook::command::HookCommands,
     stream::{WatchEvents, WatchMethod, WatchOutput, WatchStop},
 };
 #[cfg(dav)]
@@ -100,6 +101,9 @@ const HEALTHY_THRESHOLD: Duration = Duration::from_secs(60);
 const BACKOFF_STEP: Duration = Duration::from_millis(200);
 /// How often the command reads the signal while no event comes.
 const SIGNAL_STEP: Duration = Duration::from_millis(100);
+/// How long the hook commands still running at a shutdown are given to end
+/// once sent SIGTERM.
+const HOOK_GRACE: Duration = Duration::from_secs(1);
 
 /// Watch accounts and fire their hooks on every change.
 ///
@@ -125,12 +129,13 @@ impl WatchCommand {
         let shutdown = Arc::new(AtomicBool::new(false));
         #[cfg(alarm)]
         let wakers = AlarmWakers::default();
+        let commands = HookCommands::start()?;
         let (sender, receiver) = mpsc::channel();
         let mut handles = Vec::with_capacity(selected.len());
 
         for (name, account) in selected {
             let shutdown = shutdown.clone();
-            let events = WatchEvents::new(name.clone(), sender.clone());
+            let events = WatchEvents::new(name.clone(), sender.clone(), commands.clone());
             #[cfg(alarm)]
             let wakers = wakers.clone();
 
@@ -179,6 +184,8 @@ impl WatchCommand {
                         warn!("cannot wake an alarm thread: {err}");
                     }
                 }
+
+                commands.stop(HOOK_GRACE);
             }
         }
 
@@ -767,8 +774,8 @@ impl AlarmRunner {
                         name,
                         value: &value,
                     };
-                    let failures = hook::run_alarm(&hook, collection, firing);
-                    events.alarm(collection, firing, failures);
+                    let fired = hook::run_alarm(&hook, collection, firing);
+                    events.alarm(collection, firing, fired);
                 })
             })?;
 

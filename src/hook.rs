@@ -13,9 +13,13 @@
 //! spawned command, so both shapes template against one vocabulary.
 //!
 //! A failing hook is handed back to the watch, which prints it as an
-//! event and goes on, since a broken script must not stop the watch.
+//! event and goes on, since a broken script must not stop the watch. The
+//! command is handed back too, as a [`HookJob`], for [`command`] to run
+//! off the watch.
 
-use std::{collections::BTreeMap, io};
+pub mod command;
+
+use std::collections::BTreeMap;
 
 use anyhow::{Error, Result, bail};
 #[cfg(alarm)]
@@ -88,6 +92,24 @@ pub struct HookFailure {
     pub reaction: HookReaction,
     /// Why it failed.
     pub error: Error,
+}
+
+/// What firing a hook did at once, and the command it leaves to run.
+#[derive(Default)]
+pub struct HookFired {
+    /// The reactions that failed at once, the notification's.
+    pub failures: Vec<HookFailure>,
+    /// The command to run, with the variables it runs with.
+    pub command: Option<HookJob>,
+}
+
+/// A hook command and the variables its environment holds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HookJob {
+    /// The command.
+    pub command: CommandConfig,
+    /// The variables, by name.
+    pub vars: Vec<(&'static str, String)>,
 }
 
 /// The collection a watch is on: what its backend calls it, and which one
@@ -211,13 +233,13 @@ pub fn validate(
 }
 
 /// Fires `hook` for `event`, with the summary a resolved arrival carries,
-/// handing back the reactions that failed.
+/// handing back the reactions that failed and the command to run.
 pub fn run(
     hook: Hook<'_>,
     event: &WatchEvent,
     collection: HookCollection<'_>,
     summary: Option<&ItemSummary>,
-) -> Vec<HookFailure> {
+) -> HookFired {
     trace!("dispatch event: {event:?}");
 
     match hook {
@@ -231,14 +253,14 @@ pub fn run(
             // only a flag event resolves to.
             event => {
                 warn!("flag hook resolved for {event:?}, skipping");
-                Vec::new()
+                HookFired::default()
             }
         },
     }
 }
 
 /// Fires an item-level hook.
-fn run_item_hook(hook: &ItemHook, vars: BTreeMap<&'static str, String>) -> Vec<HookFailure> {
+fn run_item_hook(hook: &ItemHook, vars: BTreeMap<&'static str, String>) -> HookFired {
     fire(hook.notify.as_ref(), hook.command.as_ref(), &vars)
 }
 
@@ -248,10 +270,10 @@ fn run_flag_hook(
     id: &str,
     collection: HookCollection<'_>,
     flag: &str,
-) -> Vec<HookFailure> {
+) -> HookFired {
     if !hook.flags.is_empty() && !matches_filter(hook, flag) {
         trace!("flag hook skipped: `{flag}` is not in the filter");
-        return Vec::new();
+        return HookFired::default();
     }
 
     let mut vars = seeded(Vocabulary::flag(collection.name));
@@ -346,13 +368,13 @@ fn insert_party(
 ///
 /// Times reach the hook as RFC 3339 in the system's zone, and an `AUDIO`
 /// alarm's notification asks for the freedesktop alarm sound. Hands back
-/// the reactions that failed.
+/// the reactions that failed and the command to run.
 #[cfg(alarm)]
 pub fn run_alarm(
     hook: &ItemHook,
     collection: HookCollection<'_>,
     firing: &AlarmFiring,
-) -> Vec<HookFailure> {
+) -> HookFired {
     let zone = TimeZone::system();
     let mut vars = seeded(Vocabulary::alarm(collection.name));
 
@@ -397,23 +419,23 @@ pub fn rfc3339(instant: i64, zone: &TimeZone) -> String {
     }
 }
 
-/// Runs the two reactions a hook can carry, handing back either failure.
+/// Shows the notification a hook can carry and hands back its command.
 fn fire(
     notify: Option<&NotificationTemplate>,
     command: Option<&CommandConfig>,
     vars: &BTreeMap<&'static str, String>,
-) -> Vec<HookFailure> {
+) -> HookFired {
     fire_with(notify, command, vars, None)
 }
 
-/// Runs the two reactions a hook can carry, the notification asking for
-/// `sound` when one is given, handing back either failure.
+/// Shows the notification a hook can carry, asking for `sound` when one
+/// is given, and hands back its command with the variables.
 fn fire_with(
     notify: Option<&NotificationTemplate>,
     command: Option<&CommandConfig>,
     vars: &BTreeMap<&'static str, String>,
     sound: Option<&'static str>,
-) -> Vec<HookFailure> {
+) -> HookFired {
     let mut failures = Vec::new();
 
     if let Some(notify) = notify
@@ -423,14 +445,15 @@ fn fire_with(
         failures.push(HookFailure { reaction, error });
     }
 
-    if let Some(command) = command
-        && let Err(error) = run_command(command, vars)
-    {
-        let reaction = HookReaction::Command;
-        failures.push(HookFailure { reaction, error });
-    }
+    let command = command.map(|command| HookJob {
+        command: command.clone(),
+        vars: vars
+            .iter()
+            .map(|(name, value)| (*name, value.clone()))
+            .collect(),
+    });
 
-    failures
+    HookFired { failures, command }
 }
 
 /// Expands the template and shows the desktop notification.
@@ -457,26 +480,6 @@ fn fire_notification(
     Ok(())
 }
 
-/// Spawns the hook command with the variables in its environment.
-///
-/// Both TOML shapes, a string handed to the platform shell and a list
-/// spawned directly, become one [`std::process::Command`] here, so there
-/// is one runtime path. Its stdout is carillon's stderr, the watch's
-/// stdout holding its events and result alone.
-fn run_command(command: &CommandConfig, vars: &BTreeMap<&'static str, String>) -> Result<()> {
-    let status = command
-        .to_command()
-        .envs(vars.iter().map(|(key, value)| (*key, value.as_str())))
-        .stdout(io::stderr())
-        .status()?;
-
-    if !status.success() {
-        bail!("Hook command exited with {status}");
-    }
-
-    Ok(())
-}
-
 /// Whether `flag` matches one of the filter's names, with or without an
 /// IMAP backslash or a keyword dollar.
 fn matches_filter(hook: &FlagHook, flag: &str) -> bool {
@@ -495,14 +498,14 @@ mod tests {
         NotificationTemplate::new("something happened", body).expect("build the template")
     }
 
-    /// A command exiting non-zero is handed back, for the watch to
-    /// report, where a notification-less hook used to only log it.
-    #[cfg(unix)]
+    /// Firing a hook runs no command: it hands the command back with the
+    /// event's variables, for the hook commands to run off the watch.
     #[test]
-    fn a_failing_command_is_handed_back() {
+    fn a_hook_hands_its_command_back_with_its_variables() {
+        let command = CommandConfig::Shell(String::from("sleep 30"));
         let hook = ItemHook {
             notify: None,
-            command: Some(CommandConfig::Shell(String::from("exit 3"))),
+            command: Some(command.clone()),
         };
         let event = WatchEvent::ItemAdded {
             domain: crate::event::WatchDomain::Message,
@@ -513,18 +516,13 @@ mod tests {
             value: "INBOX",
         };
 
-        let failures = run(Hook::Item(&hook), &event, collection, None);
+        let fired = run(Hook::Item(&hook), &event, collection, None);
 
-        assert_eq!(1, failures.len());
-        assert_eq!(HookReaction::Command, failures[0].reaction);
-        let error = failures[0].error.to_string();
-        assert!(error.contains("exited with"), "{error}");
-
-        let hook = ItemHook {
-            command: Some(CommandConfig::Shell(String::from("true"))),
-            ..hook
-        };
-        assert!(run(Hook::Item(&hook), &event, collection, None).is_empty());
+        assert!(fired.failures.is_empty());
+        let job = fired.command.expect("a command");
+        assert_eq!(command, job.command);
+        assert!(job.vars.contains(&("id", String::from("1"))));
+        assert!(job.vars.contains(&("mailbox", String::from("INBOX"))));
     }
 
     /// The regression this validation exists for: a removal whose body
@@ -722,7 +720,16 @@ mod tests {
             value: "work",
         };
 
-        run_alarm(&hook, collection, &firing);
+        let job = run_alarm(&hook, collection, &firing).command.unwrap();
+        let commands = command::HookCommands::start().unwrap();
+        commands.submit(String::from("alarm"), job, |err| panic!("{err:#}"));
+
+        for _ in 0..50 {
+            if out.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
 
         let fired = std::fs::read_to_string(&out).expect("the command ran");
         let (uid, at) = fired.split_once(' ').expect("two words");
