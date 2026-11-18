@@ -93,6 +93,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed `-b` naming a backend the account has no block for failing uncoded, and `watch` retrying it for ever: `account check` and `watch` fail coded `capability-missing`, "Account `a` has no `imap` block", as himalaya refuses its `--backend`, and `watch` stops that account for the run.
 - Fixed a JMAP event stream gone dead holding a push watch: one that sent nothing for three pings is opened again.
 - Fixed the sample's `on-flag-add` command notifying the literal `$flag set on $id`: a list runs as written, its variables in its environment only, so the sample hands it to `sh -c`, and says so.
 - Fixed a DAV watch or an IMAP envelope resolution holding a dead connection until TCP gave up, after a resume or a network change: a request the server sends nothing back to for 60 seconds fails, and the connection is reopened.

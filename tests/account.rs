@@ -12,6 +12,8 @@ use std::{
     fs,
     path::Path,
     process::{Command, Output, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
 use serde_json::Value;
@@ -233,4 +235,71 @@ fn the_account_abouts_are_the_familys() {
     let ls = run(toml, &["account", "ls"]);
     assert_eq!(ls.status.code(), Some(0));
     assert_eq!(ls.stdout, list.stdout);
+}
+
+/// `-b` naming a backend the account has no block for is refused as
+/// himalaya refuses its `--backend`, coded `capability-missing`: `account
+/// check` fails, and `watch` stops the account rather than retrying it.
+#[cfg(feature = "imap")]
+#[test]
+fn a_pinned_backend_the_account_lacks_is_capability_missing() {
+    let home = TempDir::new().unwrap();
+    let root = home.path().join("mail");
+    for dir in ["cur", "new", "tmp"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    let path = home.path().join("config.toml");
+    let toml = format!(
+        "[accounts.a]\ndefault = true\nmaildir.mailbox = \".\"\nmaildir.root = {:?}\n",
+        root.display().to_string()
+    );
+    fs::write(&path, toml).unwrap();
+
+    let json = failure(&run_in(
+        home.path(),
+        &path,
+        &["-b", "imap", "account", "check"],
+    ));
+    assert_eq!(json["code"], "capability-missing", "{json}");
+    assert_eq!(json["error"], "Account `a` has no `imap` block", "{json}");
+
+    let mut watch = Command::new(env!("CARGO_BIN_EXE_carillon"))
+        .args([
+            "--json",
+            "-c",
+            path.to_str().unwrap(),
+            "-b",
+            "imap",
+            "watch",
+        ])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env_remove("RUST_LOG")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while watch.try_wait().unwrap().is_none() {
+        if Instant::now() >= deadline {
+            watch.kill().unwrap();
+            panic!("the watch kept retrying");
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let output = watch.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let lines: Vec<Value> = stdout
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(lines[0]["event"], "session-lost", "{stdout}");
+    assert_eq!(lines[0]["code"], "capability-missing", "{stdout}");
+    assert_eq!(
+        lines.last().unwrap()["code"],
+        "capability-missing",
+        "{stdout}"
+    );
 }

@@ -287,7 +287,10 @@ fn watch_account(
             Err(err) => {
                 events.lost(&err);
 
-                if error::code(&err) == Some(ErrorCode::BackendNotBuilt) {
+                if matches!(
+                    error::code(&err),
+                    Some(ErrorCode::BackendNotBuilt | ErrorCode::CapabilityMissing)
+                ) {
                     stopped = Err(err);
                     break;
                 }
@@ -319,7 +322,7 @@ fn watch_account(
 /// the backend's own config, so anything it cannot do was already refused
 /// when the file was read.
 fn watch_session(
-    #[cfg_attr(not(any(alarm, feature = "imap")), allow(unused_variables))] account: &str,
+    #[cfg_attr(not(any(backend, feature = "pimdir")), allow(unused_variables))] account: &str,
     config: &AccountConfig,
     backend: Backend,
     shutdown: &Arc<AtomicBool>,
@@ -374,7 +377,7 @@ fn watch_session(
         }
 
         if backend == Backend::Imap {
-            bail!("Account has no `imap` config block");
+            return Err(error::backend_missing(account, "imap"));
         }
     }
 
@@ -423,7 +426,7 @@ fn watch_session(
         }
 
         if backend == Backend::Jmap {
-            bail!("Account has no `jmap` config block");
+            return Err(error::backend_missing(account, "jmap"));
         }
     }
 
@@ -456,7 +459,7 @@ fn watch_session(
         }
 
         if backend == Backend::Maildir {
-            bail!("Account has no `maildir` config block");
+            return Err(error::backend_missing(account, "maildir"));
         }
     }
 
@@ -492,7 +495,7 @@ fn watch_session(
         }
 
         if backend == Backend::Caldav {
-            bail!("Account has no `caldav` config block");
+            return Err(error::backend_missing(account, "caldav"));
         }
     }
 
@@ -525,7 +528,7 @@ fn watch_session(
         }
 
         if backend == Backend::Carddav {
-            bail!("Account has no `carddav` config block");
+            return Err(error::backend_missing(account, "carddav"));
         }
     }
 
@@ -564,7 +567,7 @@ fn watch_session(
         }
 
         if backend == Backend::Msgraph {
-            bail!("Account has no `msgraph` config block");
+            return Err(error::backend_missing(account, "msgraph"));
         }
     }
 
@@ -595,7 +598,7 @@ fn watch_session(
         }
 
         if backend == Backend::Gmail {
-            bail!("Account has no `gmail` config block");
+            return Err(error::backend_missing(account, "gmail"));
         }
     }
 
@@ -623,7 +626,7 @@ fn watch_session(
         }
 
         if backend == Backend::Gcal {
-            bail!("Account has no `gcal` config block");
+            return Err(error::backend_missing(account, "gcal"));
         }
     }
 
@@ -651,7 +654,7 @@ fn watch_session(
         }
 
         if backend == Backend::Gpeople {
-            bail!("Account has no `gpeople` config block");
+            return Err(error::backend_missing(account, "gpeople"));
         }
     }
 
@@ -674,7 +677,7 @@ fn watch_session(
         }
 
         if backend == Backend::Pimdir {
-            bail!("Account has no `pimdir` config block");
+            return Err(error::backend_missing(account, "pimdir"));
         }
     }
 

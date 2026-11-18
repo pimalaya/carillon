@@ -229,8 +229,13 @@ impl AccountCheckCommand {
             report.backends.push(row("pimdir", Err(err)));
         }
 
-        if report.backends.is_empty() {
+        if report.backends.is_empty() && backend == Backend::Auto {
             bail!("No backend matching `{backend}` is configured for this account");
+        }
+
+        if report.backends.is_empty() {
+            let backend = backend.to_string();
+            return Err(error::backend_missing(&report.account, &backend));
         }
 
         let failed = report.backends.iter().any(|check| !check.ok);

@@ -653,6 +653,7 @@ A failure a caller is expected to act on SHALL carry a stable code, printed unde
 | `account-default-missing` | `-a` named no account and none is marked default |
 | `account-default-several` | `-a` named no account and several are marked default |
 | `backend-not-built` | a command reached a backend block the build leaves out |
+| `capability-missing` | `-b` named a backend the account has no block for, as himalaya codes its `--backend` |
 
 A DAV 403 naming another precondition is no matter of rights and SHALL carry no code. A watch's `session-lost` event SHALL carry the code of the failure that ended the session, `null` when it carries none.
 
@@ -677,7 +678,12 @@ The default cargo features SHALL include `vendored`, as every family binary's do
 - **THEN** it starts
 
 ### Requirement: The backend is picked by `-b`
-`-b/--backend` SHALL take `auto`, its default, or one backend by name: `imap`, `jmap`, `maildir`, `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople` or `pimdir`, every one of them in every build, a backend the build leaves out failing coded `backend-not-built` once a command reaches its block. `auto` SHALL let `watch` take the first block the account declares in that order and `account check` check every one; a name SHALL narrow both to that block. The help SHALL state the order and list every value as clap's possible values, and a value outside them SHALL be refused as a command line the grammar refuses, naming the possible values.
+`-b/--backend` SHALL take `auto`, its default, or one backend by name: `imap`, `jmap`, `maildir`, `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople` or `pimdir`, every one of them in every build, a backend the build leaves out failing coded `backend-not-built` once a command reaches its block. `auto` SHALL let `watch` take the first block the account declares in that order and `account check` check every one; a name SHALL narrow both to that block. A name the account has no block for SHALL fail both coded `capability-missing`, "Account `<name>` has no `<backend>` block", as himalaya refuses its `--backend`, `watch` printing it as the account's `session-lost` and stopping that account for the run, as a backend the build leaves out. The help SHALL state the order and list every value as clap's possible values, and a value outside them SHALL be refused as a command line the grammar refuses, naming the possible values.
+
+#### Scenario: A backend the account has no block for
+- **GIVEN** an account `a` holding a `maildir` block alone
+- **WHEN** `carillon --json -b imap account check` runs, then `carillon --json -b imap watch`
+- **THEN** both fail coded `capability-missing` with "Account `a` has no `imap` block", exiting 1, the watch printing one `session-lost` event first and retrying nothing
 
 #### Scenario: A backend no build knows
 - **WHEN** `carillon -b nope watch` runs

@@ -196,6 +196,8 @@ pub enum ErrorCode {
     AccountDefaultMissing,
     /// Several accounts are marked default, and `-a` named none.
     AccountDefaultSeveral,
+    /// `-b` named a backend the account has no block for.
+    CapabilityMissing,
     /// The account declares a backend this build leaves out, which a
     /// command reached: a build with its cargo feature serves it.
     #[cfg_attr(
@@ -295,6 +297,13 @@ pub fn backend_not_built(backend: &str) -> Error {
     );
 
     CodedError::new(ErrorCode::BackendNotBuilt, message).into()
+}
+
+/// The failure of `-b` naming the `backend` block, which `account` does
+/// not configure, as himalaya refuses its `--backend`.
+pub fn backend_missing(account: &str, backend: &str) -> Error {
+    let message = format!("Account `{account}` has no `{backend}` block");
+    CodedError::new(ErrorCode::CapabilityMissing, message).into()
 }
 
 /// The code of a watched collection of `domain` that does not exist, after
