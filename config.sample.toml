@@ -1,388 +1,155 @@
-# ================================================================================
-# `carillon` configuration file.
-#
-# Loaded from every existing path among, each merged on top of the ones before:
-#   - $XDG_CONFIG_HOME/carillon/config.toml
-#   - $HOME/.config/carillon/config.toml
-#   - $HOME/.carillonrc
-#
-# Override with `carillon -c <PATH>`, one path per flag: repeat it to merge
-# several files, the first one being the base and the next ones deep-merged on
-# top of it. A path is never split on `:`.
-#
-# Carillon writes no configuration: copy this file, keep one backend and the
-# hooks you want, then delete the rest, and run `carillon account check`.
-#
-# A duration (`watch.poll.interval`, `watch.idle.timeout`, `watch.push.ping`) is
-# an integer of seconds or a number and its unit: `90`, `"90s"`, `"5m"`, `"2h"`.
-# ================================================================================
-
 [accounts.example]
-
-# Use this account when `-a/--account` is not passed.
-default = true
-
-# Proxy the network backends of this account connect through, absent their own
-# `<backend>.proxy` block (same keys). Without any, the `all_proxy` and
-# `https_proxy` environment variables are read. The URL takes `socks5://`,
-# `socks5h://` or `http://`.
-#proxy.url = "socks5h://localhost:1080"
-#proxy.username = "alice"
-#proxy.password.command = "pass show proxy"
-
-
-# --------------------------------------------------------------------------------
-# Backend config
-# --------------------------------------------------------------------------------
-
-# Declare one or more backend blocks below; `-b/--backend` picks one, the first
-# declared by default. A block of a backend the build leaves out loads, and a
-# command reaching it fails naming the cargo feature to build with. Each block
-# names the collection it watches (JMAP and Graph take one per domain) and its
-# hooks under `<backend>.hooks`, each named `on-<subject>-<verb>`
-# (`on-message-add`, `on-flag-remove`, `on-card-change`) and firing a `notify`
-# notification, a `command` (shell string or [program, args...] list), or both.
-# Hooks template against $id, $collection,
-# $mailbox/$calendar/$addressbook, $flag for flag hooks and envelope variables
-# ($subject, $sender…) for message arrivals, camelCase ($senderName);
-# `${name:-default}` covers an empty value. A command gets the same variables
-# in its environment, never in its text: a shell line expands them itself, a
-# list runs as written, so hand it to `sh -c` to put a value in an argument. A
-# secret is `raw = "..."` or `command = "..."`. A `command`, of a hook or of a
-# secret, may be spelt `cmd`.
-
-# ---- IMAP: an idle connection (RFC 2177) ---------------------------------------
-
-# The mailbox this account watches. Required.
-imap.mailbox = "INBOX"
-
-# Server address: a bare authority (`imap.example.org[:port]`) is read as
-# `imaps://<authority>`; an `imap://` (cleartext, optionally upgraded with
-# STARTTLS) or `imaps://` (implicit TLS) URL is used verbatim.
-imap.server = "imaps://imap.example.org"
-
-# Upgrade a cleartext connection with STARTTLS.
-#imap.starttls = false
-
-# TLS options, defaulting to the first provider available at runtime.
-#imap.tls.provider = "rustls"     # or "native-tls"
-#imap.tls.rustls.crypto = "ring"  # or "aws"
-#imap.tls.cert = "~/certs/example.pem"  # tilde and $VAR are expanded
-
-# ALPN identifiers offered during the TLS handshake, unset taking io-imap's own
-# `["imap"]`. An empty list skips ALPN, a non-empty one replaces the default,
-# and only rustls reads it, native-tls having no ALPN.
-#imap.alpn = ["imap"]
-
-# Proxy overriding the account one, same shape as `proxy`.
-#imap.proxy.url = "http://proxy.example.org:3128"
-
-# Exactly one SASL mechanism among `plain`, `login`, `anonymous`, `oauthbearer`,
-# `xoauth2` and `scram-sha-256`. Omit the whole `imap.sasl` table to skip
-# authentication, sending no `AUTHENTICATE` command at all.
-imap.sasl.plain.username = "user@example.org"
-imap.sasl.plain.password.raw = "REPLACE_ME"
-#imap.sasl.plain.password.command = "pass show carillon/example"
-#imap.sasl.plain.authzid = "user@example.org"
-#imap.sasl.login.username = "user@example.org"
-#imap.sasl.login.password.raw = "REPLACE_ME"
-#imap.sasl.anonymous.message = "carillon"
-#imap.sasl.oauthbearer.username = "user@example.org"
-#imap.sasl.oauthbearer.token.command = ["ortie", "token", "show", "-a", "example"]
-#imap.sasl.xoauth2.username = "user@example.org"
-#imap.sasl.xoauth2.token.command = "ortie token show -a gmail"
-#imap.sasl.scram-sha-256.username = "user@example.org"
-#imap.sasl.scram-sha-256.password.raw = "REPLACE_ME"
-
-# Force the RFC 4959 SASL-IR initial response on or off. Unset follows the
-# advertised capability, which Coremail (126.com, 163.com) advertises and then
-# rejects: set it to false there.
-#imap.sasl-ir = false
-
-# RFC 2971 ID exchange, which some providers (mail.qq.com, fastmail) require
-# straight after authentication. Only the listed fields are sent: `true` sends
-# carillon's canned value for `name`, `version`, `vendor` and `support-url`,
-# `false` sends NIL, and an empty map sends `ID NIL`.
-#imap.id.auto = false
-#imap.id.fields = { name = true, version = true, vendor = true, support-url = true }
-
-# How this account learns about a change, IMAP offering two ways. Unset holds
-# the idle connection, re-issued every 29 seconds, short enough to survive a NAT
-# box dropping a quiet connection; a server known to hold one open is asked less
-# often, up to the 29 minutes RFC 2177 allows.
-#imap.watch.idle.timeout = "10m"
-#imap.watch.poll.interval = 60
-
-
-# Mail is immutable, so IMAP reports arrivals, departures and flags, never an
-# edit. A flag hook fires once per flag that moved, so `$flag` always names the
-# one it fired for; `flags = [...]` narrows it, matching with or without the
-# leading `\` or `$` and whatever the case.
-imap.hooks.on-message-add.notify.summary = "New mail in $mailbox from $sender"
-imap.hooks.on-message-add.notify.body = "$subject"
-imap.hooks.on-message-add.command = 'echo "$id arrived" >> ~/.local/state/carillon.log'
-#imap.hooks.on-message-remove.notify.summary = "Mail $id deleted from ${mailbox:-the inbox}"
-#imap.hooks.on-message-remove.command = 'echo "$id left" >> ~/.local/state/carillon.log'
-imap.hooks.on-flag-add.flags = ["Seen"]
-imap.hooks.on-flag-add.command = ["sh", "-c", 'notify-send "$flag set on $id"']
-#imap.hooks.on-flag-remove.notify.summary = "$flag cleared on $id"
-
-
-# ---- JMAP: a changes poll (RFC 8621, RFC 9610, JMAP for Calendars) -------------
-
-# The collections this account watches, at least one. The mailbox is matched by
-# name case-insensitively, falling back to the special-use role for "INBOX"; the
-# addressbook and the calendar by name case-insensitively or by id. All of them
-# share the session, the connection and the event stream.
-#jmap.mailbox = "INBOX"
-#jmap.addressbook = "Personal"
-#jmap.calendar = "Calendar"
-
-# Server address: a bare authority, discovered through `/.well-known/jmap`, or
-# a full URL naming the session endpoint.
-#jmap.server = "fastmail.com"
-#jmap.server = "https://api.fastmail.com/jmap/session"
-
-# TLS options, same shape as `imap.tls`.
-#jmap.tls.provider = "rustls"
-
-# ALPN, read as `imap.alpn`, unset taking io-jmap's own `["http/1.1"]`.
-#jmap.alpn = ["http/1.1"]
-
-# Proxy, read as `imap.proxy`.
-#jmap.proxy.url = "http://proxy.example.org:3128"
-
-# Exactly one of `header`, whose value is sent verbatim, `bearer` or `basic`.
-#jmap.auth.header.command = "pass show carillon/fastmail-token"
-#jmap.auth.bearer.token.command = ["ortie", "token", "show", "-a", "fastmail"]
-#jmap.auth.basic.username = "user@example.org"
-#jmap.auth.basic.password.command = "pass show carillon/example"
-
-# How this account learns about a change, JMAP offering two ways. Unset holds
-# the event stream, whose ping is the server keep-alive that also proves the
-# stream is still there.
-#jmap.watch.push.ping = 30
-#jmap.watch.poll.interval = 60
-
-
-# Same events as IMAP, JMAP keywords arriving under the same flag names. The
-# envelope comes from the request the poll already makes, so an arrival hook
-# names $subject and $sender at no extra cost.
-#jmap.hooks.on-message-add.notify.summary = "New mail in $mailbox from $sender"
-#jmap.hooks.on-message-add.notify.body = "$subject"
-#jmap.hooks.on-message-remove.command = "true"
-#jmap.hooks.on-flag-add.flags = ["Seen"]
-#jmap.hooks.on-flag-remove.command = "true"
-
-# Contacts and calendar events are edited where they stand, which is what
-# `on-card-change` and `on-event-change` report. A hook for a domain whose
-# collection is not configured is refused. There is no `on-task-*`, JMAP
-# calendars having no task type.
-#jmap.hooks.on-card-add.notify.summary = "New contact in $addressbook"
-#jmap.hooks.on-card-change.command = "true"
-#jmap.hooks.on-event-change.notify.summary = "Event $id changed in $calendar"
-
-
-# ---- Maildir: a listing poll ---------------------------------------------------
-
-# The mailbox this account watches, resolved under `root` through io-maildir's
-# store; "." and "INBOX" both name the root itself. Required.
-#maildir.mailbox = "."
-
-# Root of the Maildir tree, subfolders being real nested directories, the usual
-# layout. `maildir.mailbox` watches the root itself with "." or "INBOX", and a
-# subfolder by its path, "Archive" for instance.
-#maildir.root = "~/Mail/example"
-
-# Maildir has one way: re-list on an interval, a couple of seconds when unset.
-#maildir.watch.poll.interval = 2
-
-
-# Same events again, the Maildir flag letters arriving under the same names.
-#maildir.hooks.on-message-add.notify.summary = "$id arrived"
-#maildir.hooks.on-message-remove.command = "true"
-#maildir.hooks.on-flag-add.flags = ["Seen"]
-#maildir.hooks.on-flag-remove.command = "true"
-
-
-# ---- CalDAV: a sync-collection poll over a calendar (RFC 6578) ------------------
-
-# The calendar this account watches. A bare id (one path segment) is looked up
-# under the calendar home set the server's principal names, which is the id a
-# listing of the account gives; an absolute path is taken as it stands, and any
-# other path is read under `caldav.server`, or under `caldav.home` when set.
-# Required.
-#caldav.calendar = "work"
-
-# The DAV server URL, where the principal is discovered from. Required without
-# `caldav.home`.
-#caldav.server = "https://dav.example.org/"
-
-# The calendar home set, pinned: discovery is skipped, the connection opens on
-# it and `caldav.server` is not read.
-#caldav.home = "https://dav.example.org/dav/calendars/alice/"
-
-# Omit for a calendar readable without authentication.
-#caldav.auth.basic.username = "alice"
-#caldav.auth.basic.password.command = "pass show dav/example"
-#caldav.auth.bearer.token.command = "ortie token show -a example"
-
-# TLS options, same shape as `imap.tls`.
-#caldav.tls.provider = "rustls"
-
-# ALPN, read as `imap.alpn`, unset taking io-http's own `["http/1.1"]`.
-#caldav.alpn = ["http/1.1"]
-
-# Proxy, read as `imap.proxy`.
-#caldav.proxy.url = "http://proxy.example.org:3128"
-
-# WebDAV has one way: ask sync-collection on an interval, a minute when unset. A
-# server with no sync-collection is listed with a PROPFIND on every poll instead,
-# its etags read against the last listing.
-#caldav.watch.poll.interval = 60
-
-# A calendar holds events, tasks or both, and the watch asks it which when it
-# starts: hooks naming a component it does not hold are refused there. Holding
-# both costs one property read per member the watch has not seen, which reads
-# its content type and never the event itself; a content type naming no
-# component is taken for the one the hooks name, an event when they name both.
-#caldav.hooks.on-event-add.notify.summary = "New event"
-#caldav.hooks.on-event-change.command = "true"
-#caldav.hooks.on-event-remove.command = "true"
-#caldav.hooks.on-task-add.notify.summary = "New task"
-#caldav.hooks.on-task-change.command = "true"
-#caldav.hooks.on-task-remove.command = "true"
-
-# The alarms of its events and tasks fire when the wall clock reaches them,
-# their bodies read only when this hook is set. Beyond `$id` and `$calendar` it
-# reads `$summary`, `$kind` (event or task), `$trigger` and `$at` (the start or
-# due time, RFC 3339), `$uid`, `$etag`, `$recurrenceId`, `$alarm`, `$alarmUid`
-# and `$action` (display or audio). An alarm reached more than 15 minutes late
-# is dropped, and one due while carillon was not running never fires.
-#caldav.hooks.on-alarm-trigger.notify.summary = "$summary"
-#caldav.hooks.on-alarm-trigger.notify.body = "${kind} at $at"
-
-
-# ---- CardDAV: the same poll over an addressbook --------------------------------
-
-# The addressbook this account watches, read the same way under the addressbook
-# home set. Required.
-#carddav.addressbook = "default"
-
-#carddav.server = "https://dav.example.org/"
-#carddav.home = "https://dav.example.org/dav/addressbooks/alice/"
-#carddav.alpn = ["http/1.1"]
-#carddav.proxy.url = "http://proxy.example.org:3128"
-#carddav.auth.basic.username = "alice"
-#carddav.auth.basic.password.command = "pass show dav/example"
-#carddav.watch.poll.interval = 60
-
-# A vCard is edited where it stands, which is what `on-card-change` reports and
-# no mail backend has: its etag moved, the poll never reading the card itself.
-#carddav.hooks.on-card-add.notify.summary = "New contact"
-#carddav.hooks.on-card-change.command = "true"
-#carddav.hooks.on-card-remove.command = "true"
-
-
-
-# ---- Microsoft Graph: delta queries and a calendar listing poll ----------------
-
-# The collections this account watches, at least one, sharing one token and one
-# connection: a mail folder by display name, id or well-known name (`inbox`), a
-# contact folder (`contacts` being the default one, nested ones by id) and a
-# calendar, both by name or id.
-#msgraph.mailbox = "inbox"
-#msgraph.addressbook = "contacts"
-#msgraph.calendar = "Calendar"
-
-# The mailbox owner, unset meaning the token's own user.
-#msgraph.user-id = "alice@example.org"
-
-# Microsoft Graph, Gmail, Google Calendar and Google People take an OAuth 2.0
-# bearer token alone, which expires: read it from a broker such as Ortie.
-#msgraph.auth.token.command = ["ortie", "token", "show", "-a", "microsoft"]
-
-# TLS, ALPN and proxy, read as under `imap`.
-#msgraph.alpn = ["http/1.1"]
-#msgraph.proxy.url = "http://proxy.example.org:3128"
-
-# These APIs push only to a public endpoint, so they poll, a minute when unset.
-#msgraph.watch.poll.interval = 60
-
-# Same events as JMAP: `isRead` arrives as `Seen`, a follow-up flag as `Flagged`.
-# The calendar is listed on every poll and its `changeKey` compared, an event
-# being edited where it stands whatever its date. A draft edited in place fires
-# `on-message-change`, unless a flag moved in the same edit.
-#msgraph.hooks.on-message-add.notify.summary = "New mail in $mailbox from $sender"
-#msgraph.hooks.on-message-add.notify.body = "$subject"
-#msgraph.hooks.on-message-change.command = "true"
-#msgraph.hooks.on-flag-add.flags = ["Flagged"]
-#msgraph.hooks.on-card-change.command = "true"
-#msgraph.hooks.on-event-change.notify.summary = "Event $id changed in $calendar"
-
-
-# ---- Gmail: a history poll -----------------------------------------------------
-
-# The label this account watches, by name or id. Required.
-#gmail.mailbox = "INBOX"
-
-#gmail.auth.token.command = ["ortie", "token", "show", "-a", "google"]
-#gmail.watch.poll.interval = 60
-
-# Same events as IMAP: a cleared `UNREAD` arrives as `Seen`, `STARRED` as
-# `Flagged`. The envelope is read from the arrival's headers.
-#gmail.hooks.on-message-add.notify.summary = "New mail in $mailbox from $sender"
-#gmail.hooks.on-message-add.notify.body = "$subject"
-#gmail.hooks.on-flag-add.flags = ["Seen"]
-
-
-# ---- Google Calendar: a sync token poll ----------------------------------------
-
-# The calendar this account watches, by name or id, `primary` being the
-# account's own. Required.
-#gcal.calendar = "primary"
-
-#gcal.auth.token.command = ["ortie", "token", "show", "-a", "google"]
-#gcal.watch.poll.interval = 60
-
-# Events alone, the API having no task type. A recurring series is one event.
-#gcal.hooks.on-event-add.notify.summary = "New event in $calendar"
-#gcal.hooks.on-event-change.command = "true"
-
-
-# ---- Google People: a sync token poll over a contact group ---------------------
-
-# The contact group this account watches, by name or resource name, or
-# `contacts` for every contact the account owns, whatever its groups. Required.
-#gpeople.addressbook = "contacts"
-
-#gpeople.auth.token.command = ["ortie", "token", "show", "-a", "google"]
-#gpeople.watch.poll.interval = 60
-
-# A contact leaving the group arrives as a removal, as a deleted one does.
-#gpeople.hooks.on-card-add.notify.summary = "New contact in $addressbook"
-#gpeople.hooks.on-card-remove.command = "true"
-
-
-# ---- pimdir: a change feed poll over a local calendar --------------------------
-
-# A pimdir store another tool keeps in sync, read and never written. Only its
-# alarms fire, through the one hook it has. Requires the `pimdir` cargo feature.
-# The store is one of pimdir draft-13, the one neverest writes; another draft is
-# refused.
-
-# The directory holding the store. Required.
-#pimdir.root = "~/.local/share/pimdir"
-
-# The calendar this account watches, by its collection id. Required.
-#pimdir.calendar = "personal"
-
-# The account of the store the calendar is grouped under, for a store several
-# accounts share: a calendar grouped under another one is not found. Unset
-# reads the calendar whichever account it is grouped under.
-#pimdir.account = "personal"
-
-#pimdir.watch.poll.interval = 30
-
-#pimdir.hooks.on-alarm-trigger.notify.summary = "$summary"
-#pimdir.hooks.on-alarm-trigger.command = 'echo "$uid fired at $trigger" >> ~/.local/state/carillon.log'
+default = true				# the account commands run on without -a
+
+#proxy.url = "socks5h://localhost:1080"	# a socks5, socks5h or http proxy for every network backend
+#proxy.username = "alice"		# its username
+#proxy.password.command = "exit 127"	# prints its password
+
+# Hooks, the same keys under every backend's hooks table, each event named
+# on-<subject>-<verb>: $id, $collection and the collection's own name
+# ($mailbox, $addressbook, $calendar) everywhere, $flag in a flag hook, the
+# envelope ($subject, $sender, $senderName...) in a mail arrival. A command
+# gets them in its environment, never in its text: a list runs as written.
+#imap.hooks.on-message-add.notify.summary = "New mail in $mailbox from $sender"	# a desktop notification
+#imap.hooks.on-message-add.notify.body = "$subject"					# its body, ${name:-default} for an empty value
+#imap.hooks.on-message-add.command = 'echo "$id" >> ~/.local/state/carillon.log'	# a shell line, also spelled cmd
+#imap.hooks.on-flag-add.command = ["sh", "-c", 'notify-send "$flag set on $id"']	# a program and its arguments
+#imap.hooks.on-flag-add.flags = ["Seen"]						# the flags it fires for, all otherwise
+
+# Network, the same keys under jmap, caldav, carddav, msgraph, gmail, gcal and gpeople
+#imap.tls.provider = "rustls"			# the build's first otherwise [native-tls]
+#imap.tls.rustls.crypto = "ring"		# the build's first otherwise [aws]
+#imap.tls.cert = "~/certs/example.pem"		# a PEM certificate to trust
+#imap.alpn = ["imap"]				# the ALPN ids rustls offers, empty for none
+#imap.proxy.url = "http://proxy.example.org:3128"	# the proxy keys, for IMAP alone
+
+# IMAP, an idle connection (RFC 2177)
+#imap.mailbox = "INBOX"			# the mailbox watched
+#imap.server = "imap.example.org"	# implicit TLS on 993; imap://host is cleartext on 143
+#imap.starttls = false			# upgrade an imap:// connection with STARTTLS
+#imap.sasl-ir = false			# inline the credentials, unset following SASL-IR, false for Coremail
+#imap.id.auto = false			# send ID once signed in, as QQ Mail and Fastmail want
+#imap.id.fields.name = true		# what ID sends: true carillon's value, false NIL
+#imap.id.fields.version = true		# carillon's version
+#imap.id.fields.vendor = true		# carillon's vendor
+#imap.id.fields.support-url = true	# carillon's support URL
+#imap.watch.idle.timeout = "10m"	# how long IDLE is held, 29 seconds otherwise
+#imap.watch.poll.interval = 60		# re-read the mailbox on this interval instead of IDLE
+
+#imap.sasl.plain.username = "alice@example.org"		# PLAIN; login and scram-sha-256 take the same keys
+#imap.sasl.plain.password.command = "exit 127"		# prints the password
+#imap.sasl.plain.password.raw = "secret"		# the password itself
+#imap.sasl.plain.authzid = "bob@example.org"		# the identity to act as, when another
+#imap.sasl.login.username = "alice@example.org"		# LOGIN
+#imap.sasl.login.password.command = "exit 127"		# prints the password
+#imap.sasl.scram-sha-256.username = "alice@example.org"	# SCRAM-SHA-256
+#imap.sasl.scram-sha-256.password.command = "exit 127"	# prints the password
+#imap.sasl.anonymous.message = "carillon"		# ANONYMOUS, the trace it sends
+#imap.sasl.oauthbearer.username = "alice@example.org"	# OAUTHBEARER
+#imap.sasl.oauthbearer.token.command = "exit 127"	# prints an OAuth 2.0 access token
+#imap.sasl.xoauth2.username = "alice@example.org"	# XOAUTH2
+#imap.sasl.xoauth2.token.command = "exit 127"		# prints an OAuth 2.0 access token
+
+#imap.hooks.on-message-remove.command = "true"		# a message expunged or moved out
+#imap.hooks.on-flag-remove.notify.summary = "$flag cleared on $id"	# a flag cleared
+
+# JMAP, an event stream (RFC 8620, 8621, 9610)
+#jmap.mailbox = "INBOX"				# the mailbox watched, by name or role
+#jmap.addressbook = "Personal"			# the addressbook watched, by name or id
+#jmap.calendar = "Calendar"			# the calendar watched, by name or id
+#jmap.server = "https://api.fastmail.com/jmap/session"	# the session URL, or a host serving /.well-known/jmap
+#jmap.watch.push.ping = 30			# the stream's keep-alive, three missed reopening it
+#jmap.watch.poll.interval = 60			# poll on this interval instead of the stream
+
+#jmap.auth.bearer.token.command = "exit 127"	# prints a bearer token
+#jmap.auth.header.command = "exit 127"		# prints the Authorization header itself
+#jmap.auth.basic.username = "alice@example.org"	# HTTP Basic
+#jmap.auth.basic.password.command = "exit 127"	# prints the password
+
+#jmap.hooks.on-message-add.notify.summary = "New mail from $sender"	# the envelope rides the poll's own request
+#jmap.hooks.on-flag-add.flags = ["Seen"]				# keywords under the shared flag names
+#jmap.hooks.on-card-change.command = "true"				# a contact edited, no task hooks
+#jmap.hooks.on-event-change.notify.summary = "Event changed in $calendar"	# an event edited
+
+# Maildir, a listing poll
+#maildir.root = "~/Mail/example"	# the Maildir tree, subfolders nested
+#maildir.mailbox = "."			# the folder watched, "." and "INBOX" the root itself
+#maildir.watch.poll.interval = 2	# how often it is listed
+
+#maildir.hooks.on-message-add.notify.summary = "$id arrived"	# the flag letters under the shared names
+#maildir.hooks.on-flag-add.flags = ["Seen"]			# as under imap
+
+# CalDAV, a sync-collection poll (RFC 6578)
+#caldav.calendar = "work"				# the calendar watched, an id under the home set or a path
+#caldav.server = "dav.example.org"			# implicit https; the principal and home set are discovered
+#caldav.home = "https://dav.example.org/calendars/alice/"	# the home set itself, nothing discovered
+#caldav.watch.poll.interval = 60			# how often it is asked what moved
+#caldav.alpn = ["http/1.1"]				# as under imap
+
+#caldav.auth.basic.username = "alice"			# HTTP Basic, no auth at all for an anonymous server
+#caldav.auth.basic.password.command = "exit 127"	# prints the password
+#caldav.auth.bearer.token.command = "exit 127"		# prints a bearer token
+
+#caldav.hooks.on-event-add.notify.summary = "New event"	# on-event-* and on-task-*, what the calendar holds
+#caldav.hooks.on-event-remove.command = "true"			# an event deleted
+#caldav.hooks.on-task-add.notify.summary = "New task"		# a task added
+#caldav.hooks.on-task-change.command = "true"			# a task edited
+#caldav.hooks.on-task-remove.command = "true"			# a task deleted
+#caldav.hooks.on-alarm-trigger.notify.summary = "$summary"	# an alarm at its trigger, $kind, $at, $trigger, $uid...
+#caldav.hooks.on-alarm-trigger.notify.body = "${kind} at $at"	# 15 minutes late at most, none while not running
+
+# CardDAV, the same poll over an addressbook
+#carddav.addressbook = "default"				# the addressbook watched, read as caldav.calendar
+#carddav.server = "dav.example.org"				# as under caldav
+#carddav.home = "https://dav.example.org/addressbooks/alice/"	# as under caldav
+#carddav.watch.poll.interval = 60				# as under caldav
+#carddav.auth.basic.username = "alice"				# as under caldav
+#carddav.auth.basic.password.command = "exit 127"		# prints the password
+
+#carddav.hooks.on-card-add.notify.summary = "New contact"	# on-card-add, -change and -remove
+#carddav.hooks.on-card-change.command = "true"			# a card whose etag moved, never read
+
+# Microsoft Graph, delta queries and a calendar listing, at least one domain
+#msgraph.mailbox = "inbox"				# a mail folder by name, id or well-known name
+#msgraph.addressbook = "contacts"			# a contact folder, contacts the default one
+#msgraph.calendar = "Calendar"				# a calendar by name or id
+#msgraph.user-id = "alice@example.org"			# the mailbox owner, the token's own user otherwise
+#msgraph.auth.token.command = "exit 127"		# prints an OAuth 2.0 access token
+#msgraph.watch.poll.interval = 60			# how often each domain is read
+
+#msgraph.hooks.on-message-add.notify.summary = "New mail from $sender"	# isRead as Seen, a follow-up as Flagged
+#msgraph.hooks.on-message-change.command = "true"			# a draft edited in place
+#msgraph.hooks.on-flag-add.flags = ["Flagged"]				# as under imap
+#msgraph.hooks.on-event-change.notify.summary = "Event changed in $calendar"	# an event edited, whatever its date
+
+# Gmail, a history poll
+#gmail.mailbox = "INBOX"			# the label watched, by name or id
+#gmail.user-id = "me"				# the mailbox owner
+#gmail.auth.token.command = "exit 127"		# prints an OAuth 2.0 access token
+#gmail.watch.poll.interval = 60			# how often the history is read
+
+#gmail.hooks.on-message-add.notify.summary = "New mail from $sender"	# the envelope from the arrival's headers
+#gmail.hooks.on-flag-add.flags = ["Seen"]				# a cleared UNREAD as Seen, STARRED as Flagged
+
+# Google Calendar, a sync token poll
+#gcal.calendar = "primary"			# the calendar watched, by name or id
+#gcal.auth.token.command = "exit 127"		# prints an OAuth 2.0 access token
+#gcal.watch.poll.interval = 60			# how often it is read
+
+#gcal.hooks.on-event-add.notify.summary = "New event in $calendar"	# events alone, a series being one
+
+# Google People, a sync token poll over a contact group
+#gpeople.addressbook = "contacts"		# a group by name or resource name, contacts every contact
+#gpeople.auth.token.command = "exit 127"	# prints an OAuth 2.0 access token
+#gpeople.watch.poll.interval = 60		# how often it is read
+
+#gpeople.hooks.on-card-remove.command = "true"	# a contact deleted or leaving the group
+
+# pimdir, the alarms of a calendar of a local store, read and never written
+#pimdir.root = "~/.local/share/pimdir"		# the store, of the draft neverest writes
+#pimdir.calendar = "personal"			# the calendar, by its collection id
+#pimdir.account = "personal"			# the store account it is grouped under, any otherwise
+#pimdir.watch.poll.interval = 30		# how often the change cursor is read
+
+#pimdir.hooks.on-alarm-trigger.notify.summary = "$summary"	# the one hook, read as caldav's
+#pimdir.hooks.on-alarm-trigger.command = 'echo "$uid at $trigger" >> ~/.local/state/carillon.log'	# its command
