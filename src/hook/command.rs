@@ -7,14 +7,16 @@
 //! and reaped by a thread of its own. One instance of a command runs at a
 //! time: firings meanwhile wait in order, each with its own variables, a
 //! firing equal to one already waiting dropped, and at most [`QUEUE`]
-//! waiting. Nothing times a command out. On shutdown every running
-//! command is sent SIGTERM and given a grace to end, then SIGKILL. See
-//! [`crate::hook`] for what a firing hands here.
+//! waiting. A command run under a [`Timeout`] is sent SIGTERM once it
+//! passes, then SIGKILL after [`Timeout::GRACE`], and reported as timed
+//! out. On shutdown every running command is sent SIGTERM and given a
+//! grace to end, then SIGKILL. See [`crate::hook`] for what a firing
+//! hands here.
 
 use std::{
     collections::{BTreeMap, VecDeque},
     io, mem,
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
     thread,
     time::{Duration, Instant},
@@ -22,6 +24,7 @@ use std::{
 
 use anyhow::{Error, Result, anyhow};
 use log::{debug, warn};
+use pimalaya_config::command::Timeout;
 
 use crate::hook::HookJob;
 
@@ -52,6 +55,12 @@ struct State {
 /// A command running, and the runs waiting for it to end.
 struct Running {
     child: Child,
+    /// When the run is sent SIGTERM, none for a run without a timeout.
+    deadline: Option<Instant>,
+    /// When the timeout sent it SIGTERM.
+    expired: Option<Instant>,
+    /// The timeout it runs under.
+    timeout: Option<Timeout>,
     /// Where the failure of the run going on goes.
     report: Report,
     /// The runs waiting, in the order they were fired.
@@ -152,6 +161,32 @@ impl HookCommands {
     }
 }
 
+impl Running {
+    /// Sends SIGTERM once the timeout passed, and SIGKILL once its grace
+    /// passed too.
+    fn expire(&mut self, now: Instant) {
+        if let Some(expired) = self.expired {
+            if now >= expired + Timeout::GRACE {
+                signal(&mut self.child, Signal::Kill);
+            }
+        } else if self.deadline.is_some_and(|deadline| now >= deadline) {
+            signal(&mut self.child, Signal::Term);
+            self.expired = Some(now);
+        }
+    }
+
+    /// Why the run that ended with `status` failed, if it did.
+    fn failure(&self, status: ExitStatus) -> Option<Error> {
+        if let (Some(_), Some(Timeout(timeout))) = (self.expired, self.timeout) {
+            Some(anyhow!("Hook command timed out after {timeout:?}"))
+        } else if status.success() {
+            None
+        } else {
+            Some(anyhow!("Hook command exited with {status}"))
+        }
+    }
+}
+
 /// Reaps the commands that ended, starting the run waiting first on
 /// each, until the last [`HookCommands`] is dropped.
 fn reap(shared: Weak<Mutex<State>>) {
@@ -161,12 +196,8 @@ fn reap(shared: Weak<Mutex<State>>) {
 
         for (key, running) in state.running.iter_mut() {
             match running.child.try_wait() {
-                Ok(None) => (),
-                Ok(Some(status)) if status.success() => ended.push((key.clone(), None)),
-                Ok(Some(status)) => {
-                    let err = anyhow!("Hook command exited with {status}");
-                    ended.push((key.clone(), Some(err)));
-                }
+                Ok(None) => running.expire(Instant::now()),
+                Ok(Some(status)) => ended.push((key.clone(), running.failure(status))),
                 Err(err) => ended.push((key.clone(), Some(err.into()))),
             }
         }
@@ -208,6 +239,9 @@ fn start(state: &mut State, key: String, mut pending: VecDeque<(HookJob, Report)
             Ok(child) => {
                 let running = Running {
                     child,
+                    deadline: job.timeout.map(|Timeout(timeout)| Instant::now() + timeout),
+                    expired: None,
+                    timeout: job.timeout,
                     report,
                     pending,
                     dropped: 0,
@@ -232,7 +266,7 @@ fn spawn(job: &HookJob) -> io::Result<Child> {
     command.spawn()
 }
 
-/// The signals a shutdown sends a command.
+/// The signals a timeout or a shutdown sends a command.
 #[derive(Clone, Copy, Debug)]
 enum Signal {
     /// Asks it to end.
@@ -293,6 +327,7 @@ mod tests {
     fn job(line: &str) -> HookJob {
         HookJob {
             command: CommandConfig::Shell(line.to_string()),
+            timeout: None,
             vars: Vec::new(),
         }
     }
@@ -302,6 +337,7 @@ mod tests {
         let line = format!("echo $n >> '{}'; sleep 0.2", log.display());
         HookJob {
             command: CommandConfig::Shell(line),
+            timeout: None,
             vars: vec![("n", n.to_string())],
         }
     }
@@ -413,5 +449,46 @@ mod tests {
         assert!(stopping.elapsed() < Duration::from_secs(2));
         let alive = Command::new("kill").args(["-0", &pid]).status().unwrap();
         assert!(!alive.success(), "{pid} still alive");
+    }
+
+    fn timed(line: &str, millis: u64) -> HookJob {
+        HookJob {
+            timeout: Some(Timeout(Duration::from_millis(millis))),
+            ..job(line)
+        }
+    }
+
+    #[test]
+    fn a_command_past_its_timeout_is_terminated_and_reported() {
+        let commands = HookCommands::start().unwrap();
+        let (sent, got) = mpsc::channel();
+        let line = "trap 'exit 0' TERM; sleep 30 & wait";
+
+        commands.submit(String::from("a"), timed(line, 300), move |err| {
+            sent.send(err.to_string()).unwrap();
+        });
+
+        let err = got.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(err.contains("timed out after 300ms"), "{err}");
+    }
+
+    #[test]
+    fn a_command_outliving_its_timeout_grace_is_killed() {
+        let commands = HookCommands::start().unwrap();
+        let (sent, got) = mpsc::channel();
+        let started = Instant::now();
+
+        commands.submit(
+            String::from("a"),
+            timed("trap '' TERM; sleep 30", 100),
+            move |err| sent.send(err.to_string()).unwrap(),
+        );
+
+        let err = got.recv_timeout(Timeout::GRACE * 2).unwrap();
+        assert!(
+            started.elapsed() >= Timeout::GRACE,
+            "killed before its grace"
+        );
+        assert!(err.contains("timed out after 100ms"), "{err}");
     }
 }

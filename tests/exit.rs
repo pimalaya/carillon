@@ -110,7 +110,7 @@ fn a_failed_check_in_text_prints_its_report_alone_and_exits_3() {
     assert!(!stdout.contains("Error:"), "{stdout}");
 }
 
-/// A pimdir store of draft-11, the draft carillon read before draft-13, is
+/// A pimdir store of draft-11, a draft carillon read before, is
 /// refused with io-pimdir's code, which the row carries.
 #[cfg(feature = "pimdir")]
 #[test]

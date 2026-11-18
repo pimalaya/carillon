@@ -13,6 +13,7 @@ default = true				# the account commands run on without -a
 #imap.hooks.on-message-add.notify.summary = "New mail in $mailbox from $sender"	# a desktop notification
 #imap.hooks.on-message-add.notify.body = "$subject"					# its body, ${name:-default} for an empty value
 #imap.hooks.on-message-add.command = 'echo "$id" >> ~/.local/state/carillon.log'	# a shell line, also spelled cmd
+#imap.hooks.on-message-add.timeout = "30s"						# SIGTERM past it, SIGKILL 5s later, none by default
 #imap.hooks.on-flag-add.command = ["sh", "-c", 'notify-send "$flag set on $id"']	# a program and its arguments
 #imap.hooks.on-flag-add.flags = ["Seen"]						# the flags it fires for, all otherwise
 

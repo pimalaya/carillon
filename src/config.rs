@@ -59,7 +59,11 @@ use std::{
 #[cfg(any(dav, feature = "jmap"))]
 use anyhow::bail;
 use anyhow::{Context, Result};
-use pimalaya_config::{command::CommandConfig, notify::NotificationTemplate, toml::TomlConfig};
+use pimalaya_config::{
+    command::{CommandConfig, Timeout},
+    notify::NotificationTemplate,
+    toml::TomlConfig,
+};
 use serde::Deserialize;
 #[cfg(not(all(
     feature = "imap",
@@ -518,6 +522,9 @@ pub struct ItemHook {
     /// `cmd` is read as its alias, as everywhere a command is configured.
     #[serde(alias = "cmd")]
     pub command: Option<CommandConfig>,
+    /// How long the command may run before it is sent SIGTERM, and
+    /// SIGKILL once [`Timeout::GRACE`] has passed too.
+    pub timeout: Option<Timeout>,
 }
 
 /// Hook that fires for flag-level events, once per flag that moved.
@@ -535,6 +542,9 @@ pub struct FlagHook {
     /// `cmd` is read as its alias, as everywhere a command is configured.
     #[serde(alias = "cmd")]
     pub command: Option<CommandConfig>,
+    /// How long the command may run before it is sent SIGTERM, and
+    /// SIGKILL once [`Timeout::GRACE`] has passed too.
+    pub timeout: Option<Timeout>,
     #[serde(default)]
     pub flags: BTreeSet<String>,
 }
@@ -1077,6 +1087,27 @@ mod tests {
                     imap.hooks.on-message-add.command = \"true\"\n";
         let err = toml::from_str::<Config>(&document(both)).expect_err("two commands");
         assert!(err.to_string().contains("command"), "{err}");
+    }
+
+    /// A hook's `timeout` is read beside its command, zero refused.
+    #[test]
+    fn a_hook_reads_its_timeout() {
+        let line = "imap.hooks.on-message-add.command = \"true\"\n\
+                    imap.hooks.on-message-add.timeout = \"90s\"\n\
+                    imap.hooks.on-flag-add.command = \"true\"\n\
+                    imap.hooks.on-flag-add.timeout = 5\n";
+        let config: Config = toml::from_str(&document(line)).expect("the timeouts");
+        let hooks = &config.accounts["perso"].imap.as_ref().unwrap().hooks;
+
+        let add = hooks.on_message_add.as_ref().unwrap().timeout;
+        assert_eq!(Some(Timeout(Duration::from_secs(90))), add);
+        let flag = hooks.on_flag_add.as_ref().unwrap().timeout;
+        assert_eq!(Some(Timeout(Duration::from_secs(5))), flag);
+
+        let zero = "imap.hooks.on-message-add.command = \"true\"\n\
+                    imap.hooks.on-message-add.timeout = 0\n";
+        let err = toml::from_str::<Config>(&document(zero)).expect_err("zero");
+        assert!(err.to_string().contains("timeout of zero"), "{err}");
     }
 
     /// A DAV block with no `auth` loads, sending no credential, as

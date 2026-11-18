@@ -25,7 +25,10 @@ use anyhow::{Error, Result, bail};
 #[cfg(alarm)]
 use jiff::{Timestamp, tz::TimeZone};
 use log::{trace, warn};
-use pimalaya_config::{command::CommandConfig, notify::NotificationTemplate};
+use pimalaya_config::{
+    command::{CommandConfig, Timeout},
+    notify::NotificationTemplate,
+};
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -108,6 +111,8 @@ pub struct HookFired {
 pub struct HookJob {
     /// The command.
     pub command: CommandConfig,
+    /// How long it may run, none meaning until it ends.
+    pub timeout: Option<Timeout>,
     /// The variables, by name.
     pub vars: Vec<(&'static str, String)>,
 }
@@ -261,7 +266,12 @@ pub fn run(
 
 /// Fires an item-level hook.
 fn run_item_hook(hook: &ItemHook, vars: BTreeMap<&'static str, String>) -> HookFired {
-    fire(hook.notify.as_ref(), hook.command.as_ref(), &vars)
+    fire(
+        hook.notify.as_ref(),
+        hook.command.as_ref(),
+        hook.timeout,
+        &vars,
+    )
 }
 
 /// Fires a flag-level hook for the flag that moved, through its filter.
@@ -282,7 +292,12 @@ fn run_flag_hook(
     vars.insert(collection.name, collection.value.to_string());
     vars.insert(FLAG_VAR, flag.to_string());
 
-    fire(hook.notify.as_ref(), hook.command.as_ref(), &vars)
+    fire(
+        hook.notify.as_ref(),
+        hook.command.as_ref(),
+        hook.timeout,
+        &vars,
+    )
 }
 
 /// The variables an item-level hook templates against.
@@ -403,7 +418,13 @@ pub fn run_alarm(
     #[cfg(not(feature = "notify"))]
     let sound = None;
 
-    fire_with(hook.notify.as_ref(), hook.command.as_ref(), &vars, sound)
+    fire_with(
+        hook.notify.as_ref(),
+        hook.command.as_ref(),
+        hook.timeout,
+        &vars,
+        sound,
+    )
 }
 
 /// An instant as RFC 3339 with the offset `zone` has then, empty when it
@@ -423,9 +444,10 @@ pub fn rfc3339(instant: i64, zone: &TimeZone) -> String {
 fn fire(
     notify: Option<&NotificationTemplate>,
     command: Option<&CommandConfig>,
+    timeout: Option<Timeout>,
     vars: &BTreeMap<&'static str, String>,
 ) -> HookFired {
-    fire_with(notify, command, vars, None)
+    fire_with(notify, command, timeout, vars, None)
 }
 
 /// Shows the notification a hook can carry, asking for `sound` when one
@@ -433,6 +455,7 @@ fn fire(
 fn fire_with(
     notify: Option<&NotificationTemplate>,
     command: Option<&CommandConfig>,
+    timeout: Option<Timeout>,
     vars: &BTreeMap<&'static str, String>,
     sound: Option<&'static str>,
 ) -> HookFired {
@@ -447,6 +470,7 @@ fn fire_with(
 
     let command = command.map(|command| HookJob {
         command: command.clone(),
+        timeout,
         vars: vars
             .iter()
             .map(|(name, value)| (*name, value.clone()))
@@ -506,6 +530,7 @@ mod tests {
         let hook = ItemHook {
             notify: None,
             command: Some(command.clone()),
+            timeout: None,
         };
         let event = WatchEvent::ItemAdded {
             domain: crate::event::WatchDomain::Message,
@@ -622,7 +647,12 @@ mod tests {
         let notification = template
             .render(|name| vars.get(name).cloned())
             .expect("render");
-        assert_eq!(" from Alice <alice@example.org>", notification.summary);
+        let sender = if cfg!(all(unix, not(target_os = "macos"))) {
+            " from Alice &lt;alice@example.org&gt;"
+        } else {
+            " from Alice <alice@example.org>"
+        };
+        assert_eq!(sender, notification.summary);
         assert_eq!("Alice", notification.body);
     }
 
@@ -694,6 +724,7 @@ mod tests {
         let hook = ItemHook {
             notify: None,
             command: Some(CommandConfig::Shell(line)),
+            timeout: None,
         };
 
         let trigger = "2026-11-05T07:45:00Z"
