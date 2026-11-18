@@ -120,12 +120,17 @@ The method SHALL be configured under its backend (`imap.watch`, `jmap.watch`, `m
 - **THEN** it is refused, naming the line and the methods that backend has, and no watch is started
 
 ### Requirement: The daemon owns the connection lifecycle
-The daemon SHALL own reconnection: a session that ends, for any reason other than a requested shutdown or a backend the build leaves out, SHALL be reopened after a capped exponential backoff, and a session that stayed up long enough to look healthy SHALL reset that backoff. Credentials SHALL be resolved per attempt rather than held, so a rotated secret is picked up by the next reconnect and residency stays minimal. A session reopened after its connection was lost SHALL report what moved meanwhile where its backend can tell: IMAP SHALL resume from the UIDs and flags the lost watch knew, and Gmail from the history cursor the lost session had reached, both held in memory for as long as the account is watched. An IMAP session that ended on a refusal rather than a lost connection, a mailbox recreated under the same name among them, SHALL take a new baseline, as every session of the other backends does.
+The daemon SHALL own reconnection: a session that ends, for any reason other than a requested shutdown or a backend the build leaves out, SHALL be reopened after a capped exponential backoff, and a session that stayed up long enough to look healthy SHALL reset that backoff. Credentials SHALL be resolved per attempt rather than held, so a rotated secret is picked up by the next reconnect and residency stays minimal: a connection opened inside a session (a round retried on a fresh connection, a JMAP event stream) SHALL present the credential resolved for it, never the one the session started with. A session reopened after its connection was lost SHALL report what moved meanwhile where its backend can tell: IMAP SHALL resume from the UIDs and flags the lost watch knew, and Gmail from the history cursor the lost session had reached, both held in memory for as long as the account is watched. An IMAP session that ended on a refusal rather than a lost connection, a mailbox recreated under the same name among them, SHALL take a new baseline, as every session of the other backends does.
 
 #### Scenario: The connection drops
 - **GIVEN** a running watch
 - **WHEN** the session ends because the connection dropped
 - **THEN** the daemon waits its backoff, resolves the credential again, and reopens the watch
+
+#### Scenario: A token rotated while a JMAP session holds it
+- **GIVEN** a JMAP watch whose server, once the session is open, refuses its token with 401 and takes the one the token command now prints
+- **WHEN** the next round is retried on a fresh connection, or the event stream is reopened
+- **THEN** it presents the new token, and the change that came meanwhile fires its hook rather than losing the session
 
 #### Scenario: A message arrives during an outage
 - **GIVEN** an IMAP watch whose connection was lost

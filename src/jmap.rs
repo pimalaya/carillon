@@ -193,14 +193,7 @@ pub fn watch_push(
     let mut last_event_id = None;
 
     while !shutdown.load(Ordering::SeqCst) {
-        let news = subscribe(
-            &mut client,
-            config,
-            &watched,
-            ping,
-            &mut last_event_id,
-            shutdown,
-        )?;
+        let news = subscribe(config, &watched, ping, &mut last_event_id, shutdown)?;
 
         if !news {
             continue;
@@ -247,13 +240,11 @@ fn rounds(
     Ok(())
 }
 
-/// Dials a fresh connection, keeping the session already read.
-///
-/// The session carries the API URL and the account id, and does not move
-/// when the transport does, so it is not read again.
+/// Replaces the client with a fresh session, its credential resolved again,
+/// since the one the session started with may have expired meanwhile.
 fn reconnect(client: &mut JmapClientStd, config: &JmapConfig) -> Result<()> {
     let (fresh, _url) = open(config, &mut SecretResolver::new())?;
-    client.set_stream(fresh.stream);
+    *client = fresh;
     debug!("reconnected the jmap client");
 
     Ok(())
@@ -610,15 +601,18 @@ fn summarize(email: &JmapEmail) -> ItemSummary {
 ///
 /// `last_event_id` is the id of the last event read, sent back so the
 /// server pushes what moved between two subscriptions (RFC 8620 §7.3).
+///
+/// The subscription opens a session of its own, its credential resolved
+/// again, and leaves the client's connection to the next round.
 fn subscribe(
-    client: &mut JmapClientStd,
     config: &JmapConfig,
     watched: &[Watched],
     ping: u64,
     last_event_id: &mut Option<String>,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<bool> {
-    let session = client
+    let (mut source, _url) = open(config, &mut SecretResolver::new())?;
+    let session = source
         .session()
         .ok_or_else(|| anyhow!("The JMAP session was not read"))?;
     let types: Vec<&str> = watched.iter().map(Watched::type_name).collect();
@@ -627,7 +621,7 @@ fn subscribe(
     };
     let mut coroutine = JmapEventSource::new(
         session,
-        &client.http_auth,
+        &source.http_auth,
         &types,
         ping,
         JmapCloseAfter::No,
@@ -635,9 +629,6 @@ fn subscribe(
         opts,
     )?;
 
-    // NOTE: the subscription holds a connection of its own and leaves
-    // the client's to the next round.
-    let (mut stream, _url) = open(config, &mut SecretResolver::new())?;
     let mut buf = [0u8; READ_BUF];
     let mut arg: Option<Vec<u8>> = None;
 
@@ -659,7 +650,7 @@ fn subscribe(
                     return Ok(false);
                 }
 
-                match stream.stream.read(&mut buf) {
+                match source.stream.read(&mut buf) {
                     Ok(0) => return Ok(false),
                     Ok(read) => arg = Some(buf[..read].to_vec()),
                     Err(err) if is_timeout(&err) => continue,
@@ -667,7 +658,7 @@ fn subscribe(
                 }
             }
             JmapCoroutineState::Yielded(JmapEventSourceYield::WantsWrite(bytes)) => {
-                stream.stream.write_all(&bytes).context("write failed")?;
+                source.stream.write_all(&bytes).context("write failed")?;
             }
             JmapCoroutineState::Complete(Ok(())) => return Ok(false),
             JmapCoroutineState::Complete(Err(err)) => return Err(err.into()),
@@ -912,12 +903,16 @@ type Known = BTreeMap<String, BTreeSet<String>>;
 #[cfg(test)]
 mod tests {
     use std::{
+        fs,
         io::{BufRead, BufReader},
-        net::TcpListener,
+        net::{SocketAddr, TcpListener, TcpStream},
+        path::Path,
+        sync::Mutex,
         thread,
     };
 
     use io_jmap::rfc8621::email::JmapEmailAddress;
+    use tempfile::TempDir;
 
     use crate::jmap::*;
 
@@ -1116,5 +1111,172 @@ mod tests {
             crate::error::code(&limited),
             "{limited:#}"
         );
+    }
+
+    /// A loopback JMAP server taking only the bearer token `valid` holds,
+    /// answering any other 401. It serves the session, an empty `Email/get`
+    /// at state `s1`, and an event stream pushing the Email state `s2`.
+    fn expiring(valid: Arc<Mutex<String>>) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else {
+                    return;
+                };
+                let valid = valid.clone();
+                thread::spawn(move || answer(stream, &valid, addr));
+            }
+        });
+
+        addr
+    }
+
+    /// Answers the requests of one connection of [`expiring`].
+    fn answer(mut stream: TcpStream, valid: &Mutex<String>, addr: SocketAddr) {
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
+
+            let path = line.split(' ').nth(1).unwrap_or_default().to_string();
+            let mut auth = String::new();
+            let mut len = 0;
+
+            loop {
+                let mut header = String::new();
+                reader.read_line(&mut header).unwrap();
+                let header = header.trim_end();
+                if header.is_empty() {
+                    break;
+                }
+
+                let (name, value) = header.split_once(':').unwrap();
+                match name.to_ascii_lowercase().as_str() {
+                    "authorization" => auth = value.trim().to_string(),
+                    "content-length" => len = value.trim().parse().unwrap(),
+                    _ => (),
+                }
+            }
+
+            let mut body = vec![0; len];
+            reader.read_exact(&mut body).unwrap();
+
+            if auth != format!("Bearer {}", valid.lock().unwrap()) {
+                let refusal = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+                stream.write_all(refusal.as_bytes()).unwrap();
+                continue;
+            }
+
+            if path.starts_with("/es") {
+                let frame = "event: state\ndata: {\"@type\":\"StateChange\",\
+                             \"changed\":{\"A1\":{\"Email\":\"s2\"}}}\n\n";
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                            Transfer-Encoding: chunked\r\n\r\n";
+                let chunk = format!("{head}{:x}\r\n{frame}\r\n", frame.len());
+                stream.write_all(chunk.as_bytes()).unwrap();
+                let _ = reader.read_line(&mut String::new());
+                return;
+            }
+
+            let json = if body.is_empty() {
+                serde_json::json!({
+                    "username": "u",
+                    "state": "sess1",
+                    "apiUrl": format!("http://{addr}/api"),
+                    "downloadUrl": format!("http://{addr}/dl/{{accountId}}/{{blobId}}/{{name}}?type={{type}}"),
+                    "uploadUrl": format!("http://{addr}/ul/{{accountId}}"),
+                    "eventSourceUrl": format!("http://{addr}/es?types={{types}}&closeafter={{closeafter}}&ping={{ping}}"),
+                    "capabilities": {
+                        "urn:ietf:params:jmap:core": {
+                            "maxSizeUpload": 1, "maxConcurrentUpload": 1,
+                            "maxSizeRequest": 1, "maxConcurrentRequests": 1,
+                            "maxCallsInRequest": 16, "maxObjectsInGet": 500,
+                            "maxObjectsInSet": 500, "collationAlgorithms": [],
+                        },
+                        "urn:ietf:params:jmap:mail": {},
+                    },
+                    "accounts": {
+                        "A1": {
+                            "name": "u", "isPersonal": true, "isReadOnly": false,
+                            "accountCapabilities": { "urn:ietf:params:jmap:mail": {} },
+                        },
+                    },
+                    "primaryAccounts": { "urn:ietf:params:jmap:mail": "A1" },
+                })
+            } else {
+                let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                let call = &request["methodCalls"][0];
+                serde_json::json!({
+                    "methodResponses": [[
+                        "Email/get",
+                        { "accountId": "A1", "state": "s1", "list": [], "notFound": [] },
+                        call[2],
+                    ]],
+                    "sessionState": "sess1",
+                })
+            };
+
+            let json = json.to_string();
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                json.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(json.as_bytes()).unwrap();
+        }
+    }
+
+    /// An account on [`expiring`] whose token command reads `token`.
+    fn on_expiring(addr: SocketAddr, token: &Path) -> JmapConfig {
+        toml::from_str(&format!(
+            "mailbox = \"INBOX\"\nserver = \"http://{addr}/session\"\n\
+             auth.bearer.token.command = [\"cat\", \"{}\"]\n",
+            token.display()
+        ))
+        .unwrap()
+    }
+
+    /// A session opened on `T1`, the server then taking `T2` alone, as a
+    /// token rotating while the watch holds it.
+    fn expired() -> (JmapClientStd, JmapConfig, TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let token = dir.path().join("token");
+        let valid = Arc::new(Mutex::new(String::from("T1")));
+        fs::write(&token, "T1").unwrap();
+
+        let config = on_expiring(expiring(valid.clone()), &token);
+        let (client, _url) = open(&config, &mut SecretResolver::new()).unwrap();
+
+        fs::write(&token, "T2").unwrap();
+        *valid.lock().unwrap() = String::from("T2");
+
+        (client, config, dir)
+    }
+
+    #[test]
+    fn a_reconnect_presents_the_credential_resolved_again() {
+        let (mut client, config, _dir) = expired();
+
+        reconnect(&mut client, &config).unwrap();
+        let got = client.email_get(Vec::new(), get_options(false));
+
+        assert_eq!("s1", got.unwrap().new_state);
+    }
+
+    #[test]
+    fn a_subscription_presents_the_credential_resolved_again() {
+        let (_client, config, _dir) = expired();
+        let mut watched = watched(WatchDomain::Message);
+        watched.state = String::from("s1");
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let news = subscribe(&config, &[watched], 0, &mut None, &shutdown);
+
+        assert!(news.unwrap());
     }
 }

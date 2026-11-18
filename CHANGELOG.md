@@ -90,6 +90,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed a JMAP watch presenting its first credential after a reconnect: a round retried on a fresh connection and every event stream present the credential resolved for them, so a rotated token no longer loses the session and the change that came with its expiry.
 - Fixed a DAV server answering 401 to a block with no `auth` failing with the bare `WebDAV server returned HTTP 401`: the watch and `account check` say the server asks for credentials and the account configures no `auth`, still uncoded.
 - Fixed the Ctrl+C notice of `watch` printed on stdout, which `--json` reserves for values: it goes to stderr.
 - Fixed a credential command prompting for a password hanging: it reads the terminal again (pimalaya-config 0.4.1).
