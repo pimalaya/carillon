@@ -15,13 +15,16 @@ use std::{
 pub const OK: &str = "200 OK";
 
 /// A stream answering each request with the next of its answers, a
-/// status and a JSON body, and keeping the request lines it was sent.
+/// status and a JSON body, and keeping the requests it was sent.
 #[derive(Default)]
 pub struct Scripted {
     answers: VecDeque<(&'static str, &'static str)>,
     answer: Cursor<Vec<u8>>,
     request: Vec<u8>,
+    /// The request line of every request sent.
     pub seen: Vec<String>,
+    /// The head of every request sent, its request line and headers.
+    pub heads: Vec<String>,
 }
 
 impl Scripted {
@@ -53,6 +56,8 @@ impl Read for Scripted {
             let request = String::from_utf8_lossy(&request);
             let line = request.lines().next().unwrap_or_default();
             self.seen.push(line.to_string());
+            let head = request.split("\r\n\r\n").next().unwrap_or_default();
+            self.heads.push(head.to_string());
 
             let (status, body) = self.answers.pop_front().unwrap_or((OK, ""));
             let length = body.len();

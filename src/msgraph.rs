@@ -31,7 +31,10 @@ use io_msgraph::v1::{
         contacts::delta::MsgraphContactDelta,
         events::list::MsgraphEventsListParams,
         mail_folders::list::MsgraphMailFoldersListParams,
-        messages::{MsgraphFlagStatus, MsgraphMessage, delta::MsgraphMessageDelta},
+        messages::{
+            MsgraphFlagStatus, MsgraphMessage,
+            delta::{MsgraphMessageDelta, MsgraphMessagesDeltaParams},
+        },
     },
 };
 use log::{debug, trace};
@@ -65,6 +68,9 @@ const FOLDER_PAGE: u32 = 100;
 const DEFAULT_CONTACT_FOLDER: &str = "contacts";
 /// How many events one listing page asks for.
 const EVENT_PAGE: u32 = 250;
+/// How many messages or contacts one delta page asks for, sent on every page
+/// (`Prefer: odata.maxpagesize`), Graph answering fewer where it caps them.
+const DELTA_PAGE: u32 = 1000;
 
 /// Opens a connection to the Graph API, resolving the token through
 /// `resolver`.
@@ -344,8 +350,17 @@ impl Watched {
                     MESSAGE_SELECT
                 };
                 let page = match link {
-                    Some(link) => client.messages_delta_from_link(link),
-                    None => client.messages_delta(folder, Some(select)),
+                    Some(link) => {
+                        client.messages_delta_from_link_with_page_size(link, Some(DELTA_PAGE))
+                    }
+                    None => {
+                        let params = MsgraphMessagesDeltaParams {
+                            select: Some(select),
+                            max_page_size: Some(DELTA_PAGE),
+                            ..Default::default()
+                        };
+                        client.messages_delta_with_params(folder, &params)
+                    }
                 }
                 .context("cannot read message changes")?
                 .response;
@@ -355,8 +370,14 @@ impl Watched {
             }
             WatchDomain::Card => {
                 let page = match link {
-                    Some(link) => client.contacts_delta_from_link(link),
-                    None => client.contacts_delta(folder, Some(CONTACT_SELECT)),
+                    Some(link) => {
+                        client.contacts_delta_from_link_with_page_size(link, Some(DELTA_PAGE))
+                    }
+                    None => client.contacts_delta_with_page_size(
+                        folder,
+                        Some(CONTACT_SELECT),
+                        Some(DELTA_PAGE),
+                    ),
                 }
                 .context("cannot read contact changes")?
                 .response;
@@ -633,7 +654,10 @@ mod tests {
         messages::{MsgraphEmailAddress, MsgraphFollowupFlag, MsgraphRecipient},
     };
 
-    use crate::{msgraph::*, scripted::Scripted};
+    use crate::{
+        msgraph::*,
+        scripted::{OK, Scripted},
+    };
 
     /// The code of the failure a watch meets arming on a mailbox, whose
     /// folder listing is answered `status` and `body`.
@@ -794,5 +818,32 @@ mod tests {
         assert_eq!(Some(String::from("Lunch")), summary.subject);
         assert_eq!(Some(String::from("Alice")), summary.from_name);
         assert_eq!(Some(String::from("alice@example.org")), summary.from_addr);
+    }
+
+    #[test]
+    fn every_delta_page_asks_for_a_thousand_items() {
+        let next = r#"{"value":[],"@odata.nextLink":"https://graph.microsoft.com/v1.0/me/next"}"#;
+        let delta =
+            r#"{"value":[],"@odata.deltaLink":"https://graph.microsoft.com/v1.0/me/delta"}"#;
+
+        for domain in [WatchDomain::Message, WatchDomain::Card] {
+            let stream = Scripted::answering(&[(OK, next), (OK, delta)]);
+            let mut client = MsgraphClientStd::new(stream, "token", Default::default());
+            let watched = Watched {
+                domain,
+                id: Some(String::from("F")),
+                known: Known::new(),
+                link: None,
+            };
+
+            watched.delta(&mut client, None, false).unwrap();
+
+            let stream = client.stream.as_any_mut().downcast_mut::<Scripted>();
+            let heads = &stream.unwrap().heads;
+            assert_eq!(2, heads.len());
+            for head in heads {
+                assert!(head.contains("odata.maxpagesize=1000"), "{head}");
+            }
+        }
     }
 }

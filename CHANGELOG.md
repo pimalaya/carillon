@@ -74,6 +74,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   What moved in the mailbox during the outage is reported, where the reopened watch used to take a new baseline. A mailbox recreated meanwhile still takes one.
 
+- Changed the Microsoft Graph mail and contacts deltas to ask for 1000 items a page (`Prefer: odata.maxpagesize`), where Graph's default of 10 made the first listing of a 20,000-message folder about 2,000 requests.
+
 - Changed a Gmail watch reopened after a lost session to read its history from the cursor the lost one had reached.
 
 - Changed the JMAP event stream to be reopened with the id of the last event read.
