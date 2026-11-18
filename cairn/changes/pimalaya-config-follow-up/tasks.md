@@ -15,5 +15,6 @@ change: pimalaya-config-follow-up
 
 ## Owner rulings
 
-- [ ] COH-4 row 1: a Google daily limit, `rate-limited` (today) or `quota-exceeded`
-- [ ] Installers: `curl -f` and a checksum across the family, with pimalaya/nix publishing checksums
+- [x] COH-4 row 1: ruled 2026-11-18, a Google daily limit stays `rate-limited` (`quota-exceeded` keeps its storage meaning); nothing moves in carillon, himalaya alone changes
+- [x] Installers, `curl -f`: ruled 2026-11-18 and landed, install.sh downloads with `curl -fsSLo`
+- [ ] Installers, checksums: once pimalaya/nix publishes them (ruled 2026-11-18, later)
