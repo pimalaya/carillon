@@ -420,7 +420,7 @@ Every command handing data to the printer SHALL return a named `*Output` type de
 - **THEN** stdout receives `session-lost` events coded `mailbox-not-found` and the result, never `session-opened`, and the exit status is 0
 
 ### Requirement: A JMAP account watches every domain it configures
-The JMAP backend SHALL watch mail, contacts and calendar events, each under the collection key its domain uses (`jmap.mailbox`, `jmap.addressbook`, `jmap.calendar`), of which at least one SHALL be given. It SHALL fire `on-message-*` and `on-flag-*` for mail, `on-card-*` for contacts and `on-event-*` for calendar events, and SHALL NOT offer `on-task-*`, the JMAP calendars draft having no task type. A hook naming a domain the account configured no collection for SHALL be refused when the configuration is read, naming the hook and the key it would need. All the domains SHALL share one session, one connection and one event stream, that being what JMAP offers over a protocol needing an account per domain.
+The JMAP backend SHALL watch mail, contacts and calendar events, each under the collection key its domain uses (`jmap.mailbox`, `jmap.addressbook`, `jmap.calendar`), of which at least one SHALL be given. It SHALL fire `on-message-*` and `on-flag-*` for mail, `on-card-*` for contacts and `on-event-*` for calendar events, and SHALL NOT offer `on-task-*`, the JMAP calendars draft having no task type. A hook naming a domain the account configured no collection for SHALL be refused when the configuration is read, naming the hook and the key it would need. All the domains SHALL share one session, one connection and one event stream, that being what JMAP offers over a protocol needing an account per domain. Each collection SHALL be read when its session opens with its state first, so an item moving while it is listed and missing from the listing is reported by the first round rather than lost between the two, one the listing already holds reading as there before the watch (a card or an event so held may read as edited), then listed page by page, a page asking for no more than the server's `maxObjectsInGet` and 500; a listing whose count does not end at the `total` the server answered SHALL be read again from the start, and the session given up after three such listings.
 
 #### Scenario: One account, three domains
 - **GIVEN** a JMAP account configuring `jmap.mailbox`, `jmap.addressbook` and `jmap.calendar`
@@ -431,6 +431,11 @@ The JMAP backend SHALL watch mail, contacts and calendar events, each under the 
 - **GIVEN** a JMAP account configuring `jmap.mailbox` and `jmap.hooks.on-card-add`
 - **WHEN** the configuration is read
 - **THEN** it is refused, naming the hook and the `jmap.addressbook` it would need
+
+#### Scenario: A mailbox larger than a page
+- **GIVEN** a JMAP account watching a mailbox of 20,000 messages, on a server answering at most 500 ids per `Email/query`
+- **WHEN** the session opens
+- **THEN** the watch holds all 20,000, and a message arriving after its page was listed fires `on-message-add` on the first round
 
 
 ### Requirement: Microsoft Graph and Google accounts are watched through their own APIs

@@ -23,7 +23,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, prelude::BASE64_STANDARD};
 use io_jmap::{
     calendars::calendar_event::{
@@ -73,6 +73,11 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
 /// Per-read scratch buffer for the event stream.
 const READ_BUF: usize = 8 * 1024;
+/// How many items one baseline page asks for, at most.
+const PAGE: u64 = 500;
+/// How many times a baseline is listed before a collection that keeps
+/// moving under it fails the session.
+const LISTINGS: usize = 3;
 /// Opens a JMAP session against the configured server, resolving its
 /// credential through `resolver`, so a caller opening several backends of
 /// one account spawns each distinct credential command once.
@@ -280,20 +285,22 @@ struct Member {
 impl Watched {
     /// Resolves `name` into its collection and reads what it holds, which
     /// is what a later change is a change against.
+    ///
+    /// The state is read before the listing, so an item moving meanwhile is
+    /// reported by the first round rather than lost between the two.
     fn arm(client: &mut JmapClientStd, domain: WatchDomain, name: &str) -> Result<Self> {
         let (id, known, state) = match domain {
             WatchDomain::Message => {
                 let id = resolve_mailbox(client, name)?;
-                let known = baseline_mailbox(client, &id)?;
                 let state = client
                     .email_get(Vec::new(), get_options(false))
                     .context("cannot read the initial email state")?
                     .new_state;
+                let known = baseline_mailbox(client, &id)?;
                 (id, known, state)
             }
             WatchDomain::Card => {
                 let id = resolve_addressbook(client, name)?;
-                let known = baseline_addressbook(client, &id)?;
                 let opts = JmapContactCardGetOptions {
                     ids: Some(Vec::new()),
                     properties: Some(vec![String::from("id")]),
@@ -302,11 +309,11 @@ impl Watched {
                     .contact_card_get(opts)
                     .context("cannot read the initial contact state")?
                     .new_state;
+                let known = baseline_addressbook(client, &id)?;
                 (id, known, state)
             }
             WatchDomain::Event => {
                 let id = resolve_calendar(client, name)?;
-                let known = baseline_calendar(client, &id)?;
                 let opts = JmapCalendarEventGetOptions {
                     ids: Some(Vec::new()),
                     properties: Some(vec![String::from("id")]),
@@ -316,6 +323,7 @@ impl Watched {
                     .calendar_event_get(opts)
                     .context("cannot read the initial event state")?
                     .new_state;
+                let known = baseline_calendar(client, &id)?;
                 (id, known, state)
             }
             WatchDomain::Task => unreachable!("JMAP has no task type"),
@@ -707,71 +715,144 @@ pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<
 
 /// Lists what the watched mailbox holds, with each message's keywords.
 fn baseline_mailbox(client: &mut JmapClientStd, mailbox_id: &str) -> Result<Known> {
-    let filter = JmapEmailFilter {
-        in_mailbox: Some(mailbox_id.to_string()),
-        ..Default::default()
-    };
-    let opts = JmapEmailQueryOptions {
-        filter: Some(filter.into()),
-        properties: Some(vec![JmapEmailProperty::Id, JmapEmailProperty::Keywords]),
-        ..Default::default()
-    };
+    baseline(client, |client, position, limit| {
+        let filter = JmapEmailFilter {
+            in_mailbox: Some(mailbox_id.to_string()),
+            ..Default::default()
+        };
+        let opts = JmapEmailQueryOptions {
+            filter: Some(filter.into()),
+            position: Some(position),
+            limit: Some(limit),
+            properties: Some(vec![JmapEmailProperty::Id, JmapEmailProperty::Keywords]),
+            ..Default::default()
+        };
 
-    let listed = client
-        .email_query(opts)
-        .context("cannot list the watched mailbox")?;
+        let listed = client
+            .email_query(opts)
+            .context("cannot list the watched mailbox")?;
 
-    Ok(listed
-        .emails
-        .into_iter()
-        .filter_map(|email| Some((email.id?, render_keywords(email.keywords.as_ref()))))
-        .collect())
+        Ok(Page {
+            held: (listed.emails.len() + listed.not_found.len()) as u64,
+            total: listed.total,
+            members: listed
+                .emails
+                .into_iter()
+                .filter_map(|email| Some((email.id?, render_keywords(email.keywords.as_ref()))))
+                .collect(),
+        })
+    })
 }
 
 /// Lists what the watched addressbook holds.
 fn baseline_addressbook(client: &mut JmapClientStd, addressbook_id: &str) -> Result<Known> {
-    let filter = JmapContactCardFilter {
-        in_address_book: Some(addressbook_id.to_string()),
-        ..Default::default()
-    };
-    let opts = JmapContactCardQueryOptions {
-        filter: Some(filter),
-        properties: Some(vec![String::from("id")]),
-        ..Default::default()
-    };
+    baseline(client, |client, position, limit| {
+        let filter = JmapContactCardFilter {
+            in_address_book: Some(addressbook_id.to_string()),
+            ..Default::default()
+        };
+        let opts = JmapContactCardQueryOptions {
+            filter: Some(filter),
+            position: Some(position),
+            limit: Some(limit),
+            properties: Some(vec![String::from("id")]),
+            ..Default::default()
+        };
 
-    let listed = client
-        .contact_card_query(opts)
-        .context("cannot list the watched addressbook")?;
+        let listed = client
+            .contact_card_query(opts)
+            .context("cannot list the watched addressbook")?;
 
-    Ok(listed
-        .cards
-        .into_iter()
-        .filter_map(|card| Some((card.id?, BTreeSet::new())))
-        .collect())
+        Ok(Page {
+            held: (listed.cards.len() + listed.not_found.len()) as u64,
+            total: listed.total,
+            members: listed
+                .cards
+                .into_iter()
+                .filter_map(|card| Some((card.id?, BTreeSet::new())))
+                .collect(),
+        })
+    })
 }
 
 /// Lists what the watched calendar holds, one id per series.
 fn baseline_calendar(client: &mut JmapClientStd, calendar_id: &str) -> Result<Known> {
-    let filter = JmapCalendarEventFilter {
-        in_calendar: Some(calendar_id.to_string()),
-        ..Default::default()
-    };
-    let opts = JmapCalendarEventQueryOptions {
-        filter: Some(filter),
-        properties: Some(vec![String::from("id")]),
-        ..Default::default()
-    };
+    baseline(client, |client, position, limit| {
+        let filter = JmapCalendarEventFilter {
+            in_calendar: Some(calendar_id.to_string()),
+            ..Default::default()
+        };
+        let opts = JmapCalendarEventQueryOptions {
+            filter: Some(filter),
+            position: Some(position),
+            limit: Some(limit),
+            properties: Some(vec![String::from("id")]),
+            ..Default::default()
+        };
 
-    let listed = client
-        .calendar_event_query(opts)
-        .context("cannot list the watched calendar")?;
+        let listed = client
+            .calendar_event_query(opts)
+            .context("cannot list the watched calendar")?;
 
-    Ok(listed
-        .events
-        .into_iter()
-        .filter_map(|event| Some((event.id?, BTreeSet::new())))
-        .collect())
+        Ok(Page {
+            held: (listed.events.len() + listed.not_found.len()) as u64,
+            total: listed.total,
+            members: listed
+                .events
+                .into_iter()
+                .filter_map(|event| Some((event.id?, BTreeSet::new())))
+                .collect(),
+        })
+    })
+}
+
+/// Lists a collection page by page through `list`, given a position and a
+/// limit, until a page comes back empty or `total` items were read.
+///
+/// An item leaving between two pages shifts the next ones up and hides
+/// one, so a listing whose count does not end as the server's `total` is
+/// read again from the start, [`LISTINGS`] times at most.
+fn baseline(
+    client: &mut JmapClientStd,
+    mut list: impl FnMut(&mut JmapClientStd, u64, u64) -> Result<Page>,
+) -> Result<Known> {
+    let limit = client
+        .session()
+        .and_then(|session| session.core_capability().max_objects_in_get)
+        .unwrap_or(PAGE)
+        .clamp(1, PAGE);
+
+    for listing in 1..=LISTINGS {
+        let mut known = Known::new();
+        let mut position = 0;
+
+        let total = loop {
+            let page = list(client, position, limit)?;
+
+            if page.held == 0 {
+                break page.total;
+            }
+
+            position += page.held;
+            known.extend(page.members);
+
+            if page.total.is_some_and(|total| position >= total) {
+                break page.total;
+            }
+        };
+
+        match total {
+            Some(total) if known.len() as u64 != total => {
+                debug!(
+                    "jmap listing {listing} read {} of {total} items",
+                    known.len()
+                );
+            }
+            _ => return Ok(known),
+        }
+    }
+
+    bail!("The watched collection kept moving while it was listed {LISTINGS} times")
 }
 
 /// Resolves a mailbox name into the id every other call speaks.
@@ -899,6 +980,17 @@ fn render_keywords(keywords: Option<&BTreeMap<String, bool>>) -> BTreeSet<String
 /// What the watch knows of a collection: an item id to its keywords,
 /// empty for anything but mail.
 type Known = BTreeMap<String, BTreeSet<String>>;
+
+/// One page of a baseline listing.
+struct Page {
+    /// The ids the page named, the ones gone by the time they were read
+    /// included, which is how far the next page starts.
+    held: u64,
+    /// How many items the collection holds, when the server counted them.
+    total: Option<u64>,
+    /// The items read, each with its keywords.
+    members: Vec<(String, BTreeSet<String>)>,
+}
 
 #[cfg(test)]
 mod tests {
@@ -1113,10 +1205,25 @@ mod tests {
         );
     }
 
-    /// A loopback JMAP server taking only the bearer token `valid` holds,
-    /// answering any other 401. It serves the session, an empty `Email/get`
-    /// at state `s1`, and an event stream pushing the Email state `s2`.
-    fn expiring(valid: Arc<Mutex<String>>) -> SocketAddr {
+    /// What the loopback JMAP server of [`serve`] holds.
+    #[derive(Default)]
+    struct Mock {
+        /// The one bearer token taken, any other answered 401.
+        token: String,
+        /// How many messages the inbox holds, `e1` to `e<held>`, the
+        /// Email state being `s<held>`.
+        held: u64,
+        /// The most ids one `Email/query` answers, none when 0.
+        cap: u64,
+        /// Whether a message arrives right after the listing reaches the
+        /// end of the inbox.
+        arrive: bool,
+    }
+
+    /// A loopback JMAP server answering from `mock`: the session, the inbox,
+    /// its messages, their changes, and an event stream pushing the Email
+    /// state `s<held + 1>`.
+    fn serve(mock: Arc<Mutex<Mock>>) -> SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -1125,16 +1232,16 @@ mod tests {
                 let Ok(stream) = stream else {
                     return;
                 };
-                let valid = valid.clone();
-                thread::spawn(move || answer(stream, &valid, addr));
+                let mock = mock.clone();
+                thread::spawn(move || answer(stream, &mock, addr));
             }
         });
 
         addr
     }
 
-    /// Answers the requests of one connection of [`expiring`].
-    fn answer(mut stream: TcpStream, valid: &Mutex<String>, addr: SocketAddr) {
+    /// Answers the requests of one connection of [`serve`].
+    fn answer(mut stream: TcpStream, mock: &Mutex<Mock>, addr: SocketAddr) {
         let mut reader = BufReader::new(stream.try_clone().unwrap());
 
         loop {
@@ -1165,16 +1272,21 @@ mod tests {
 
             let mut body = vec![0; len];
             reader.read_exact(&mut body).unwrap();
+            let mut mock = mock.lock().unwrap();
 
-            if auth != format!("Bearer {}", valid.lock().unwrap()) {
+            if auth != format!("Bearer {}", mock.token) {
                 let refusal = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
                 stream.write_all(refusal.as_bytes()).unwrap();
                 continue;
             }
 
             if path.starts_with("/es") {
-                let frame = "event: state\ndata: {\"@type\":\"StateChange\",\
-                             \"changed\":{\"A1\":{\"Email\":\"s2\"}}}\n\n";
+                let state = mock.held + 1;
+                drop(mock);
+                let frame = format!(
+                    "event: state\ndata: {{\"@type\":\"StateChange\",\
+                     \"changed\":{{\"A1\":{{\"Email\":\"s{state}\"}}}}}}\n\n"
+                );
                 let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
                             Transfer-Encoding: chunked\r\n\r\n";
                 let chunk = format!("{head}{:x}\r\n{frame}\r\n", frame.len());
@@ -1184,41 +1296,19 @@ mod tests {
             }
 
             let json = if body.is_empty() {
-                serde_json::json!({
-                    "username": "u",
-                    "state": "sess1",
-                    "apiUrl": format!("http://{addr}/api"),
-                    "downloadUrl": format!("http://{addr}/dl/{{accountId}}/{{blobId}}/{{name}}?type={{type}}"),
-                    "uploadUrl": format!("http://{addr}/ul/{{accountId}}"),
-                    "eventSourceUrl": format!("http://{addr}/es?types={{types}}&closeafter={{closeafter}}&ping={{ping}}"),
-                    "capabilities": {
-                        "urn:ietf:params:jmap:core": {
-                            "maxSizeUpload": 1, "maxConcurrentUpload": 1,
-                            "maxSizeRequest": 1, "maxConcurrentRequests": 1,
-                            "maxCallsInRequest": 16, "maxObjectsInGet": 500,
-                            "maxObjectsInSet": 500, "collationAlgorithms": [],
-                        },
-                        "urn:ietf:params:jmap:mail": {},
-                    },
-                    "accounts": {
-                        "A1": {
-                            "name": "u", "isPersonal": true, "isReadOnly": false,
-                            "accountCapabilities": { "urn:ietf:params:jmap:mail": {} },
-                        },
-                    },
-                    "primaryAccounts": { "urn:ietf:params:jmap:mail": "A1" },
-                })
+                session(addr)
             } else {
                 let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
-                let call = &request["methodCalls"][0];
-                serde_json::json!({
-                    "methodResponses": [[
-                        "Email/get",
-                        { "accountId": "A1", "state": "s1", "list": [], "notFound": [] },
-                        call[2],
-                    ]],
-                    "sessionState": "sess1",
-                })
+                let mut ids = serde_json::Value::Null;
+                let mut responses = Vec::new();
+
+                for call in request["methodCalls"].as_array().unwrap() {
+                    let name = call[0].as_str().unwrap();
+                    let args = mock.call(name, &call[1], &mut ids);
+                    responses.push(serde_json::json!([name, args, call[2]]));
+                }
+
+                serde_json::json!({ "methodResponses": responses, "sessionState": "sess1" })
             };
 
             let json = json.to_string();
@@ -1231,8 +1321,110 @@ mod tests {
         }
     }
 
-    /// An account on [`expiring`] whose token command reads `token`.
-    fn on_expiring(addr: SocketAddr, token: &Path) -> JmapConfig {
+    impl Mock {
+        /// Answers one method call, `ids` holding what the last
+        /// `Email/query` listed for a back-reference to read.
+        fn call(
+            &mut self,
+            name: &str,
+            args: &serde_json::Value,
+            ids: &mut serde_json::Value,
+        ) -> serde_json::Value {
+            let state = format!("s{}", self.held);
+
+            match name {
+                "Mailbox/get" => serde_json::json!({
+                    "accountId": "A1", "state": "m1", "notFound": [],
+                    "list": [{ "id": "mb1", "name": "Inbox", "role": "inbox" }],
+                }),
+                "Email/query" => {
+                    let position = args["position"].as_u64().unwrap_or(0);
+                    let mut limit = args["limit"].as_u64().unwrap_or(self.held);
+                    if self.cap > 0 {
+                        limit = limit.min(self.cap);
+                    }
+
+                    let total = self.held;
+                    let end = (position + limit).min(total);
+                    *ids = (position + 1..=end).map(|i| format!("e{i}")).collect();
+
+                    if self.arrive && end >= total {
+                        self.arrive = false;
+                        self.held += 1;
+                    }
+
+                    serde_json::json!({
+                        "accountId": "A1", "queryState": "q", "canCalculateChanges": false,
+                        "position": position, "total": total, "ids": ids,
+                    })
+                }
+                "Email/get" => {
+                    let wanted = if args.get("#ids").is_some() {
+                        ids.clone()
+                    } else {
+                        args["ids"].clone()
+                    };
+                    let list: Vec<_> = wanted
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|id| {
+                            serde_json::json!({
+                                "id": id, "mailboxIds": { "mb1": true }, "keywords": {},
+                            })
+                        })
+                        .collect();
+
+                    serde_json::json!({
+                        "accountId": "A1", "state": state, "list": list, "notFound": [],
+                    })
+                }
+                "Email/changes" => {
+                    let since = args["sinceState"].as_str().unwrap();
+                    let since: u64 = since[1..].parse().unwrap();
+                    let created: Vec<_> =
+                        (since + 1..=self.held).map(|i| format!("e{i}")).collect();
+
+                    serde_json::json!({
+                        "accountId": "A1", "oldState": format!("s{since}"), "newState": state,
+                        "hasMoreChanges": false, "created": created, "updated": [], "destroyed": [],
+                    })
+                }
+                _ => serde_json::json!({ "type": "unknownMethod" }),
+            }
+        }
+    }
+
+    /// The session [`serve`] answers.
+    fn session(addr: SocketAddr) -> serde_json::Value {
+        serde_json::json!({
+            "username": "u",
+            "state": "sess1",
+            "apiUrl": format!("http://{addr}/api"),
+            "downloadUrl": format!("http://{addr}/dl/{{accountId}}/{{blobId}}/{{name}}?type={{type}}"),
+            "uploadUrl": format!("http://{addr}/ul/{{accountId}}"),
+            "eventSourceUrl": format!("http://{addr}/es?types={{types}}&closeafter={{closeafter}}&ping={{ping}}"),
+            "capabilities": {
+                "urn:ietf:params:jmap:core": {
+                    "maxSizeUpload": 1, "maxConcurrentUpload": 1,
+                    "maxSizeRequest": 1, "maxConcurrentRequests": 1,
+                    "maxCallsInRequest": 16, "maxObjectsInGet": 500,
+                    "maxObjectsInSet": 500, "collationAlgorithms": [],
+                },
+                "urn:ietf:params:jmap:mail": {},
+            },
+            "accounts": {
+                "A1": {
+                    "name": "u", "isPersonal": true, "isReadOnly": false,
+                    "accountCapabilities": { "urn:ietf:params:jmap:mail": {} },
+                },
+            },
+            "primaryAccounts": { "urn:ietf:params:jmap:mail": "A1" },
+        })
+    }
+
+    /// An account on [`serve`] whose token command reads `token`.
+    fn on_mock(addr: SocketAddr, token: &Path) -> JmapConfig {
         toml::from_str(&format!(
             "mailbox = \"INBOX\"\nserver = \"http://{addr}/session\"\n\
              auth.bearer.token.command = [\"cat\", \"{}\"]\n",
@@ -1241,19 +1433,33 @@ mod tests {
         .unwrap()
     }
 
+    /// A session opened on [`serve`] answering from `mock`, its token `T1`.
+    fn opened(mock: Mock) -> (JmapClientStd, JmapConfig, Arc<Mutex<Mock>>, TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let token = dir.path().join("token");
+        fs::write(&token, "T1").unwrap();
+        let mock = Arc::new(Mutex::new(Mock {
+            token: String::from("T1"),
+            ..mock
+        }));
+
+        let config = on_mock(serve(mock.clone()), &token);
+        let (client, _url) = open(&config, &mut SecretResolver::new()).unwrap();
+
+        (client, config, mock, dir)
+    }
+
     /// A session opened on `T1`, the server then taking `T2` alone, as a
     /// token rotating while the watch holds it.
     fn expired() -> (JmapClientStd, JmapConfig, TempDir) {
-        let dir = tempfile::tempdir().unwrap();
-        let token = dir.path().join("token");
-        let valid = Arc::new(Mutex::new(String::from("T1")));
-        fs::write(&token, "T1").unwrap();
+        let held = Mock {
+            held: 1,
+            ..Default::default()
+        };
+        let (client, config, mock, dir) = opened(held);
 
-        let config = on_expiring(expiring(valid.clone()), &token);
-        let (client, _url) = open(&config, &mut SecretResolver::new()).unwrap();
-
-        fs::write(&token, "T2").unwrap();
-        *valid.lock().unwrap() = String::from("T2");
+        fs::write(dir.path().join("token"), "T2").unwrap();
+        mock.lock().unwrap().token = String::from("T2");
 
         (client, config, dir)
     }
@@ -1278,5 +1484,73 @@ mod tests {
         let news = subscribe(&config, &[watched], 0, &mut None, &shutdown);
 
         assert!(news.unwrap());
+    }
+
+    #[test]
+    fn a_baseline_reads_every_page_the_server_answers() {
+        let capped = Mock {
+            held: 5,
+            cap: 2,
+            ..Default::default()
+        };
+        let (mut client, _config, _mock, _dir) = opened(capped);
+
+        let watched = Watched::arm(&mut client, WatchDomain::Message, "INBOX").unwrap();
+
+        assert_eq!(5, watched.known.len());
+    }
+
+    #[test]
+    fn an_arrival_while_the_baseline_is_listed_is_reported() {
+        let arriving = Mock {
+            held: 3,
+            arrive: true,
+            ..Default::default()
+        };
+        let (mut client, _config, _mock, _dir) = opened(arriving);
+        let mut watched = Watched::arm(&mut client, WatchDomain::Message, "INBOX").unwrap();
+        let mut events = Vec::new();
+
+        watched
+            .round(&mut client, false, &mut |event, _| events.push(event))
+            .unwrap();
+
+        let added = WatchEvent::ItemAdded {
+            domain: WatchDomain::Message,
+            id: String::from("e4"),
+        };
+        assert_eq!(vec![added], events);
+    }
+
+    #[test]
+    fn a_listing_short_of_its_total_is_read_again() {
+        let (mut client, _config, _mock, _dir) = opened(Mock::default());
+        let mut listings = 0;
+
+        let known = baseline(&mut client, |_, position, _| {
+            if position == 0 {
+                listings += 1;
+            }
+
+            let ids: &[&str] = match (listings, position) {
+                (1, 0) => &["e1"],
+                (1, _) => &[],
+                (_, 0) => &["e1", "e2"],
+                _ => &[],
+            };
+
+            Ok(Page {
+                held: ids.len() as u64,
+                total: Some(2),
+                members: ids
+                    .iter()
+                    .map(|id| (id.to_string(), BTreeSet::new()))
+                    .collect(),
+            })
+        })
+        .unwrap();
+
+        assert_eq!(2, listings);
+        assert_eq!(2, known.len());
     }
 }

@@ -90,6 +90,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed a JMAP collection larger than one page being watched as its first page: the baseline is listed page by page, and read again when its count does not end at the server's `total`.
+- Fixed a JMAP item moving while its collection was first listed being lost: the state is read before the listing, so the first round reports it.
 - Fixed a JMAP watch presenting its first credential after a reconnect: a round retried on a fresh connection and every event stream present the credential resolved for them, so a rotated token no longer loses the session and the change that came with its expiry.
 - Fixed a DAV server answering 401 to a block with no `auth` failing with the bare `WebDAV server returned HTTP 401`: the watch and `account check` say the server asks for credentials and the account configures no `auth`, still uncoded.
 - Fixed the Ctrl+C notice of `watch` printed on stdout, which `--json` reserves for values: it goes to stderr.
