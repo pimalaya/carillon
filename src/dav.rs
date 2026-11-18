@@ -25,7 +25,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Error, Result, anyhow, bail};
@@ -79,6 +79,13 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How long a poll may sit in a read before looking at the shutdown flag.
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long a request may go unanswered, not a byte read, before its
+/// connection is taken for dead and the request fails.
+#[cfg(not(test))]
+const SILENCE: Duration = Duration::from_secs(60);
+/// The same, short enough for a test to wait it out.
+#[cfg(test)]
+const SILENCE: Duration = Duration::from_secs(2);
 /// Per-read scratch buffer.
 const READ_BUF: usize = 8 * 1024;
 /// How many members one `calendar-multiget` reading what a truncated query left
@@ -143,8 +150,9 @@ pub enum DavHome {
 /// spawns each distinct credential command once.
 ///
 /// The stream carries a read deadline and hands back the failures that
-/// only mean "not ready yet", so a poll against a server that stopped
-/// answering ends at the next deadline rather than holding the thread.
+/// only mean "not ready yet", so a request is woken up every second to
+/// look at the shutdown flag, and fails once the server sent nothing for
+/// [`SILENCE`], rather than holding the thread until TCP gives up.
 ///
 /// A pinned home set is what the connection opens on, `server` left
 /// unread.
@@ -1088,21 +1096,28 @@ where
 
     loop {
         match coroutine.resume(arg.take().as_deref()) {
-            WebdavCoroutineState::Yielded(WebdavYield::WantsRead) => loop {
-                if shutdown.load(Ordering::SeqCst) {
-                    bail!("Shutting down");
-                }
+            WebdavCoroutineState::Yielded(WebdavYield::WantsRead) => {
+                let asked = Instant::now();
 
-                match client.stream.read(&mut buf) {
-                    Ok(0) => bail!("Connection closed by peer"),
-                    Ok(read) => {
-                        arg = Some(buf[..read].to_vec());
-                        break;
+                loop {
+                    if shutdown.load(Ordering::SeqCst) {
+                        bail!("Shutting down");
                     }
-                    Err(err) if is_timeout(&err) => continue,
-                    Err(err) => return Err(err).context("read failed"),
+
+                    match client.stream.read(&mut buf) {
+                        Ok(0) => bail!("Connection closed by peer"),
+                        Ok(read) => {
+                            arg = Some(buf[..read].to_vec());
+                            break;
+                        }
+                        Err(err) if is_timeout(&err) && asked.elapsed() < SILENCE => continue,
+                        Err(err) if is_timeout(&err) => {
+                            bail!("Server sent nothing for {} seconds", SILENCE.as_secs())
+                        }
+                        Err(err) => return Err(err).context("read failed"),
+                    }
                 }
-            },
+            }
             WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
                 client.stream.write_all(&bytes).context("write failed")?;
             }
@@ -1336,21 +1351,28 @@ where
 
     loop {
         match coroutine.resume(arg.take().as_deref()) {
-            WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRead) => loop {
-                if shutdown.load(Ordering::SeqCst) {
-                    bail!("Shutting down");
-                }
+            WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRead) => {
+                let asked = Instant::now();
 
-                match client.stream.read(&mut buf) {
-                    Ok(0) => bail!("Connection closed by peer"),
-                    Ok(read) => {
-                        arg = Some(buf[..read].to_vec());
-                        break;
+                loop {
+                    if shutdown.load(Ordering::SeqCst) {
+                        bail!("Shutting down");
                     }
-                    Err(err) if is_timeout(&err) => continue,
-                    Err(err) => return Err(err).context("read failed"),
+
+                    match client.stream.read(&mut buf) {
+                        Ok(0) => bail!("Connection closed by peer"),
+                        Ok(read) => {
+                            arg = Some(buf[..read].to_vec());
+                            break;
+                        }
+                        Err(err) if is_timeout(&err) && asked.elapsed() < SILENCE => continue,
+                        Err(err) if is_timeout(&err) => {
+                            bail!("Server sent nothing for {} seconds", SILENCE.as_secs())
+                        }
+                        Err(err) => return Err(err).context("read failed"),
+                    }
                 }
-            },
+            }
             WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsWrite(bytes)) => {
                 client.stream.write_all(&bytes).context("write failed")?;
             }
@@ -1444,6 +1466,8 @@ fn names_precondition(body: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::mpsc, thread};
+
     #[cfg(feature = "caldav")]
     use ceichas::timer::CeichasTimer;
     #[cfg(feature = "caldav")]
@@ -2054,6 +2078,39 @@ mod tests {
             .collect();
         fired.sort();
         assert_eq!(vec![at("08:45:00"), at("09:45:00"), at("10:45:00")], fired);
+    }
+
+    /// A server reading every request and answering none, as a connection
+    /// gone dead after a suspend reads.
+    fn silent() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                thread::spawn(move || io::copy(&mut stream, &mut io::sink()));
+            }
+        });
+
+        addr
+    }
+
+    #[test]
+    fn a_request_the_server_never_answers_fails() {
+        let addr = silent();
+        let (sent, got) = mpsc::channel();
+
+        thread::spawn(move || {
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let mut client = client(&addr);
+            let listed = propfind(&mut client, "/cal/", 0, &[], &shutdown).map(|_| ());
+            let _ = locate(&mut client, None, DavHome::Calendars, "work", &shutdown);
+            sent.send(listed).unwrap();
+        });
+
+        let err = got.recv_timeout(SILENCE * 5).unwrap().unwrap_err();
+        assert!(format!("{err:#}").contains("sent nothing"), "{err:#}");
     }
 
     /// The failure a watch of `kind` meets on a server answering every

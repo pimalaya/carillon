@@ -21,7 +21,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc::RecvTimeoutError,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -67,6 +67,13 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How long the watch worker, and the resolver, may sit in a read
 /// before looking at the shutdown flag again.
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long a request may go unanswered, not a byte read, before its
+/// connection is taken for dead and the request fails.
+#[cfg(not(test))]
+const SILENCE: Duration = Duration::from_secs(60);
+/// The same, short enough for a test to wait it out.
+#[cfg(test)]
+const SILENCE: Duration = Duration::from_secs(2);
 /// Per-read scratch buffer for the resolver, which reads envelopes only.
 const READ_BUF: usize = 8 * 1024;
 
@@ -402,7 +409,8 @@ impl<'a> Resolver<'a> {
 ///
 /// What the client's own runner does, minus the part where a silent
 /// server holds the thread for as long as the transport allows: here a
-/// read deadline expires into another look at the flag.
+/// read deadline expires into another look at the flag, and a request
+/// unanswered for [`SILENCE`] fails.
 fn pump<C, T, E>(
     client: &mut ImapClientStd,
     mut coroutine: C,
@@ -417,21 +425,28 @@ where
 
     loop {
         match coroutine.resume(&mut client.fragmentizer, arg.take().as_deref()) {
-            ImapCoroutineState::Yielded(ImapYield::WantsRead) => loop {
-                if shutdown.load(Ordering::SeqCst) {
-                    bail!("Shutting down");
-                }
+            ImapCoroutineState::Yielded(ImapYield::WantsRead) => {
+                let asked = Instant::now();
 
-                match client.stream.read(&mut buf) {
-                    Ok(0) => bail!("Connection closed by peer"),
-                    Ok(read) => {
-                        arg = Some(buf[..read].to_vec());
-                        break;
+                loop {
+                    if shutdown.load(Ordering::SeqCst) {
+                        bail!("Shutting down");
                     }
-                    Err(err) if is_timeout(&err) => continue,
-                    Err(err) => return Err(err).context("read failed"),
+
+                    match client.stream.read(&mut buf) {
+                        Ok(0) => bail!("Connection closed by peer"),
+                        Ok(read) => {
+                            arg = Some(buf[..read].to_vec());
+                            break;
+                        }
+                        Err(err) if is_timeout(&err) && asked.elapsed() < SILENCE => continue,
+                        Err(err) if is_timeout(&err) => {
+                            bail!("Server sent nothing for {} seconds", SILENCE.as_secs())
+                        }
+                        Err(err) => return Err(err).context("read failed"),
+                    }
                 }
-            },
+            }
             ImapCoroutineState::Yielded(ImapYield::WantsWrite(bytes)) => {
                 client.stream.write_all(&bytes).context("write failed")?;
             }
@@ -545,6 +560,7 @@ mod tests {
         cell::{Cell, RefCell},
         io::{BufRead, BufReader},
         net::{TcpListener, TcpStream},
+        sync::mpsc,
         thread,
     };
 
@@ -734,8 +750,9 @@ mod tests {
     }
 
     /// Starts a server refusing every EXAMINE with the response code
-    /// `code`, taking any number of connections.
-    fn refuse(code: &'static str) -> ImapConfig {
+    /// `code`, or answering none when `None`, taking any number of
+    /// connections.
+    fn refuse(code: Option<&'static str>) -> ImapConfig {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -757,8 +774,9 @@ mod tests {
 
                     let mut words = line.split_whitespace();
                     let tag = words.next().unwrap_or_default();
-                    let answer = match words.next().unwrap_or_default() {
-                        "EXAMINE" => format!("{tag} NO [{code}] refused\r\n"),
+                    let answer = match (words.next().unwrap_or_default(), code) {
+                        ("EXAMINE", Some(code)) => format!("{tag} NO [{code}] refused\r\n"),
+                        ("EXAMINE", None) => continue,
                         _ => format!("{tag} OK done\r\n"),
                     };
 
@@ -779,7 +797,7 @@ mod tests {
     /// object a command failing with it prints.
     #[test]
     fn a_watch_refused_with_noperm_is_permission_denied() {
-        let config = refuse("NOPERM");
+        let config = refuse(Some("NOPERM"));
 
         let (result, _, _) = poll(&config, &mut None);
         let err = result.unwrap_err();
@@ -798,7 +816,7 @@ mod tests {
     /// is ever reported open, a missing one coded so.
     #[test]
     fn a_refused_examine_never_opens_the_session() {
-        let config = refuse("NONEXISTENT");
+        let config = refuse(Some("NONEXISTENT"));
 
         let (result, events, opened) = poll(&config, &mut None);
         let err = result.unwrap_err();
@@ -811,7 +829,7 @@ mod tests {
     /// The resolver's own connection keeps the server's refusal typed.
     #[test]
     fn a_resolve_refused_with_overquota_is_quota_exceeded() {
-        let config = refuse("OVERQUOTA");
+        let config = refuse(Some("OVERQUOTA"));
         let shutdown = Arc::new(AtomicBool::new(false));
         let mut resolver = Resolver::new(&config, "INBOX", &shutdown);
 
@@ -821,6 +839,22 @@ mod tests {
             crate::error::code(&err),
             "{err:#}"
         );
+    }
+
+    #[test]
+    fn a_resolve_the_server_never_answers_fails() {
+        let config = refuse(None);
+        let (sent, got) = mpsc::channel();
+
+        thread::spawn(move || {
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let mut resolver = Resolver::new(&config, "INBOX", &shutdown);
+            let summary = resolver.summary("1").map(|_| ());
+            sent.send(summary).unwrap();
+        });
+
+        let err = got.recv_timeout(SILENCE * 5).unwrap().unwrap_err();
+        assert!(format!("{err:#}").contains("sent nothing"), "{err:#}");
     }
 
     /// An envelope address of `name`, `mailbox` and `host`.

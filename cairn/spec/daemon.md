@@ -205,12 +205,17 @@ A watch learns that an item arrived, and sometimes what it says. A backend SHALL
 - **THEN** the notification reads `Réunion from André`, and `$sender` reads `André <andre@example.org>`
 
 ### Requirement: Ctrl+C is prompt on every path
-`watch` SHALL install pimalaya-cli's `signal::Shutdown`: the first SIGINT (Ctrl+C), SIGTERM or SIGHUP SHALL request the shutdown, which the watch reads, and a second one SHALL end the process with 130. A requested shutdown SHALL be honoured within roughly a second on every path a watch can be waiting in: idling on a connection, sleeping between polls, backing off before a reconnect, or resolving an arrival's envelope. No path SHALL wait on a server that has stopped answering: every connection the daemon opens SHALL carry a read deadline and SHALL hand back the not-ready failures rather than letting the transport retry them away, since the deadline exists to be the wakeup that re-reads the flag.
+`watch` SHALL install pimalaya-cli's `signal::Shutdown`: the first SIGINT (Ctrl+C), SIGTERM or SIGHUP SHALL request the shutdown, which the watch reads, and a second one SHALL end the process with 130. A requested shutdown SHALL be honoured within roughly a second on every path a watch can be waiting in: idling on a connection, sleeping between polls, backing off before a reconnect, or resolving an arrival's envelope. No path SHALL wait on a server that has stopped answering: every connection the daemon opens SHALL carry a read deadline and SHALL hand back the not-ready failures rather than letting the transport retry them away, since the deadline exists to be the wakeup that re-reads the flag. A request a DAV round or an IMAP envelope resolution sends SHALL fail once the server has sent nothing for 60 seconds, so a connection gone dead under the watch (a resume, a network change) is dropped and reopened as any failed round's is, rather than held until TCP gives up.
 
 #### Scenario: Ctrl+C while resolving against a silent server
 - **GIVEN** a watch resolving an arrival's envelope against a server that has stopped answering
 - **WHEN** the user presses Ctrl+C
 - **THEN** the read deadline expires, the flag is seen, and the watch ends rather than waiting for the transport's own timeout
+
+#### Scenario: A DAV connection gone dead during a suspend
+- **GIVEN** a DAV watch whose connection died while the machine slept, the server never answering on it again
+- **WHEN** the next round sends its report
+- **THEN** the report fails after 60 seconds of silence, and the round runs again on a fresh connection
 
 ### Requirement: A hook failure never stops the watch
 A hook SHALL be a desktop notification (`notify`), a command (`command`, a shell line or a program and its arguments), or both. Its templates SHALL expand the event's variables, and the command SHALL receive the same variables in its environment. A hook command's stdout SHALL be carillon's stderr, so a watch's stdout holds its events and result alone. A hook that fails SHALL be printed as a `hook-failed` event naming the reaction that failed (`notify` or `command`), a command exiting non-zero being a failure, and left behind: neither a missing notification daemon nor a broken script SHALL end the watch. A hook SHALL NOT half-fire for a reason the configuration could have been refused for: what a template may name is settled when the file is read, so the only failures left at watch time are the ones the machine around it produced.
