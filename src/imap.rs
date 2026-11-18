@@ -14,17 +14,17 @@
 
 use std::{
     collections::BTreeSet,
-    io::{self, Read, Write},
+    io::Write,
     num::NonZeroU32,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::RecvTimeoutError,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use io_imap::{
     client::{
         ImapClientError, ImapClientStd, ImapClientStdConnectOptions, ImapMailboxWatchStream,
@@ -53,9 +53,13 @@ use pimalaya_config::secret::SecretResolver;
 use url::Url;
 
 use crate::{
-    config::{ImapConfig, ProxyConfig, resolve_auto_id_params},
+    config::{
+        imap::{ImapConfig, resolve_auto_id_params},
+        proxy::ProxyConfig,
+    },
     error::ErrorCode,
     event::{ItemSummary, WatchDomain, WatchEvent},
+    read,
 };
 
 /// How long a watch waits for an event before checking the shutdown
@@ -67,13 +71,6 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How long the watch worker, and the resolver, may sit in a read
 /// before looking at the shutdown flag again.
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
-/// How long a request may go unanswered, not a byte read, before its
-/// connection is taken for dead and the request fails.
-#[cfg(not(test))]
-const SILENCE: Duration = Duration::from_secs(60);
-/// The same, short enough for a test to wait it out.
-#[cfg(test)]
-const SILENCE: Duration = Duration::from_secs(2);
 /// Per-read scratch buffer for the resolver, which reads envelopes only.
 const READ_BUF: usize = 8 * 1024;
 
@@ -410,7 +407,7 @@ impl<'a> Resolver<'a> {
 /// What the client's own runner does, minus the part where a silent
 /// server holds the thread for as long as the transport allows: here a
 /// read deadline expires into another look at the flag, and a request
-/// unanswered for [`SILENCE`] fails.
+/// unanswered for [`read::SILENCE`] fails.
 fn pump<C, T, E>(
     client: &mut ImapClientStd,
     mut coroutine: C,
@@ -426,26 +423,7 @@ where
     loop {
         match coroutine.resume(&mut client.fragmentizer, arg.take().as_deref()) {
             ImapCoroutineState::Yielded(ImapYield::WantsRead) => {
-                let asked = Instant::now();
-
-                loop {
-                    if shutdown.load(Ordering::SeqCst) {
-                        bail!("Shutting down");
-                    }
-
-                    match client.stream.read(&mut buf) {
-                        Ok(0) => bail!("Connection closed by peer"),
-                        Ok(read) => {
-                            arg = Some(buf[..read].to_vec());
-                            break;
-                        }
-                        Err(err) if is_timeout(&err) && asked.elapsed() < SILENCE => continue,
-                        Err(err) if is_timeout(&err) => {
-                            bail!("Server sent nothing for {} seconds", SILENCE.as_secs())
-                        }
-                        Err(err) => return Err(err).context("read failed"),
-                    }
-                }
+                arg = Some(read::bytes(&mut client.stream, &mut buf, shutdown)?);
             }
             ImapCoroutineState::Yielded(ImapYield::WantsWrite(bytes)) => {
                 client.stream.write_all(&bytes).context("write failed")?;
@@ -461,15 +439,6 @@ where
             }
         }
     }
-}
-
-/// Whether an I/O error is the read deadline expiring, which is a
-/// wakeup rather than a failure.
-fn is_timeout(err: &io::Error) -> bool {
-    matches!(
-        err.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-    )
 }
 
 /// Folds a FETCH response into what the hook templates expose.
@@ -853,7 +822,7 @@ mod tests {
             sent.send(summary).unwrap();
         });
 
-        let err = got.recv_timeout(SILENCE * 5).unwrap().unwrap_err();
+        let err = got.recv_timeout(read::SILENCE * 5).unwrap().unwrap_err();
         assert!(format!("{err:#}").contains("sent nothing"), "{err:#}");
     }
 

@@ -41,7 +41,7 @@ use pimalaya_config::secret::SecretResolver;
 use secrecy::ExposeSecret;
 
 use crate::{
-    config::{GmailConfig, ProxyConfig},
+    config::{gmail::GmailConfig, proxy::ProxyConfig},
     error::{self, ErrorCode, GoogleAnswer, google_code},
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,
@@ -116,15 +116,12 @@ pub fn watch(
 
         wait = true;
 
-        // NOTE: the connection sat idle the whole interval, which a
-        // server is free to close, and the token may have expired
-        // meanwhile, so a failed round is given a fresh connection and a
-        // fresh token before the session is given up.
-        if let Err(err) = watched.round(&mut client, resolve, &mut on_event) {
-            debug!("gmail round failed, reconnecting: {err:#}");
-            client = open(config, &mut SecretResolver::new())?;
-            watched.round(&mut client, resolve, &mut on_event)?;
-        }
+        poll::retried(
+            &mut client,
+            shutdown,
+            || open(config, &mut SecretResolver::new()),
+            |client| watched.round(client, resolve, &mut on_event),
+        )?;
 
         *cursor = Some(watched.history.clone());
     }

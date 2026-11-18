@@ -24,7 +24,7 @@ use log::{debug, trace, warn};
 
 use crate::{
     alarm::{AlarmBook, AlarmShared},
-    config::PimdirConfig,
+    config::pimdir::PimdirConfig,
     error::{self, ErrorCode},
     event::WatchDomain,
     poll,
@@ -311,7 +311,7 @@ mod tests {
 
     use crate::{
         alarm::{self, AlarmShared},
-        config::PimdirConfig,
+        config::pimdir::PimdirConfig,
         pimdir::*,
         poll,
     };

@@ -24,7 +24,7 @@ use pimalaya_config::secret::SecretResolver;
 use pimalaya_config::toml::TomlConfig;
 
 #[cfg(feature = "maildir")]
-use crate::config::MaildirConfig;
+use crate::config::maildir::MaildirConfig;
 #[cfg(feature = "gcal")]
 use crate::gcal;
 #[cfg(feature = "gmail")]
@@ -42,13 +42,13 @@ use crate::{
 };
 #[cfg(dav)]
 use crate::{
-    config::DavServer,
+    config::dav::DavServer,
     dav::{self, DavHome},
 };
 #[cfg(feature = "imap")]
-use crate::{config::ImapConfig, imap};
+use crate::{config::imap::ImapConfig, imap};
 #[cfg(feature = "jmap")]
-use crate::{config::JmapConfig, jmap};
+use crate::{config::jmap::JmapConfig, jmap};
 
 /// Validate the account configuration.
 ///

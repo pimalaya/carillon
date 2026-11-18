@@ -29,7 +29,7 @@ use io_maildir::{
 use log::{debug, trace};
 
 use crate::{
-    config::MaildirConfig,
+    config::maildir::MaildirConfig,
     error,
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,

@@ -19,13 +19,13 @@
 use std::{
     collections::BTreeMap,
     error,
-    io::{self, Read, Write},
+    io::Write,
     mem,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Context, Error, Result, anyhow, bail};
@@ -68,10 +68,14 @@ use url::Url;
 #[cfg(feature = "caldav")]
 use crate::alarm::{AlarmBook, AlarmShared};
 use crate::{
-    config::{DavAuthConfig, DavServer, ProxyConfig, parse_url},
+    config::{
+        dav::{DavAuthConfig, DavServer},
+        parse_url,
+        proxy::ProxyConfig,
+    },
     error::ErrorCode,
     event::{ItemSummary, WatchDomain, WatchEvent},
-    poll,
+    poll, read,
 };
 
 /// How long the watch waits between two reports, unless the config
@@ -79,13 +83,6 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How long a poll may sit in a read before looking at the shutdown flag.
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
-/// How long a request may go unanswered, not a byte read, before its
-/// connection is taken for dead and the request fails.
-#[cfg(not(test))]
-const SILENCE: Duration = Duration::from_secs(60);
-/// The same, short enough for a test to wait it out.
-#[cfg(test)]
-const SILENCE: Duration = Duration::from_secs(2);
 /// Per-read scratch buffer.
 const READ_BUF: usize = 8 * 1024;
 /// How many members one `calendar-multiget` reading what a truncated query left
@@ -152,7 +149,7 @@ pub enum DavHome {
 /// The stream carries a read deadline and hands back the failures that
 /// only mean "not ready yet", so a request is woken up every second to
 /// look at the shutdown flag, and fails once the server sent nothing for
-/// [`SILENCE`], rather than holding the thread until TCP gives up.
+/// [`read::SILENCE`], rather than holding the thread until TCP gives up.
 ///
 /// A pinned home set is what the connection opens on, `server` left
 /// unread.
@@ -284,15 +281,12 @@ fn watch_collection(
             on_event(event, summary);
         };
 
-        if let Err(err) = watched.round(&mut client, shutdown, &mut report) {
-            if shutdown.load(Ordering::SeqCst) {
-                break;
-            }
-
-            debug!("dav round failed, reconnecting: {err:#}");
-            client = open(config, &mut SecretResolver::new())?;
-            watched.round(&mut client, shutdown, &mut report)?;
-        }
+        poll::retried(
+            &mut client,
+            shutdown,
+            || open(config, &mut SecretResolver::new()),
+            |client| watched.round(client, shutdown, &mut report),
+        )?;
 
         #[cfg(feature = "caldav")]
         if let Some(alarms) = alarms
@@ -1097,26 +1091,7 @@ where
     loop {
         match coroutine.resume(arg.take().as_deref()) {
             WebdavCoroutineState::Yielded(WebdavYield::WantsRead) => {
-                let asked = Instant::now();
-
-                loop {
-                    if shutdown.load(Ordering::SeqCst) {
-                        bail!("Shutting down");
-                    }
-
-                    match client.stream.read(&mut buf) {
-                        Ok(0) => bail!("Connection closed by peer"),
-                        Ok(read) => {
-                            arg = Some(buf[..read].to_vec());
-                            break;
-                        }
-                        Err(err) if is_timeout(&err) && asked.elapsed() < SILENCE => continue,
-                        Err(err) if is_timeout(&err) => {
-                            bail!("Server sent nothing for {} seconds", SILENCE.as_secs())
-                        }
-                        Err(err) => return Err(err).context("read failed"),
-                    }
-                }
+                arg = Some(read::bytes(&mut client.stream, &mut buf, shutdown)?);
             }
             WebdavCoroutineState::Yielded(WebdavYield::WantsWrite(bytes)) => {
                 client.stream.write_all(&bytes).context("write failed")?;
@@ -1148,15 +1123,6 @@ pub fn auth(config: &DavAuthConfig, resolver: &mut SecretResolver) -> Result<Web
 fn is_invalid_token(err: &Error) -> bool {
     err.downcast_ref::<WebdavSyncCollectionError>()
         .is_some_and(|err| matches!(err, WebdavSyncCollectionError::InvalidSyncToken))
-}
-
-/// Whether an I/O error is the read deadline expiring, which is a
-/// wakeup rather than a failure.
-fn is_timeout(err: &io::Error) -> bool {
-    matches!(
-        err.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-    )
 }
 
 /// Opens the collection and runs one report, which is what `account check`
@@ -1352,26 +1318,7 @@ where
     loop {
         match coroutine.resume(arg.take().as_deref()) {
             WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsRead) => {
-                let asked = Instant::now();
-
-                loop {
-                    if shutdown.load(Ordering::SeqCst) {
-                        bail!("Shutting down");
-                    }
-
-                    match client.stream.read(&mut buf) {
-                        Ok(0) => bail!("Connection closed by peer"),
-                        Ok(read) => {
-                            arg = Some(buf[..read].to_vec());
-                            break;
-                        }
-                        Err(err) if is_timeout(&err) && asked.elapsed() < SILENCE => continue,
-                        Err(err) if is_timeout(&err) => {
-                            bail!("Server sent nothing for {} seconds", SILENCE.as_secs())
-                        }
-                        Err(err) => return Err(err).context("read failed"),
-                    }
-                }
+                arg = Some(read::bytes(&mut client.stream, &mut buf, shutdown)?);
             }
             WebdavCoroutineState::Yielded(WebdavRedirectYield::WantsWrite(bytes)) => {
                 client.stream.write_all(&bytes).context("write failed")?;
@@ -1466,7 +1413,7 @@ fn names_precondition(body: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::mpsc, thread};
+    use std::{io, sync::mpsc, thread};
 
     #[cfg(feature = "caldav")]
     use ceichas::timer::CeichasTimer;
@@ -1602,7 +1549,7 @@ mod tests {
         let seen: fake::Seen = Default::default();
         let addr = fake::start(Default::default(), seen.clone());
         let home = Url::parse(&format!("http://{addr}/cal/alice/")).unwrap();
-        let tls = crate::config::TlsConfig::default();
+        let tls = crate::config::tls::TlsConfig::default();
         let auth = DavAuthConfig::None;
         let config = DavServer {
             server: None,
@@ -2109,7 +2056,7 @@ mod tests {
             sent.send(listed).unwrap();
         });
 
-        let err = got.recv_timeout(SILENCE * 5).unwrap().unwrap_err();
+        let err = got.recv_timeout(read::SILENCE * 5).unwrap().unwrap_err();
         assert!(format!("{err:#}").contains("sent nothing"), "{err:#}");
     }
 
@@ -2215,7 +2162,7 @@ mod tests {
     fn a_401_without_auth_names_the_missing_auth() {
         let addr = fake::refusing("401 Unauthorized", "");
         let server = format!("http://{addr}/");
-        let tls = crate::config::TlsConfig::default();
+        let tls = crate::config::tls::TlsConfig::default();
         let probed = |auth: &DavAuthConfig| {
             let config = DavServer {
                 server: Some(&server),
@@ -2261,7 +2208,7 @@ mod tests {
         let seen: fake::Seen = Default::default();
         let addr = fake::start(Default::default(), seen.clone());
         let home = Url::parse(&format!("http://{addr}/cal/alice/")).unwrap();
-        let tls = crate::config::TlsConfig::default();
+        let tls = crate::config::tls::TlsConfig::default();
         let auth = DavAuthConfig::None;
         let config = DavServer {
             server: None,

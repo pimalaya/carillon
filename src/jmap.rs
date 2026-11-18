@@ -15,12 +15,12 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{self, Read, Write},
+    io::Write,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -63,10 +63,15 @@ use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 
 use crate::{
-    config::{JmapAuthConfig, JmapConfig, ProxyConfig, parse_url},
+    config::{
+        jmap::{JmapAuthConfig, JmapConfig},
+        parse_url,
+        proxy::ProxyConfig,
+    },
     error::{self, ErrorCode},
     event::{ItemSummary, WatchDomain, WatchEvent},
     poll,
+    read::{self, ReadOutcome},
 };
 
 /// How long the watch waits between two polls.
@@ -172,7 +177,14 @@ pub fn watch_poll(
             break;
         }
 
-        rounds(&mut client, config, &mut watched, resolve, &mut on_event)?;
+        rounds(
+            &mut client,
+            config,
+            &mut watched,
+            resolve,
+            shutdown,
+            &mut on_event,
+        )?;
     }
 
     Ok(())
@@ -207,7 +219,14 @@ pub fn watch_push(
             continue;
         }
 
-        rounds(&mut client, config, &mut watched, resolve, &mut on_event)?;
+        rounds(
+            &mut client,
+            config,
+            &mut watched,
+            resolve,
+            shutdown,
+            &mut on_event,
+        )?;
     }
 
     Ok(())
@@ -225,35 +244,24 @@ fn arm(config: &JmapConfig) -> Result<(JmapClientStd, Vec<Watched>)> {
     Ok((client, watched))
 }
 
-/// Runs one round per watched collection.
-///
-/// The connection may have sat idle as long as the interval or the
-/// stream, which a server is free to have found long enough to close, so
-/// a failed round is given a fresh one before the session is given up.
+/// Runs one round per watched collection, each retried once on a fresh
+/// session ([`poll::retried`]), its credential resolved again.
 fn rounds(
     client: &mut JmapClientStd,
     config: &JmapConfig,
     watched: &mut [Watched],
     resolve: bool,
+    shutdown: &AtomicBool,
     on_event: &mut impl FnMut(WatchEvent, Option<ItemSummary>),
 ) -> Result<()> {
     for watched in watched {
-        if let Err(err) = watched.round(client, resolve, on_event) {
-            debug!("jmap round failed, reconnecting: {err:#}");
-            reconnect(client, config)?;
-            watched.round(client, resolve, on_event)?;
-        }
+        poll::retried(
+            client,
+            shutdown,
+            || Ok(open(config, &mut SecretResolver::new())?.0),
+            |client| watched.round(client, resolve, on_event),
+        )?;
     }
-
-    Ok(())
-}
-
-/// Replaces the client with a fresh session, its credential resolved again,
-/// since the one the session started with may have expired meanwhile.
-fn reconnect(client: &mut JmapClientStd, config: &JmapConfig) -> Result<()> {
-    let (fresh, _url) = open(config, &mut SecretResolver::new())?;
-    *client = fresh;
-    debug!("reconnected the jmap client");
 
     Ok(())
 }
@@ -642,8 +650,10 @@ fn subscribe(
         opts,
     )?;
 
-    let silence = (ping > 0).then(|| Duration::from_secs(ping * PINGS_MISSED));
-    let mut heard = Instant::now();
+    let silence = match ping {
+        0 => Duration::MAX,
+        ping => Duration::from_secs(ping * PINGS_MISSED),
+    };
     let mut buf = [0u8; READ_BUF];
     let mut arg: Option<Vec<u8>> = None;
 
@@ -661,23 +671,15 @@ fn subscribe(
                 }
             }
             JmapCoroutineState::Yielded(JmapEventSourceYield::WantsRead) => {
-                if shutdown.load(Ordering::SeqCst) {
-                    return Ok(false);
-                }
-
-                match source.stream.read(&mut buf) {
-                    Ok(0) => return Ok(false),
-                    Ok(read) => {
-                        heard = Instant::now();
-                        arg = Some(buf[..read].to_vec());
+                match read::read(&mut source.stream, &mut buf, shutdown, silence)
+                    .context("read failed")?
+                {
+                    ReadOutcome::Bytes(read) => arg = Some(buf[..read].to_vec()),
+                    ReadOutcome::Closed | ReadOutcome::Shutdown => return Ok(false),
+                    ReadOutcome::Silent => {
+                        debug!("jmap event stream missed {PINGS_MISSED} pings, reopening it");
+                        return Ok(false);
                     }
-                    Err(err) if is_timeout(&err) => {
-                        if silence.is_some_and(|silence| heard.elapsed() >= silence) {
-                            debug!("jmap event stream missed {PINGS_MISSED} pings, reopening it");
-                            return Ok(false);
-                        }
-                    }
-                    Err(err) => return Err(err).context("read failed"),
                 }
             }
             JmapCoroutineState::Yielded(JmapEventSourceYield::WantsWrite(bytes)) => {
@@ -687,15 +689,6 @@ fn subscribe(
             JmapCoroutineState::Complete(Err(err)) => return Err(err.into()),
         }
     }
-}
-
-/// Whether an I/O error is the read deadline expiring, which on a
-/// quiet stream is a wakeup rather than a failure.
-fn is_timeout(err: &io::Error) -> bool {
-    matches!(
-        err.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-    )
 }
 
 /// The code of a JMAP refusal in an error chain, read from the HTTP status
@@ -1011,7 +1004,7 @@ struct Page {
 mod tests {
     use std::{
         fs,
-        io::{BufRead, BufReader},
+        io::{BufRead, BufReader, Read},
         net::{SocketAddr, TcpListener, TcpStream},
         path::Path,
         sync::{Mutex, mpsc},
@@ -1485,13 +1478,22 @@ mod tests {
     }
 
     #[test]
-    fn a_reconnect_presents_the_credential_resolved_again() {
+    fn a_round_retried_presents_the_credential_resolved_again() {
         let (mut client, config, _dir) = expired();
+        let mut watched = [watched(WatchDomain::Message)];
+        watched[0].state = String::from("s1");
+        let shutdown = AtomicBool::new(false);
 
-        reconnect(&mut client, &config).unwrap();
-        let got = client.email_get(Vec::new(), get_options(false));
+        let round = rounds(
+            &mut client,
+            &config,
+            &mut watched,
+            false,
+            &shutdown,
+            &mut |_, _| (),
+        );
 
-        assert_eq!("s1", got.unwrap().new_state);
+        round.unwrap();
     }
 
     #[test]

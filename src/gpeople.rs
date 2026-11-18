@@ -35,7 +35,7 @@ use pimalaya_config::secret::SecretResolver;
 use secrecy::ExposeSecret;
 
 use crate::{
-    config::{GpeopleConfig, ProxyConfig},
+    config::{gpeople::GpeopleConfig, proxy::ProxyConfig},
     error::{self, ErrorCode, GoogleAnswer, google_code},
     event::{ItemSummary, WatchDomain, WatchEvent},
     picture::{self, Item, Known},
@@ -117,15 +117,12 @@ pub fn watch(
             break;
         }
 
-        // NOTE: the connection sat idle the whole interval, which a
-        // server is free to close, and the token may have expired
-        // meanwhile, so a failed round is given a fresh connection and a
-        // fresh token before the session is given up.
-        if let Err(err) = watched.round(&mut client, &mut on_event) {
-            debug!("gpeople round failed, reconnecting: {err:#}");
-            client = open(config, &mut SecretResolver::new())?;
-            watched.round(&mut client, &mut on_event)?;
-        }
+        poll::retried(
+            &mut client,
+            shutdown,
+            || open(config, &mut SecretResolver::new()),
+            |client| watched.round(client, &mut on_event),
+        )?;
     }
 
     Ok(())

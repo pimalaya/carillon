@@ -8,11 +8,13 @@
 //!
 //! The frontend: main dispatches, cli declares the parser and meets a bare
 //! invocation with the help, or with the missing configuration as any
-//! command does, config parses the TOML accounts and fails naming the file
-//! and the documented sample when there is none, watch is the command
+//! command does, config parses the TOML accounts, one submodule per backend
+//! block gated by its feature, and fails naming the file and the
+//! documented sample when there is none, watch is the command
 //! and account the group listing and checking the accounts (`check` its
-//! hidden former name), hook fires the notification and the command,
-//! json_schema names the schema of what each command prints,
+//! hidden former name), hook fires the notification and hands the
+//! command to hook::command, which runs it off the watch, json_schema
+//! names the schema of what each command prints,
 //! error the stable codes a failure carries, each backend reading its own
 //! protocol's refusals into them.
 //!
@@ -38,8 +40,10 @@
 //! configuration block, learning about changes its own way and reporting
 //! them in the one vocabulary event defines. How a change is learned is
 //! the protocol crate's; what to do about it is here. poll holds the sleep
-//! every polled backend waits on, and picture what a REST change feed (a
-//! Graph delta link, a Google sync token) is reconciled against.
+//! every polled backend waits on and the retry of a failed round on a
+//! fresh connection, read the read every coroutine pump makes over a
+//! socket, and picture what a REST change feed (a Graph delta link, a
+//! Google sync token) is reconciled against.
 //!
 //! The dav module serves the two configured DAV backends, CalDAV and
 //! CardDAV being one poll over collections that differ in what they hold,
@@ -99,6 +103,8 @@ mod picture;
 mod pimdir;
 #[cfg(any(feature = "jmap", feature = "maildir", dav, feature = "pimdir", api))]
 mod poll;
+#[cfg(any(feature = "imap", feature = "jmap", dav))]
+mod read;
 #[cfg(all(test, api))]
 mod scripted;
 mod stream;

@@ -48,7 +48,7 @@ use pimalaya_cli::{printer::Printer, signal::Shutdown};
 use pimalaya_config::toml::TomlConfig;
 
 #[cfg(api)]
-use crate::config::ApiWatchConfig;
+use crate::config::api::ApiWatchConfig;
 #[cfg(feature = "gcal")]
 use crate::gcal;
 #[cfg(feature = "gmail")]
@@ -75,21 +75,21 @@ use crate::{
 };
 #[cfg(dav)]
 use crate::{
-    config::DavWatchConfig,
+    config::dav::DavWatchConfig,
     dav::{self, DavKind, DavTarget},
 };
-#[cfg(feature = "maildir")]
-use crate::{config::MaildirWatchConfig, maildir};
 #[cfg(feature = "imap")]
 use crate::{
-    config::{IdleWatchConfig, ImapWatchConfig},
+    config::imap::{IdleWatchConfig, ImapWatchConfig},
     imap::{self, Resolver},
 };
 #[cfg(feature = "jmap")]
 use crate::{
-    config::{JmapWatchConfig, PushWatchConfig},
+    config::jmap::{JmapWatchConfig, PushWatchConfig},
     jmap,
 };
+#[cfg(feature = "maildir")]
+use crate::{config::maildir::MaildirWatchConfig, maildir};
 
 /// Reconnect backoff floor.
 const INITIAL_BACKOFF: Duration = Duration::from_secs(2);
