@@ -94,6 +94,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed the Nix package and the release archives shipping no config.sample.toml, which the first-run welcome looks for beside the binary: package.nix installs it under share/doc/carillon/, and install.sh copies it from the archive, as neverest's do.
 - Fixed install.sh fetching from soywod/carillon and asking `arm64-linux`, `x86_64-macos` and `arm64-macos`, which no release publishes: it fetches from pimalaya/carillon the `aarch64-linux`, `x86_64-darwin` and `aarch64-darwin` archives, and installs on i686, armv6l and armv7l Linux too, as neverest's does.
 - Fixed `-b` naming a backend the account has no block for failing uncoded, and `watch` retrying it for ever: `account check` and `watch` fail coded `capability-missing`, "Account `a` has no `imap` block", as himalaya refuses its `--backend`, and `watch` stops that account for the run.
 - Fixed a JMAP event stream gone dead holding a push watch: one that sent nothing for three pings is opened again.
