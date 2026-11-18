@@ -45,8 +45,11 @@ default = true
 # Hooks template against $id, $collection,
 # $mailbox/$calendar/$addressbook, $flag for flag hooks and envelope variables
 # ($subject, $sender…) for message arrivals, camelCase ($senderName);
-# `${name:-default}` covers an empty value. A secret is `raw = "..."` or
-# `command = "..."`. A `command`, of a hook or of a secret, may be spelt `cmd`.
+# `${name:-default}` covers an empty value. A command gets the same variables
+# in its environment, never in its text: a shell line expands them itself, a
+# list runs as written, so hand it to `sh -c` to put a value in an argument. A
+# secret is `raw = "..."` or `command = "..."`. A `command`, of a hook or of a
+# secret, may be spelt `cmd`.
 
 # ---- IMAP: an idle connection (RFC 2177) ---------------------------------------
 
@@ -121,7 +124,7 @@ imap.hooks.on-message-add.command = 'echo "$id arrived" >> ~/.local/state/carill
 #imap.hooks.on-message-remove.notify.summary = "Mail $id deleted from ${mailbox:-the inbox}"
 #imap.hooks.on-message-remove.command = 'echo "$id left" >> ~/.local/state/carillon.log'
 imap.hooks.on-flag-add.flags = ["Seen"]
-imap.hooks.on-flag-add.command = ["notify-send", "$flag set on $id"]
+imap.hooks.on-flag-add.command = ["sh", "-c", 'notify-send "$flag set on $id"']
 #imap.hooks.on-flag-remove.notify.summary = "$flag cleared on $id"
 
 

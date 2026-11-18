@@ -3142,6 +3142,40 @@ mod tests {
         assert!(err.to_string().contains(sentence), "{err}");
     }
 
+    /// An argv hook gets its variables in its environment only, so one the
+    /// sample names a variable in hands it to a shell.
+    #[test]
+    fn a_sample_argv_hook_naming_a_variable_runs_through_a_shell() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config.sample.toml");
+        let sample = std::fs::read_to_string(&path).unwrap();
+        let mut seen = 0;
+
+        for line in sample.lines() {
+            let line = line.trim_start_matches('#');
+            let Some((key, value)) = line.split_once(" = [") else {
+                continue;
+            };
+            if !key.contains(".hooks.") {
+                continue;
+            }
+
+            let value: toml::Value = toml::from_str(&format!("argv = [{value}")).unwrap();
+            let argv: Vec<&str> = value["argv"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect();
+            seen += 1;
+
+            if argv[1..].iter().any(|arg| arg.contains('$')) {
+                assert_eq!(["sh", "-c"], argv[..2], "{line}");
+            }
+        }
+
+        assert!(seen > 0);
+    }
+
     /// The sample as written loads, and no line it comments out names a
     /// key or a variant the schema refuses: config.sample.toml has no
     /// sections, so a backend's lines do not load one at a time.

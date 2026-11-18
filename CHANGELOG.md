@@ -92,6 +92,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed the sample's `on-flag-add` command notifying the literal `$flag set on $id`: a list runs as written, its variables in its environment only, so the sample hands it to `sh -c`, and says so.
 - Fixed a DAV watch or an IMAP envelope resolution holding a dead connection until TCP gave up, after a resume or a network change: a request the server sends nothing back to for 60 seconds fails, and the connection is reopened.
 - Fixed a Gmail arrival reading `$recipient` from `To` cut at its first comma, so `"Doe, Jane" <jane@example.org>, bob@example.org` gave `"Doe`: `To` and `From` are read as an address list, their first mailbox taken as on the other backends.
 - Fixed a Gmail arrival handing its hook RFC 2047 encoded words, were the API to leave any: `$subject` and the names are decoded as on IMAP.
