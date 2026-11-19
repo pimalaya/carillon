@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   Alarms are resolved over the next 48 hours and kept current as the calendar changes, the bodies read only when this hook is set. They wait on the system's wall-clock timer through ceichas, so time asleep counts and a clock change is followed. The hook reads `$summary`, `$kind`, `$trigger`, `$at`, `$uid`, `$etag`, `$recurrenceId`, `$alarm`, `$alarmUid` and `$action`. Nothing is stored: an alarm due while carillon was not running never fires, and one reached more than 15 minutes late (a machine asleep) is dropped with a log line. Cancelled events, completed tasks, acknowledged alarms and `EMAIL` alarms never fire.
 
-- Added the `pimdir` backend, on by default, firing the alarms of one calendar of a local pimdir store another tool keeps in sync: `pimdir.root`, `pimdir.calendar`, `pimdir.watch.poll.interval` and `pimdir.hooks.on-alarm-trigger`. The store is read and never written. It reads stores of pimdir draft-14, the ones neverest writes (io-pimdir 0.17), and refuses a store of another draft, draft-13 and draft-11 included (`store-version`), naming its root.
+- Added the `pimdir` backend, on by default, firing the alarms of one calendar of a local pimdir store another tool keeps in sync: `pimdir.root`, `pimdir.calendar`, `pimdir.watch.poll.interval` and `pimdir.hooks.on-alarm-trigger`. The store is read and never written. It reads stores of pimdir draft-14, the ones neverest writes (io-pimdir 0.18), and refuses a store of another draft, draft-13 and draft-11 included (`store-version`), naming its root.
 - Added `mailbox-not-found`, `calendar-not-found` and `addressbook-not-found`, coding a watched collection that does not exist wherever the backend can tell: an IMAP `NONEXISTENT`, a Maildir folder that is no directory, a DAV 404 on the collection, a JMAP, Gmail, Google Calendar, Google People or Microsoft Graph collection no listing names (Graph answering its direct read 404 or 400 `ErrorInvalidIdMalformed`), a pimdir calendar the store does not hold. A watch's `session-lost` event and a `check` row carry them.
 - Added the pimdir codes himalaya relays to the failure codes: `store-busy`, `store-owned`, `store-staging`, `store-in-flight`, `store-reset`, `lock-replaced`, `item-duplicate`, `flag-invalid`, `action-malformed`, `conflict-unread`, `unsupported`, `no-performer`, `ambiguous-performer`, `index-missing`, `index-outdated`, `index-version`, `index-zone-unknown`, `index-fts5-missing`, `query-refused`, `query-unanswerable` and `tag-refused`, so the `carillon-error` schema names io-pimdir's vocabulary as every pimdir app does.
 - Added `caldav.home` and `carddav.home`, the home set pinned as cardamum and calendula take it: discovery is skipped and the connection opens on it, `server` being optional and unread when `home` is set. A block naming neither is refused when read.
@@ -77,6 +77,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Bumped pimalaya-config to 0.6.0, pimalaya-cli to 0.6.1 and io-jmap to 0.10.1.
 
   A hook notification receives its variables as text: `&`, `<`, `>`, `"` and `'` are escaped where the daemon reads markup (every Unix but macOS), a line break or a tab turns into a space, and other control and bidirectional override characters are dropped, so `Alice <alice@example.org>` shows as written rather than as a broken tag. A failing secret command ends its message with ", run `<command>` yourself to see why", and a TOML parse error no longer prints the source line, which may hold a secret. A text error report sanitizes its chain line by line, and `--log-file` creates its file at 0600, refusing a symbolic link.
+
+- Changed the io-imap dependency to 0.12.
+- Changed the io-sasl dependency to 0.3.
+- Changed the io-pimdir dependency to 0.18 (still pimdir draft-14).
+- Changed the pimalaya-cli dependency to 0.7: the `carillon-error` schema admits the family's `request-origin` code, which carillon never raises.
+- Changed the ical-rs dependency to 0.7.2.
 
 - Bumped io-gcal to 0.5.1, io-gpeople to 0.8.1 and io-msgraph to 0.9.2: their changes write series and update persons, which a watch never does, so no watch moves.
 

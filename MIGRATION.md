@@ -85,7 +85,7 @@ imap.mailbox = "INBOX"
 
 - **A calendar or an addressbook named by one path segment** (`caldav.calendar = "work"`, `carddav.addressbook = "default"`) is looked up under the home set the server's principal names, which is the id a listing of the account gives, where 0.2 read it under `server`. An absolute path (`/dav/calendars/alice/work/`) is read as it stands: write one if the segment named a collection outside the home set.
 - **`gpeople.addressbook = "contacts"` watches every contact the account owns**, where it named a contact group called `contacts`, and `msgraph.addressbook = "contacts"` names the default contact folder first.
-- **A pimdir watch reads pimdir draft-14 stores**, the ones neverest writes on io-pimdir 0.17. A store an earlier neverest wrote is refused (`store-version`): reinstall it with the current neverest, as [its migration guide](https://github.com/pimalaya/neverest/blob/master/MIGRATION.md) describes. The `pimdir` backend is new since 0.2, so this concerns a git build only.
+- **A pimdir watch reads pimdir draft-14 stores**, the ones neverest writes on io-pimdir 0.18. A store an earlier neverest wrote is refused (`store-version`): reinstall it with the current neverest, as [its migration guide](https://github.com/pimalaya/neverest/blob/master/MIGRATION.md) describes. The `pimdir` backend is new since 0.2, so this concerns a git build only.
 
 ### Command line and scripts
 

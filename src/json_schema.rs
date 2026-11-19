@@ -74,6 +74,7 @@ mod tests {
 
         for code in [
             "usage-invalid",
+            "request-origin",
             "permission-denied",
             "store-version",
             "account-missing",
