@@ -78,6 +78,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Bumped io-pimdir to 0.17.0 (pimdir draft-14): a pimdir watch reads the stores neverest writes on it, and refuses a draft-13 one (`store-version`), its message saying which of the store and carillon is the earlier.
 
+- Bumped io-pimdir to 0.19.0 (pimdir draft-15): a pimdir watch reads the stores neverest writes on it, and refuses a draft-14 one (`store-version`).
+
 - Bumped pimalaya-config to 0.6.0, pimalaya-cli to 0.6.1 and io-jmap to 0.10.1.
 
   A hook notification receives its variables as text: `&`, `<`, `>`, `"` and `'` are escaped where the daemon reads markup (every Unix but macOS), a line break or a tab turns into a space, and other control and bidirectional override characters are dropped, so `Alice <alice@example.org>` shows as written rather than as a broken tag. A failing secret command ends its message with ", run `<command>` yourself to see why", and a TOML parse error no longer prints the source line, which may hold a secret. A text error report sanitizes its chain line by line, and `--log-file` creates its file at 0600, refusing a symbolic link.
