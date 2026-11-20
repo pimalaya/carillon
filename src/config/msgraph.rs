@@ -8,7 +8,6 @@ use serde::Deserialize;
 
 use crate::{
     config::{
-        HookTableRemoved,
         api::{ApiWatchConfig, BearerAuthConfig},
         domains::{DOMAINS, DomainsHookConfig, domain_collection, refuse_unwatched},
         proxy::ProxyConfig,
@@ -57,10 +56,6 @@ pub struct MsgraphConfig {
     /// The hooks this backend fires.
     #[serde(default)]
     pub hooks: DomainsHookConfig,
-    /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub hook: Option<HookTableRemoved>,
 }
 
 impl MsgraphConfig {

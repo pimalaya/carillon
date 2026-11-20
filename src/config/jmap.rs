@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use crate::{
     config::{
-        HookTableRemoved, PollWatchConfig,
+        PollWatchConfig,
         domains::{DOMAINS, DomainsHookConfig, domain_collection, refuse_unwatched},
         proxy::ProxyConfig,
         tls::TlsConfig,
@@ -66,10 +66,6 @@ pub struct JmapConfig {
     /// The hooks this backend fires.
     #[serde(default)]
     pub hooks: DomainsHookConfig,
-    /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub hook: Option<HookTableRemoved>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

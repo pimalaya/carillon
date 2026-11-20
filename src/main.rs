@@ -113,8 +113,9 @@ mod watch;
 use std::{path::PathBuf, process};
 
 use anyhow::Result;
+use clap::CommandFactory;
 use pimalaya_cli::{
-    clap::{args::LogFlags, parse},
+    clap::{args::LogFlags, meet_bare_invocation, parse},
     error::{EXIT_FAILURE, ErrorReport, with_code},
     log::Logger,
     printer::StdoutPrinter,
@@ -126,6 +127,7 @@ use simd_cpu::SimdCpu;
 use crate::{
     backend::Backend,
     cli::{Cli, Command},
+    config::Config,
     error::ErrorCode,
 };
 
@@ -184,7 +186,10 @@ fn execute(
     Logger::try_init(log)?;
 
     let Some(command) = command else {
-        return cli::meet_bare_invocation(config_paths);
+        return meet_bare_invocation(printer, Cli::command(), || {
+            let missing = Config::load(config_paths).err();
+            missing.filter(|err| err.is::<ConfigMissingError>())
+        });
     };
 
     command.execute(printer, config_paths, account_name, backend)

@@ -9,8 +9,7 @@ use url::Url;
 
 use crate::{
     config::{
-        Hook, HookTableRemoved, ItemHook, OnEventAddedRenamed, OnEventChangedRenamed,
-        OnEventRemovedRenamed, OnTaskAddedRenamed, OnTaskChangedRenamed, OnTaskRemovedRenamed,
+        Hook, ItemHook,
         dav::{DavAuthConfig, DavServer, DavWatchConfig, ascii_url},
         proxy::ProxyConfig,
         tls::TlsConfig,
@@ -50,25 +49,6 @@ pub struct CaldavHookConfig {
     pub on_task_change: Option<ItemHook>,
     /// Fires when an alarm of a VEVENT or a VTODO reaches its trigger.
     pub on_alarm_trigger: Option<ItemHook>,
-    /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_event_added: Option<OnEventAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_event_removed: Option<OnEventRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_event_changed: Option<OnEventChangedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_task_added: Option<OnTaskAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_task_removed: Option<OnTaskRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_task_changed: Option<OnTaskChangedRenamed>,
 }
 
 impl CaldavHookConfig {
@@ -201,10 +181,6 @@ pub struct CaldavConfig {
     /// The hooks this backend fires, one per component it holds.
     #[serde(default)]
     pub hooks: CaldavHookConfig,
-    /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub hook: Option<HookTableRemoved>,
 }
 
 impl CaldavConfig {

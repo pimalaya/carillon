@@ -8,8 +8,7 @@ use serde::Deserialize;
 
 use crate::{
     config::{
-        Hook, HookTableRemoved, ItemHook, OnCardAddedRenamed, OnCardChangedRenamed,
-        OnCardRemovedRenamed,
+        Hook, ItemHook,
         api::{ApiWatchConfig, BearerAuthConfig},
         proxy::ProxyConfig,
         tls::TlsConfig,
@@ -44,10 +43,6 @@ pub struct GpeopleConfig {
     /// The hooks this backend fires.
     #[serde(default)]
     pub hooks: GpeopleHookConfig,
-    /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub hook: Option<HookTableRemoved>,
 }
 
 impl GpeopleConfig {
@@ -70,16 +65,6 @@ pub struct GpeopleHookConfig {
     pub on_card_remove: Option<ItemHook>,
     /// Fires when one is edited where it stands.
     pub on_card_change: Option<ItemHook>,
-    /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_card_added: Option<OnCardAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_card_removed: Option<OnCardRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_card_changed: Option<OnCardChangedRenamed>,
 }
 
 impl GpeopleHookConfig {

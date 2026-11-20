@@ -19,12 +19,10 @@ use pimalaya_cli::{
     printer::Printer,
     welcome::Welcome,
 };
-use pimalaya_config::toml::ConfigMissingError;
 
 use crate::{
     account::{check::AccountCheckCommand, cli::AccountCommand},
     backend::Backend,
-    config::Config,
     json_schema,
     watch::WatchCommand,
 };
@@ -103,21 +101,6 @@ impl Command {
             Self::JsonSchema(cmd) => cmd.execute(printer, json_schema::registry()),
         }
     }
-}
-
-/// Meets a bare `carillon`: the help when a configuration exists, the
-/// missing configuration otherwise, which a person meets as the welcome.
-pub fn meet_bare_invocation(config_paths: &[PathBuf]) -> Result<()> {
-    // NOTE: a broken file counts as a configuration, its error left to
-    // the first command reading it.
-    if let Err(err) = Config::load(config_paths)
-        && err.is::<ConfigMissingError>()
-    {
-        return Err(err);
-    }
-
-    Cli::command().print_help()?;
-    Ok(())
 }
 
 /// The welcome a person meets when no configuration exists at `path`:

@@ -20,11 +20,7 @@ use pimalaya_config::secret::{Secret, SecretResolver};
 use serde::Deserialize;
 
 use crate::{
-    config::{
-        FlagHook, Hook, HookTableRemoved, ItemHook, OnFlagAddedRenamed, OnFlagRemovedRenamed,
-        OnMessageAddedRenamed, OnMessageRemovedRenamed, PollWatchConfig, proxy::ProxyConfig,
-        tls::TlsConfig,
-    },
+    config::{FlagHook, Hook, ItemHook, PollWatchConfig, proxy::ProxyConfig, tls::TlsConfig},
     event::WatchEvent,
     hook::{self, HookCollection, Vocabulary},
 };
@@ -77,10 +73,6 @@ pub struct ImapConfig {
     /// The hooks this backend fires.
     #[serde(default)]
     pub hooks: ImapHookConfig,
-    /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub hook: Option<HookTableRemoved>,
 }
 
 /// Per-account `imap.id.*` quirks.
@@ -281,19 +273,6 @@ pub struct ImapHookConfig {
     pub on_flag_add: Option<FlagHook>,
     /// Fires once for each flag cleared on a message.
     pub on_flag_remove: Option<FlagHook>,
-    /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_message_added: Option<OnMessageAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_message_removed: Option<OnMessageRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_flag_added: Option<OnFlagAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_flag_removed: Option<OnFlagRemovedRenamed>,
 }
 
 impl ImapHookConfig {

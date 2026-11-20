@@ -43,7 +43,7 @@ tempfile = "3"
 toml = "1"
 
 [build-dependencies]
-pimalaya-cli = { version = "0.7", default-features = false, features = ["build"] }
+pimalaya-cli = { version = "0.8.0", default-features = false, features = ["build"] }
 
 [dependencies]
 anyhow = "1"
@@ -66,7 +66,7 @@ io-webdav = { version = "0.11.0", default-features = false, optional = true }
 jiff = { version = "1", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"], optional = true }
 log = "0.4"
 mime-rs = { version = "0.2", default-features = false, features = ["base64", "encoding", "parser"], optional = true }
-pimalaya-cli = { version = "0.7", default-features = false, features = ["signal", "terminal"] }
+pimalaya-cli = { version = "0.8.0", default-features = false, features = ["signal", "terminal"] }
 pimalaya-config = { version = "0.6.0", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.4", default-features = false, features = ["std"] }
 schemars = "1"
@@ -78,3 +78,4 @@ url = { version = "2.2", features = ["serde"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+

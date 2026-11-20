@@ -118,7 +118,7 @@ mod tests {
         assert_eq!(schema["title"], "AccountCheckOutput", "{schema}");
         assert_eq!(
             row["required"],
-            json!(["backend", "ok", "code", "error"]),
+            json!(["backend", "ok", "code", "error", "tls"]),
             "{schema}"
         );
         assert!(schema["$defs"].get("ErrorCode").is_some(), "{schema}");

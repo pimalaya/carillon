@@ -52,7 +52,7 @@ fn a_check_reaching_it_fails_its_row_naming_the_feature() {
 
     assert_eq!(output.status.code(), Some(3), "{stdout}");
     let json: Value = serde_json::from_str(&stdout).unwrap();
-    let row = &json["backends"][0];
+    let row = &json["accounts"][0]["backends"][0];
     let error = row["error"].as_str().unwrap();
     assert_eq!(row["backend"], "imap", "{json}");
     assert_eq!(row["ok"], false, "{json}");
@@ -85,7 +85,7 @@ fn a_dav_check_names_the_feature_of_its_block() {
         let toml = format!("[accounts.a]\ndefault = true\n{block}");
         let output = run(&toml, &["account", "check"]);
         let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-        let row = &json["backends"][0];
+        let row = &json["accounts"][0]["backends"][0];
         let error = row["error"].as_str().unwrap();
 
         assert_eq!(output.status.code(), Some(3), "{json}");

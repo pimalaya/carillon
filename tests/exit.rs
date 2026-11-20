@@ -88,7 +88,7 @@ fn a_failed_check_prints_its_report_and_exits_3() {
 
     assert_eq!(output.status.code(), Some(3), "{stdout}");
     let json: Value = serde_json::from_str(&stdout).unwrap();
-    let row = &json["backends"][0];
+    let row = &json["accounts"][0]["backends"][0];
     assert_eq!(row["backend"], "maildir", "{json}");
     assert_eq!(row["ok"], false, "{json}");
     assert_eq!(row["code"], Value::Null, "{json}");
@@ -150,34 +150,33 @@ fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
 
     assert_eq!(output.status.code(), Some(3), "{stdout}");
     let json: Value = serde_json::from_str(&stdout).unwrap();
-    let row = &json["backends"][0];
+    let row = &json["accounts"][0]["backends"][0];
     assert_eq!(row["backend"], "pimdir", "{json}");
     assert_eq!(row["ok"], false, "{json}");
     assert_eq!(row["code"], "store-version", "{json}");
 }
 
-/// `manual`, `completion` and `json-schema` given no argument fail as
-/// himalaya's do, exit 1 and the failure on stdout asking for `--dir`,
-/// where clap printed the help of the first two on stderr and exited 2.
+/// `manual`, `completion` and `json-schema` given no argument are a
+/// command line clap refuses, exit 2, coded `usage-invalid` under `--json`.
 #[test]
-fn a_standard_command_with_no_argument_asks_for_a_directory() {
+fn a_standard_command_with_no_argument_is_refused_by_clap() {
     let home = TempDir::new().unwrap();
 
     for command in ["manual", "completion", "json-schema"] {
         let output = run(home.path(), &[command]);
-        let stdout = text(&output.stdout);
+        let stderr = text(&output.stderr);
 
-        assert_eq!(output.status.code(), Some(1), "{command}: {stdout}");
-        assert!(stdout.contains("use --dir"), "{command}: {stdout}");
-        assert!(output.stderr.is_empty(), "{}", text(&output.stderr));
+        assert_eq!(output.status.code(), Some(2), "{command}: {stderr}");
+        assert!(stderr.contains("--dir"), "{command}: {stderr}");
+        assert!(output.stdout.is_empty(), "{}", text(&output.stdout));
 
         let output = run(home.path(), &["--json", command]);
         let stdout = text(&output.stdout);
 
-        assert_eq!(output.status.code(), Some(1), "{command}: {stdout}");
+        assert_eq!(output.status.code(), Some(2), "{command}: {stdout}");
         let json: Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(json["code"], "usage-invalid", "{json}");
         let error = json["error"].as_str().unwrap();
-        assert!(error.contains("use --dir"), "{command}: {error}");
-        assert_eq!(json["code"], Value::Null, "{json}");
+        assert!(error.contains("--dir"), "{command}: {error}");
     }
 }

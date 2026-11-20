@@ -127,6 +127,18 @@ impl WatchEvent {
         }
     }
 
+    /// The name of the hook this change fires, `on-message-add` or
+    /// `on-flag-remove`.
+    pub fn hook(&self) -> String {
+        match self {
+            Self::ItemAdded { domain, .. } => format!("on-{domain}-add"),
+            Self::ItemRemoved { domain, .. } => format!("on-{domain}-remove"),
+            Self::ItemChanged { domain, .. } => format!("on-{domain}-change"),
+            Self::FlagAdded { .. } => String::from("on-flag-add"),
+            Self::FlagRemoved { .. } => String::from("on-flag-remove"),
+        }
+    }
+
     /// What the item this change is about is.
     // NOTE: only a backend watching several domains asks, which a reduced
     // feature set may not compile in.

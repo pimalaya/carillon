@@ -7,8 +7,7 @@ use serde::Deserialize;
 
 use crate::{
     config::{
-        Hook, HookTableRemoved, ItemHook, OnEventAddedRenamed, OnEventChangedRenamed,
-        OnEventRemovedRenamed,
+        Hook, ItemHook,
         api::{ApiWatchConfig, BearerAuthConfig},
         proxy::ProxyConfig,
         tls::TlsConfig,
@@ -42,10 +41,6 @@ pub struct GcalConfig {
     /// The hooks this backend fires.
     #[serde(default)]
     pub hooks: GcalHookConfig,
-    /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub hook: Option<HookTableRemoved>,
 }
 
 impl GcalConfig {
@@ -69,16 +64,6 @@ pub struct GcalHookConfig {
     pub on_event_remove: Option<ItemHook>,
     /// Fires when an event is edited where it stands.
     pub on_event_change: Option<ItemHook>,
-    /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_event_added: Option<OnEventAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_event_removed: Option<OnEventRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_event_changed: Option<OnEventChangedRenamed>,
 }
 
 impl GcalHookConfig {

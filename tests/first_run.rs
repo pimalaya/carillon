@@ -79,7 +79,8 @@ fn a_bare_invocation_prints_the_help_when_a_configuration_exists() {
 }
 
 /// A bare `carillon` finding no configuration fails as any command does,
-/// as himalaya's does, where it printed the help and exited 0.
+/// as himalaya's does, where it printed the help and exited 0; under
+/// `--json` it is a refused command line, its configuration unread.
 #[test]
 fn a_bare_invocation_without_a_configuration_names_the_path_and_the_sample() {
     let (home, path) = home(None);
@@ -90,12 +91,11 @@ fn a_bare_invocation_without_a_configuration_names_the_path_and_the_sample() {
     assert!(!path.exists());
 
     let output = run(home.path(), &["--json"]);
-    let default = home.path().join("carillon").join("config.toml");
 
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(2));
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    let error = json["error"].as_str().unwrap();
-    assert!(error.contains(&default.display().to_string()), "{error}");
+    assert_eq!(json["code"], "usage-invalid", "{json}");
+    assert_eq!(json["error"], "A command is required, see --help", "{json}");
     assert!(output.stderr.is_empty(), "{}", text(&output.stderr));
 }
 

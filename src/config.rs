@@ -7,7 +7,8 @@
 //! Declaring more than one backend is allowed, `-b/--backend` picking the
 //! active one. Every table refuses a key it does not read, the root and
 //! the account included, so a file is not shared with the himalaya
-//! binaries; a key carillon used to read is refused naming where it went.
+//! binaries, and a key an earlier release read is refused as any unknown
+//! one.
 //! A backend the build leaves out is no unknown key: its block loads
 //! unread, and a command reaching it fails naming the cargo feature.
 //!
@@ -121,7 +122,7 @@ impl Config {
         let config = <Config as TomlConfig>::load(config_paths)?;
 
         #[cfg(network)]
-        let config = config.with_inherited_proxies();
+        let config = config.with_inherited_network();
 
         // NOTE: what a notification may name is as fixed as which hooks a
         // backend has, and serde cannot check it, a template being a
@@ -136,12 +137,13 @@ impl Config {
         Ok(config)
     }
 
-    /// Hands each account proxy down to its backends, so every connection
-    /// reads its own backend's key.
+    /// Hands each account proxy and TLS table down to its backends, so
+    /// every connection reads its own backend's keys.
     #[cfg(network)]
-    fn with_inherited_proxies(mut self) -> Self {
+    fn with_inherited_network(mut self) -> Self {
         for account in self.accounts.values_mut() {
             account.inherit_proxy();
+            account.inherit_tls();
         }
 
         self
@@ -169,6 +171,16 @@ pub struct AccountConfig {
     #[serde(default)]
     #[allow(dead_code)]
     pub proxy: Option<de::IgnoredAny>,
+    /// TLS every network backend of this account takes, field by field,
+    /// where its own `tls` table leaves one unset.
+    #[cfg(network)]
+    #[serde(default)]
+    pub tls: Option<tls::TlsConfig>,
+    /// Read and unused: this build has no network backend.
+    #[cfg(not(network))]
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub tls: Option<de::IgnoredAny>,
     #[cfg(feature = "imap")]
     #[serde(default)]
     pub imap: Option<imap::ImapConfig>,
@@ -229,128 +241,6 @@ pub struct AccountConfig {
     #[cfg(not(feature = "pimdir"))]
     #[serde(default)]
     pub pimdir: Option<de::IgnoredAny>,
-    /// Refused: the mirador `folder`, now the backend's collection key.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub folder: Option<FolderRemoved>,
-    /// Refused: the account-level `mailbox`, now the backend's.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub mailbox: Option<MailboxRemoved>,
-    /// Refused: the account-level `collection`, now the backend's.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub collection: Option<CollectionRemoved>,
-    /// Refused: the account-level `watch`, now `<backend>.watch`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub watch: Option<WatchRemoved>,
-    /// Refused: the account-level `hooks`, now `<backend>.hooks`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub hooks: Option<HooksRemoved>,
-    /// Refused: the plain `dav` backend, now `caldav` or `carddav`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub dav: Option<DavRemoved>,
-}
-
-/// Why the account-level keys naming the collection went.
-const COLLECTION_MOVED: &str = "the collection being named under its backend";
-
-/// What replaces the account-level keys naming the collection.
-const COLLECTION_KEY: &str = "write the backend's collection key instead \
-                              (`imap.mailbox`, `caldav.calendar`, \
-                              `carddav.addressbook`…)";
-
-// NOTE: each key carillon no longer reads is a type no configuration
-// holds: present, it fails the load with pimalaya-config's sentence for a
-// removed key, naming what replaced it and MIGRATION.md.
-pimalaya_config::removed_key! {
-    /// The mirador `folder`, now the backend's collection key.
-    pub FolderRemoved: Key {
-        name: "folder",
-        why: COLLECTION_MOVED,
-        instead: COLLECTION_KEY,
-    }
-
-    /// The account-level `mailbox`, now the backend's collection key.
-    pub MailboxRemoved: Key {
-        name: "mailbox",
-        why: COLLECTION_MOVED,
-        instead: COLLECTION_KEY,
-    }
-
-    /// The account-level `collection`, now the backend's collection key.
-    pub CollectionRemoved: Key {
-        name: "collection",
-        why: COLLECTION_MOVED,
-        instead: COLLECTION_KEY,
-    }
-
-    /// The account-level `watch`, now `<backend>.watch`.
-    pub WatchRemoved: Table {
-        name: "watch",
-        why: "the watch method being its backend's",
-        instead: "write `<backend>.watch` instead (`imap.watch`)",
-    }
-
-    /// The account-level `hooks`, now `<backend>.hooks`.
-    pub HooksRemoved: Table {
-        name: "hooks",
-        why: "the hooks being their backend's",
-        instead: "write `<backend>.hooks` instead (`imap.hooks`)",
-    }
-
-    /// The plain `dav` backend, now `caldav` or `carddav`.
-    pub DavRemoved: Table {
-        name: "dav",
-        why: "a DAV backend being named after what it watches",
-        instead: "write `caldav` for a calendar or `carddav` for an \
-                  addressbook instead",
-    }
-
-    /// A backend's `hook` table before 1.0, now `hooks`.
-    #[cfg_attr(not(any(backend, feature = "pimdir")), allow(dead_code))]
-    pub HookTableRemoved: Table {
-        name: "hook",
-        why: "the hooks taking Comodoro's shape",
-        instead: "write `hooks` instead",
-    }
-}
-
-/// Declares one type per hook name before 1.0, refusing it by name with
-/// the one it became.
-macro_rules! renamed_hooks {
-    ($($ty:ident: $old:literal => $new:literal,)*) => {
-        pimalaya_config::removed_key! {$(
-            // NOTE: a build leaving out every backend that fired the hook
-            // leaves its type unused.
-            #[allow(dead_code)]
-            pub $ty: Table {
-                name: $old,
-                why: "every hook name ending in a bare verb",
-                instead: concat!("write `", $new, "` instead"),
-            }
-        )*}
-    };
-}
-
-renamed_hooks! {
-    OnMessageAddedRenamed: "on-message-added" => "on-message-add",
-    OnMessageRemovedRenamed: "on-message-removed" => "on-message-remove",
-    OnMessageChangedRenamed: "on-message-changed" => "on-message-change",
-    OnFlagAddedRenamed: "on-flag-added" => "on-flag-add",
-    OnFlagRemovedRenamed: "on-flag-removed" => "on-flag-remove",
-    OnCardAddedRenamed: "on-card-added" => "on-card-add",
-    OnCardRemovedRenamed: "on-card-removed" => "on-card-remove",
-    OnCardChangedRenamed: "on-card-changed" => "on-card-change",
-    OnEventAddedRenamed: "on-event-added" => "on-event-add",
-    OnEventRemovedRenamed: "on-event-removed" => "on-event-remove",
-    OnEventChangedRenamed: "on-event-changed" => "on-event-change",
-    OnTaskAddedRenamed: "on-task-added" => "on-task-add",
-    OnTaskRemovedRenamed: "on-task-removed" => "on-task-remove",
-    OnTaskChangedRenamed: "on-task-changed" => "on-task-change",
 }
 
 impl AccountConfig {
@@ -422,6 +312,38 @@ impl AccountConfig {
 
         for slot in slots.into_iter().flatten() {
             slot.get_or_insert_with(|| proxy.clone());
+        }
+    }
+
+    /// Hands the account `tls` table to every network backend, each field
+    /// its own table leaves unset.
+    #[cfg(network)]
+    fn inherit_tls(&mut self) {
+        let Some(tls) = &self.tls else {
+            return;
+        };
+
+        let slots = [
+            #[cfg(feature = "imap")]
+            self.imap.as_mut().map(|c| &mut c.tls),
+            #[cfg(feature = "jmap")]
+            self.jmap.as_mut().map(|c| &mut c.tls),
+            #[cfg(feature = "caldav")]
+            self.caldav.as_mut().map(|c| &mut c.tls),
+            #[cfg(feature = "carddav")]
+            self.carddav.as_mut().map(|c| &mut c.tls),
+            #[cfg(feature = "msgraph")]
+            self.msgraph.as_mut().map(|c| &mut c.tls),
+            #[cfg(feature = "gmail")]
+            self.gmail.as_mut().map(|c| &mut c.tls),
+            #[cfg(feature = "gcal")]
+            self.gcal.as_mut().map(|c| &mut c.tls),
+            #[cfg(feature = "gpeople")]
+            self.gpeople.as_mut().map(|c| &mut c.tls),
+        ];
+
+        for slot in slots.into_iter().flatten() {
+            slot.inherit(tls);
         }
     }
 
@@ -612,6 +534,7 @@ mod tests {
     use crate::config::{
         imap::{ImapWatchConfig, SaslConfig},
         proxy::ProxyConfig,
+        tls::TlsProviderConfig,
     };
     #[cfg(feature = "jmap")]
     use crate::{
@@ -662,7 +585,7 @@ mod tests {
     fn the_account_proxy_is_inherited_unless_the_backend_names_one() {
         let proxy = |extra: &str| {
             let config: Config = toml::from_str(&document(extra)).expect("parse the config");
-            let config = config.with_inherited_proxies();
+            let config = config.with_inherited_network();
             let imap = config.accounts["perso"].imap.clone().unwrap();
             imap.proxy.map(|proxy| proxy.url)
         };
@@ -676,6 +599,43 @@ mod tests {
             proxy(&format!("{account}{backend}")).as_deref(),
             Some("http://proxy.example.org:3128")
         );
+    }
+
+    /// A backend's `tls` takes from the account's each field it leaves
+    /// unset, the client certificate as one so it keeps its own key.
+    #[test]
+    fn the_account_tls_is_inherited_field_by_field() {
+        let tls = |extra: &str| {
+            let config: Config = toml::from_str(&document(extra)).expect("parse the config");
+            let config = config.with_inherited_network();
+            config.accounts["perso"].imap.clone().unwrap().tls
+        };
+
+        let account = "tls.provider = \"native-tls\"\n\
+                       tls.cert = \"/ca.pem\"\n\
+                       tls.client = { cert = \"/me.pem\", key = \"/me.key\" }\n";
+        let backend = "imap.tls.cert = \"/imap.pem\"\n\
+                       imap.tls.client = { cert = \"/imap-me.pem\", key = \"/imap-me.key\" }\n";
+
+        let inherited = tls(account);
+        assert!(matches!(
+            inherited.provider,
+            Some(TlsProviderConfig::NativeTls)
+        ));
+        assert_eq!(inherited.cert, Some(PathBuf::from("/ca.pem")));
+        let client = inherited.client.unwrap();
+        assert_eq!(client.key, PathBuf::from("/me.key"));
+
+        let own = tls(&format!("{account}{backend}"));
+        assert!(matches!(own.provider, Some(TlsProviderConfig::NativeTls)));
+        assert_eq!(own.cert, Some(PathBuf::from("/imap.pem")));
+        let client = own.client.unwrap();
+        assert_eq!(client.cert, PathBuf::from("/imap-me.pem"));
+        assert_eq!(client.key, PathBuf::from("/imap-me.key"));
+
+        let err = toml::from_str::<Config>(&document("tls.client.cert = \"/me.pem\"\n"));
+        let err = err.expect_err("a certificate without its key").to_string();
+        assert!(err.contains("missing field `key`"), "{err}");
     }
 
     #[test]
@@ -997,52 +957,54 @@ mod tests {
         assert_eq!(PushWatchConfig::default().ping, Duration::from_secs(30));
     }
 
-    /// A key carillon moved is refused in the family's sentence for a
-    /// removed key, naming what replaced it and MIGRATION.md.
+    /// A key carillon read before 1.0 is an unknown key like any other,
+    /// refused by serde naming it, never by name with a pointer to a
+    /// migration guide.
     #[test]
-    fn a_key_carillon_no_longer_reads_is_refused_by_name() {
-        for (line, kind, named) in [
-            ("folder = \"INBOX\"\n", "key", "`imap.mailbox`"),
-            ("mailbox = \"INBOX\"\n", "key", "`imap.mailbox`"),
-            ("collection = \"INBOX\"\n", "key", "`imap.mailbox`"),
-            ("watch.poll.interval = 60\n", "table", "`imap.watch`"),
+    fn a_key_carillon_no_longer_reads_is_an_unknown_field() {
+        #[cfg_attr(not(any(feature = "caldav", feature = "jmap")), allow(unused_mut))]
+        let mut cases = vec![
+            ("folder = \"INBOX\"\n", "folder"),
+            ("mailbox = \"INBOX\"\n", "mailbox"),
+            ("collection = \"INBOX\"\n", "collection"),
+            ("watch.poll.interval = 60\n", "watch"),
+            ("hooks.on-message-add.command = \"true\"\n", "hooks"),
+            ("dav.server = \"https://dav.example.org\"\n", "dav"),
+            ("imap.hook.on-message-add.command = \"true\"\n", "hook"),
             (
-                "hooks.on-message-add.command = \"true\"\n",
-                "table",
-                "`imap.hooks`",
+                "imap.hooks.on-message-added.command = \"true\"\n",
+                "on-message-added",
             ),
             (
-                "dav.server = \"https://dav.example.org\"\n",
-                "table",
-                "`caldav`",
+                "imap.hooks.on-flag-removed.flags = [\"Seen\"]\n",
+                "on-flag-removed",
             ),
-        ] {
+        ];
+
+        #[cfg(feature = "caldav")]
+        cases.push((
+            "caldav.server = \"https://dav.example.org\"\n\
+             caldav.calendar = \"work\"\n\
+             caldav.hooks.on-task-changed.command = \"true\"\n",
+            "on-task-changed",
+        ));
+
+        #[cfg(feature = "jmap")]
+        cases.push((
+            "jmap.server = \"fastmail.com\"\n\
+             jmap.addressbook = \"Personal\"\n\
+             jmap.hooks.on-card-removed.command = \"true\"\n",
+            "on-card-removed",
+        ));
+
+        for (line, key) in cases {
             let err = toml::from_str::<Config>(&document(line)).expect_err(line);
             let err = err.to_string();
-            let key = line.split(['.', ' ']).next().unwrap();
-            let removed = format!("The `{key}` {kind} is removed, ");
+            let unknown = format!("unknown field `{key}`");
 
-            assert!(err.contains(&removed), "{line}: {err}");
-            assert!(err.contains(named), "{line}: {err}");
-            assert!(err.contains(" instead"), "{line}: {err}");
-            assert!(err.contains(", see MIGRATION.md"), "{line}: {err}");
+            assert!(err.contains(&unknown), "{line}: {err}");
+            assert!(!err.contains("MIGRATION.md"), "{line}: {err}");
         }
-    }
-
-    #[test]
-    fn a_removed_key_is_refused_by_name_when_the_file_is_loaded() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        let line = "hooks.on-message-add.command = \"true\"\n";
-        std::fs::write(&path, document(line)).unwrap();
-
-        let err = Config::load(&[path]).expect_err("an account-level hooks table");
-        let err = format!("{err:#}");
-
-        let sentence = "The `hooks` table is removed, the hooks being their \
-                        backend's: write `<backend>.hooks` instead \
-                        (`imap.hooks`), see MIGRATION.md";
-        assert!(err.contains(sentence), "{err}");
     }
 
     /// The SASL spellings the sample writes and a secret's `cmd` load, the
@@ -1182,65 +1144,6 @@ mod tests {
         let pimdir = config.accounts["perso"].pimdir.as_ref().unwrap();
 
         assert_eq!(Some("work"), pimdir.account.as_deref());
-    }
-
-    /// A hook spelt as before 1.0 is refused naming what it became, where
-    /// 0.2 read it.
-    #[test]
-    fn a_hook_spelling_before_1_0_is_refused_by_name() {
-        #[cfg_attr(not(any(feature = "caldav", feature = "jmap")), allow(unused_mut))]
-        let mut cases = vec![
-            (
-                "imap.hook.on-message-add.command = \"true\"\n",
-                "hook",
-                "hooks",
-            ),
-            (
-                "imap.hooks.on-message-added.command = \"true\"\n",
-                "on-message-added",
-                "on-message-add",
-            ),
-            (
-                "imap.hooks.on-flag-removed.flags = [\"Seen\"]\n",
-                "on-flag-removed",
-                "on-flag-remove",
-            ),
-        ];
-
-        #[cfg(feature = "caldav")]
-        cases.push((
-            "caldav.server = \"https://dav.example.org\"\n\
-             caldav.calendar = \"work\"\n\
-             caldav.hooks.on-task-changed.command = \"true\"\n",
-            "on-task-changed",
-            "on-task-change",
-        ));
-
-        #[cfg(feature = "jmap")]
-        cases.push((
-            "jmap.server = \"fastmail.com\"\n\
-             jmap.addressbook = \"Personal\"\n\
-             jmap.hooks.on-card-removed.command = \"true\"\n",
-            "on-card-removed",
-            "on-card-remove",
-        ));
-
-        for (line, old, new) in cases {
-            let err = toml::from_str::<Config>(&document(line)).expect_err(line);
-            let err = err.to_string();
-            let removed = format!("The `{old}` table is removed, ");
-            let instead = format!(": write `{new}` instead, see MIGRATION.md");
-
-            assert!(err.contains(&removed), "{line}: {err}");
-            assert!(err.contains(&instead), "{line}: {err}");
-        }
-
-        let line = "imap.hooks.on-message-added.command = \"true\"\n";
-        let err = toml::from_str::<Config>(&document(line)).expect_err(line);
-        let sentence = "The `on-message-added` table is removed, every hook \
-                        name ending in a bare verb: write `on-message-add` \
-                        instead, see MIGRATION.md";
-        assert!(err.to_string().contains(sentence), "{err}");
     }
 
     /// An argv hook gets its variables in its environment only, so one the

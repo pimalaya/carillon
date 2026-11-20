@@ -306,3 +306,50 @@ fn a_pinned_backend_the_account_lacks_is_capability_missing() {
         "{stdout}"
     );
 }
+
+/// Each network row names the TLS its backend resolved, the account's
+/// table filling what the backend's leaves unset, the client certificate
+/// as one; a local backend's row names none.
+#[cfg(all(feature = "imap", feature = "maildir"))]
+#[test]
+fn a_check_row_names_the_tls_its_backend_inherited() {
+    let home = TempDir::new().unwrap();
+    let root = home.path().join("mail");
+    for dir in ["cur", "new", "tmp"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+    }
+
+    let path = home.path().join("config.toml");
+    let toml = format!(
+        "[accounts.a]\ndefault = true\n\
+         tls.rustls.crypto = \"ring\"\n\
+         tls.cert = \"/etc/carillon/ca.pem\"\n\
+         tls.client = {{ cert = \"/etc/carillon/me.pem\", key = \"/etc/carillon/me.key\" }}\n\
+         imap.server = \"imaps://127.0.0.1:1\"\nimap.mailbox = \"INBOX\"\n\
+         imap.tls.cert = \"/etc/carillon/imap.pem\"\n\
+         maildir.mailbox = \".\"\nmaildir.root = {:?}\n",
+        root.display().to_string()
+    );
+    fs::write(&path, toml).unwrap();
+
+    let output = run_in(home.path(), &path, &["account", "check"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(3), "{stdout}");
+
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let account = &json["accounts"][0];
+    assert_eq!(account["account"], "a", "{json}");
+
+    let tls = serde_json::json!({
+        "provider": null,
+        "crypto": "ring",
+        "cert": "/etc/carillon/imap.pem",
+        "clientCert": "/etc/carillon/me.pem",
+    });
+    assert_eq!(account["backends"][0]["backend"], "imap", "{json}");
+    assert_eq!(account["backends"][0]["tls"], tls, "{json}");
+
+    assert_eq!(account["backends"][1]["backend"], "maildir", "{json}");
+    assert_eq!(account["backends"][1]["ok"], true, "{json}");
+    assert_eq!(account["backends"][1]["tls"], Value::Null, "{json}");
+}

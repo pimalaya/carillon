@@ -9,8 +9,7 @@ use url::Url;
 
 use crate::{
     config::{
-        Hook, HookTableRemoved, ItemHook, OnCardAddedRenamed, OnCardChangedRenamed,
-        OnCardRemovedRenamed,
+        Hook, ItemHook,
         dav::{DavAuthConfig, DavServer, DavWatchConfig, ascii_url},
         proxy::ProxyConfig,
         tls::TlsConfig,
@@ -42,16 +41,6 @@ pub struct CarddavHookConfig {
     pub on_card_remove: Option<ItemHook>,
     /// Fires when a vCard is edited where it stands.
     pub on_card_change: Option<ItemHook>,
-    /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_card_added: Option<OnCardAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_card_removed: Option<OnCardRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_card_changed: Option<OnCardChangedRenamed>,
 }
 
 impl CarddavHookConfig {
@@ -127,10 +116,6 @@ pub struct CarddavConfig {
     /// The hooks this backend fires.
     #[serde(default)]
     pub hooks: CarddavHookConfig,
-    /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub hook: Option<HookTableRemoved>,
 }
 
 impl CarddavConfig {

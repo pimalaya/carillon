@@ -8,10 +8,7 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::{
-    config::{
-        FlagHook, Hook, HookTableRemoved, ItemHook, OnFlagAddedRenamed, OnFlagRemovedRenamed,
-        OnMessageAddedRenamed, OnMessageRemovedRenamed, PollWatchConfig,
-    },
+    config::{FlagHook, Hook, ItemHook, PollWatchConfig},
     event::WatchEvent,
     hook::{self, HookCollection, Vocabulary},
 };
@@ -30,10 +27,6 @@ pub struct MaildirConfig {
     /// The hooks this backend fires.
     #[serde(default)]
     pub hooks: MaildirHookConfig,
-    /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub hook: Option<HookTableRemoved>,
 }
 
 impl MaildirConfig {
@@ -61,19 +54,6 @@ pub struct MaildirHookConfig {
     pub on_flag_add: Option<FlagHook>,
     /// Fires once for each flag letter removed from one.
     pub on_flag_remove: Option<FlagHook>,
-    /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_message_added: Option<OnMessageAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_message_removed: Option<OnMessageRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_flag_added: Option<OnFlagAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_flag_removed: Option<OnFlagRemovedRenamed>,
 }
 
 impl MaildirHookConfig {

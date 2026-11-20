@@ -125,6 +125,8 @@ fn a_json_watch_prints_events_then_one_result_on_sigint() {
 
     let failed = watch.json();
     assert_eq!(failed["event"], "hook-failed", "{failed}");
+    assert_eq!(failed["hook"], "on-message-add", "{failed}");
+    assert_eq!(failed["id"], "1700000000.1.carillon", "{failed}");
     assert_eq!(failed["reaction"], "command", "{failed}");
     assert_eq!(failed["code"], Value::Null, "{failed}");
     assert!(failed["error"].as_str().unwrap().contains("3"), "{failed}");

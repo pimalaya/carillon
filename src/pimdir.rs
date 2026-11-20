@@ -351,7 +351,6 @@ mod tests {
             account: None,
             watch: None,
             hooks: Default::default(),
-            hook: None,
         }
     }
 

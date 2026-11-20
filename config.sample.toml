@@ -4,6 +4,8 @@ default = true				# the account commands run on without -a
 #proxy.url = "socks5h://localhost:1080"	# a socks5, socks5h or http proxy for every network backend
 #proxy.username = "alice"		# its username
 #proxy.password.command = "exit 127"	# prints its password
+#tls.provider = "rustls"		# for every network backend, field by field [native-tls]
+#tls.cert = "~/certs/ca.pem"		# a PEM certificate every network backend trusts
 
 # Hooks, the same keys under every backend's hooks table, each event named
 # on-<subject>-<verb>: $id, $collection and the collection's own name
@@ -21,6 +23,7 @@ default = true				# the account commands run on without -a
 #imap.tls.provider = "rustls"			# the build's first otherwise [native-tls]
 #imap.tls.rustls.crypto = "ring"		# the build's first otherwise [aws]
 #imap.tls.cert = "~/certs/example.pem"		# a PEM certificate to trust
+#imap.tls.client = { cert = "~/certs/me.pem", key = "~/certs/me.key.pem" }	# a PEM client certificate and its key
 #imap.alpn = ["imap"]				# the ALPN ids rustls offers, empty for none
 #imap.proxy.url = "http://proxy.example.org:3128"	# the proxy keys, for IMAP alone
 

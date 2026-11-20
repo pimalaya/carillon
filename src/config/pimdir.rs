@@ -9,7 +9,7 @@ use anyhow::{Result, bail};
 use serde::Deserialize;
 
 use crate::{
-    config::{HookTableRemoved, ItemHook, PollWatchConfig},
+    config::{ItemHook, PollWatchConfig},
     hook::{self, HookCollection, Vocabulary},
 };
 
@@ -38,10 +38,6 @@ pub struct PimdirConfig {
     /// The hooks this backend fires.
     #[serde(default)]
     pub hooks: PimdirHookConfig,
-    /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub hook: Option<HookTableRemoved>,
 }
 
 impl PimdirConfig {

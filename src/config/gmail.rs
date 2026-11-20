@@ -7,8 +7,7 @@ use serde::Deserialize;
 
 use crate::{
     config::{
-        FlagHook, Hook, HookTableRemoved, ItemHook, OnFlagAddedRenamed, OnFlagRemovedRenamed,
-        OnMessageAddedRenamed, OnMessageRemovedRenamed,
+        FlagHook, Hook, ItemHook,
         api::{ApiWatchConfig, BearerAuthConfig},
         proxy::ProxyConfig,
         tls::TlsConfig,
@@ -45,10 +44,6 @@ pub struct GmailConfig {
     /// The hooks this backend fires.
     #[serde(default)]
     pub hooks: GmailHookConfig,
-    /// Refused: the table before 1.0, now `hooks`.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub hook: Option<HookTableRemoved>,
 }
 
 impl GmailConfig {
@@ -74,19 +69,6 @@ pub struct GmailHookConfig {
     pub on_flag_add: Option<FlagHook>,
     /// Fires once for each flag cleared on a message.
     pub on_flag_remove: Option<FlagHook>,
-    /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_message_added: Option<OnMessageAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_message_removed: Option<OnMessageRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_flag_added: Option<OnFlagAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_flag_removed: Option<OnFlagRemovedRenamed>,
 }
 
 impl GmailHookConfig {

@@ -7,12 +7,7 @@ use anyhow::{Result, bail};
 use serde::Deserialize;
 
 use crate::{
-    config::{
-        FlagHook, Hook, ItemHook, OnCardAddedRenamed, OnCardChangedRenamed, OnCardRemovedRenamed,
-        OnEventAddedRenamed, OnEventChangedRenamed, OnEventRemovedRenamed, OnFlagAddedRenamed,
-        OnFlagRemovedRenamed, OnMessageAddedRenamed, OnMessageChangedRenamed,
-        OnMessageRemovedRenamed,
-    },
+    config::{FlagHook, Hook, ItemHook},
     event::{WatchDomain, WatchEvent},
     hook::{self, HookCollection, Vocabulary},
 };
@@ -103,40 +98,6 @@ pub struct DomainsHookConfig {
     pub on_event_remove: Option<ItemHook>,
     /// Fires when an event is edited where it stands.
     pub on_event_change: Option<ItemHook>,
-    /// Refused: the hook names before 1.0, each pointing at its successor.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_message_added: Option<OnMessageAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_message_removed: Option<OnMessageRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_message_changed: Option<OnMessageChangedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_flag_added: Option<OnFlagAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_flag_removed: Option<OnFlagRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_card_added: Option<OnCardAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_card_removed: Option<OnCardRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_card_changed: Option<OnCardChangedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_event_added: Option<OnEventAddedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_event_removed: Option<OnEventRemovedRenamed>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub on_event_changed: Option<OnEventChangedRenamed>,
 }
 
 impl DomainsHookConfig {
