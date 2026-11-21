@@ -17,14 +17,14 @@ native-tls = ["pimalaya-stream/native-tls", "io-http?/native-tls", "io-imap?/nat
 rustls-aws = ["pimalaya-stream/rustls-aws", "io-http?/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws", "io-webdav?/rustls-aws", "io-msgraph?/rustls-aws", "io-gmail?/rustls-aws", "io-gcal?/rustls-aws", "io-gpeople?/rustls-aws"]
 rustls-ring = ["pimalaya-stream/rustls-ring", "io-http?/rustls-ring", "io-imap?/rustls-ring", "io-jmap?/rustls-ring", "io-webdav?/rustls-ring", "io-msgraph?/rustls-ring", "io-gmail?/rustls-ring", "io-gcal?/rustls-ring", "io-gpeople?/rustls-ring"]
 imap = ["dep:io-imap", "dep:mime-rs", "io-imap/std", "io-imap/scram"]
-jmap = ["dep:base64", "dep:io-jmap", "io-jmap/client"]
+jmap = ["dep:base64", "dep:io-jmap", "io-jmap/std"]
 maildir = ["dep:io-maildir", "io-maildir/client", "io-maildir/parser"]
-caldav = ["dep:ceichas", "dep:ical-rs", "dep:io-http", "dep:io-webdav", "dep:jiff", "io-webdav/std"]
-carddav = ["dep:io-http", "dep:io-webdav", "io-webdav/std"]
-msgraph = ["dep:io-msgraph", "io-msgraph/client"]
-gmail = ["dep:io-gmail", "dep:mime-rs", "io-gmail/client"]
-gcal = ["dep:io-gcal", "io-gcal/client"]
-gpeople = ["dep:io-gpeople", "io-gpeople/client"]
+caldav = ["dep:ceichas", "dep:ical-rs", "dep:io-http", "dep:io-webdav", "dep:jiff", "io-http/std", "io-webdav/std"]
+carddav = ["dep:io-http", "dep:io-webdav", "io-http/std", "io-webdav/std"]
+msgraph = ["dep:io-msgraph", "io-msgraph/std"]
+gmail = ["dep:io-gmail", "dep:mime-rs", "io-gmail/std"]
+gcal = ["dep:io-gcal", "io-gcal/std"]
+gpeople = ["dep:io-gpeople", "io-gpeople/std"]
 notify = ["pimalaya-config/notify"]
 pimdir = ["dep:ceichas", "dep:ical-rs", "dep:io-pimdir", "dep:jiff", "io-pimdir/client"]
 vendored = ["pimalaya-stream/vendored", "io-http?/vendored", "io-pimdir?/vendored", "pimalaya-config/vendored"]
@@ -36,7 +36,7 @@ strip = "symbols"
 panic = "abort"
 
 [dev-dependencies]
-io-oauth = { version = "0.7", default-features = false, features = ["jwt-bearer", "rustls-ring"] }
+io-oauth = { version = "0.8", default-features = false, features = ["jwt-bearer", "rustls-ring"] }
 pimalaya-config = { version = "0.6.0", default-features = false, features = ["sample"] }
 rusqlite = { version = "0.43", default-features = false }
 tempfile = "3"
@@ -50,25 +50,25 @@ anyhow = "1"
 base64 = { version = "0.23", optional = true }
 ceichas = { version = "0.1", optional = true }
 clap = { version = "4.4", default-features = false, features = ["derive", "error-context", "help", "std", "suggestions", "usage"] }
-io-http = { version = "0.8", default-features = false, optional = true }
-io-gcal = { version = "0.5.2", default-features = false, optional = true }
-io-gmail = { version = "0.9", default-features = false, optional = true }
-io-gpeople = { version = "0.8.1", default-features = false, optional = true }
+io-http = { version = "0.9", default-features = false, optional = true }
+io-gcal = { version = "0.6.0", default-features = false, optional = true }
+io-gmail = { version = "0.10", default-features = false, optional = true }
+io-gpeople = { version = "0.9.0", default-features = false, optional = true }
 ical-rs = { version = "0.7.3", default-features = false, features = ["parser", "tzdb"], optional = true }
 idna_adapter = { version = "=1.0.0", default-features = false }
 io-imap = { version = "0.12", default-features = false, optional = true }
-io-jmap = { version = "0.10", default-features = false, optional = true }
+io-jmap = { version = "0.11", default-features = false, optional = true }
 io-maildir = { version = "0.5", default-features = false, optional = true }
-io-msgraph = { version = "0.9.3", default-features = false, optional = true }
-io-pimdir = { version = "0.19.0", default-features = false, optional = true }
+io-msgraph = { version = "0.10.0", default-features = false, optional = true }
+io-pimdir = { version = "0.19.1", default-features = false, optional = true }
 io-sasl = { version = "0.3", default-features = false, features = ["scram"] }
-io-webdav = { version = "0.12.0", default-features = false, optional = true }
+io-webdav = { version = "0.13.0", default-features = false, optional = true }
 jiff = { version = "1", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"], optional = true }
 log = "0.4"
 mime-rs = { version = "0.2.1", default-features = false, features = ["base64", "encoding", "parser"], optional = true }
 pimalaya-cli = { version = "0.8.0", default-features = false, features = ["signal", "terminal"] }
 pimalaya-config = { version = "0.6.0", default-features = false, features = ["toml", "secret"] }
-pimalaya-stream = { version = "0.4", default-features = false, features = ["std"] }
+pimalaya-stream = { version = "0.4.1", default-features = false, features = ["std"] }
 schemars = "1"
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
