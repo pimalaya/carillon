@@ -317,9 +317,23 @@ fn translate(event: ImapMailboxWatchEvent) -> Vec<WatchEvent> {
     }
 }
 
-/// Renders IMAP flags as the strings a hook filter matches against.
+/// Renders IMAP flags under the names JMAP and Maildir report, so
+/// `$flag` reads `Seen` on every backend; other keywords stay as sent.
 fn render_flags(flags: &[Flag<'static>]) -> BTreeSet<String> {
-    flags.iter().map(|flag| flag.to_string()).collect()
+    flags
+        .iter()
+        .map(|flag| match flag {
+            Flag::Answered => String::from("Answered"),
+            Flag::Deleted => String::from("Deleted"),
+            Flag::Draft => String::from("Draft"),
+            Flag::Flagged => String::from("Flagged"),
+            Flag::Seen => String::from("Seen"),
+            Flag::Keyword(atom) if atom.as_ref().eq_ignore_ascii_case("$forwarded") => {
+                String::from("Passed")
+            }
+            flag => flag.to_string(),
+        })
+        .collect()
 }
 
 /// A second connection, opened lazily, turning a UID into the envelope a
@@ -857,5 +871,34 @@ mod tests {
         assert_eq!(Some("André"), summary.from_name.as_deref());
         assert_eq!(Some("andre@example.org"), summary.from_addr.as_deref());
         assert_eq!(Some("Élodie"), summary.to_name.as_deref());
+    }
+
+    /// IMAP flags reach a hook under the names JMAP and Maildir give
+    /// them, `$flag` reading `Seen` rather than `\Seen`.
+    #[test]
+    fn a_flag_delta_is_reported_under_the_shared_names() {
+        let flags = vec![
+            Flag::Seen,
+            Flag::Answered,
+            Flag::Flagged,
+            Flag::Deleted,
+            Flag::Draft,
+            Flag::try_from("$Forwarded").unwrap(),
+            Flag::try_from("$Junk").unwrap(),
+        ];
+        let uid = NonZeroU32::new(7).unwrap();
+
+        let named: BTreeSet<String> = translate(ImapMailboxWatchEvent::FlagsAdded { uid, flags })
+            .into_iter()
+            .map(|event| match event {
+                WatchEvent::FlagAdded { flag, .. } => flag,
+                other => panic!("not a flag added: {other:?}"),
+            })
+            .collect();
+
+        let shared = [
+            "Answered", "Deleted", "Draft", "Flagged", "Passed", "Seen", "$Junk",
+        ];
+        assert_eq!(BTreeSet::from(shared.map(String::from)), named);
     }
 }

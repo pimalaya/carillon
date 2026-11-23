@@ -118,6 +118,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed IMAP flags reaching `$flag` and the `--json` events as sent (`\Seen`, `\Answered`, `$Forwarded`) where JMAP and Maildir name them `Seen`, `Answered` and `Passed`: an IMAP system flag now reads without its backslash and `$Forwarded` reads `Passed`, other keywords as sent. Flag filters matched either spelling and are unchanged.
 - Fixed a pimdir store moved aside and synced anew under `pimdir.root` while carillon ran never being read: the watch kept the file it opened and fired the moved store's alarms. The store is opened again on every poll.
 - Fixed an alarm firing twice when its pimdir store was synced anew within the grace window after it fired: a firing is told apart by its event's `UID`, alarm, occurrence and trigger, no longer by the item id, which a new store hands out again.
 - Fixed config.sample.toml pointing `pimdir.root` at `~/.local/share/pimdir`, where neverest keeps no store: it names `~/.local/state/neverest`, the store neverest syncs on Linux, and `pimdir.calendar` says to take the id `pimdir collection list` prints.
