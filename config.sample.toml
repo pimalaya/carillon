@@ -150,8 +150,8 @@ default = true				# the account commands run on without -a
 #gpeople.hooks.on-card-remove.command = "true"	# a contact deleted or leaving the group
 
 # pimdir, the alarms of a calendar of a local store, read and never written
-#pimdir.root = "~/.local/share/pimdir"		# the store, of the draft neverest writes
-#pimdir.calendar = "personal"			# the calendar, by its collection id
+#pimdir.root = "~/.local/state/neverest"	# the store neverest syncs, on Linux
+#pimdir.calendar = "personal"			# the calendar, its id as `pimdir collection list` prints it
 #pimdir.account = "personal"			# the store account it is grouped under, any otherwise
 #pimdir.watch.poll.interval = 30		# how often the change cursor is read
 
