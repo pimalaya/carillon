@@ -190,6 +190,9 @@ pub enum ErrorCode {
     /// The pimdir tag names no flag, or adds and removes one flag.
     #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
     TagRefused,
+    /// A pimdir item property is malformed or refused.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    PropertyInvalid,
     /// No account carries the name `-a` gave.
     AccountMissing,
     /// No account is marked default, and `-a` named none.
@@ -251,6 +254,7 @@ const PIMDIR_CODES: &[(&str, ErrorCode)] = &[
     ("query-refused", ErrorCode::QueryRefused),
     ("query-unanswerable", ErrorCode::QueryUnanswerable),
     ("tag-refused", ErrorCode::TagRefused),
+    ("property-invalid", ErrorCode::PropertyInvalid),
 ];
 
 impl ErrorCode {
@@ -506,7 +510,7 @@ mod tests {
     /// spelling, the owner's codes included.
     #[test]
     fn the_relayed_pimdir_codes_are_himalayas() {
-        assert_eq!(29, PIMDIR_CODES.len());
+        assert_eq!(30, PIMDIR_CODES.len());
 
         for (pimdir, ours) in PIMDIR_CODES {
             assert_eq!(serde_json::to_value(ours).unwrap(), *pimdir);
@@ -514,5 +518,9 @@ mod tests {
 
         let busy = ErrorCode::of_pimdir(&PimdirError::Busy);
         assert_eq!(Some(ErrorCode::StoreBusy), busy);
+
+        let property = PimdirError::Property(String::from("x"));
+        let property = ErrorCode::of_pimdir(&property);
+        assert_eq!(Some(ErrorCode::PropertyInvalid), property);
     }
 }
