@@ -106,6 +106,8 @@ Carillon never writes a configuration: copy [config.sample.toml](./config.sample
 
 An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople`, `pimdir`) carrying the collection it watches (one per domain over JMAP and Microsoft Graph, sharing one connection), how it watches it (`watch`) and what it fires (`hooks`, each named `on-<subject>-<verb>` and running a `notify` notification, a `command` or both). Declaring several is allowed, `-b/--backend` then selecting one. A backend the build leaves out still loads, a command reaching it failing with the cargo feature to build with, named as the block (`caldav`, `carddav` and so on), so one file serves every build. A duration (`watch.poll.interval`, `watch.idle.timeout`, `watch.push.ping`) is an integer of seconds or a number and its unit (`"90s"`, `"5m"`, `"2h"`). Without `-a`, `account check` takes the account marked `default = true`; `-a default` names the account called `default`.
 
+The `pimdir` backend reads the store neverest syncs (`~/.local/state/neverest` on Linux), of the pimdir draft its io-pimdir reads alone (storage-draft-17): a store of an earlier draft is refused coded `store-version`, never migrated. To start over, let the neverest that wrote it drain its queue, move its directory aside and let the new neverest sync a new store under the same root: a running carillon reads it on its next poll.
+
 ## Usage
 
 Watch every configured account, until interrupted:

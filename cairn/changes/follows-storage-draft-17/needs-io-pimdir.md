@@ -25,3 +25,11 @@ Nothing blocks: carillon builds and passes on 7f16b27 unchanged, and works aroun
 
 - What: spec/generator renders events without a `VALARM` (src/body.rs `Event::file`), so no generated store exercises an alarm reader.
 - Workaround: carillon's lane seeds its stores through `PimdirProducer` and the drain (scratch seeder, inventory.md).
+
+## N4. A listing of public ids and object hashes alone (low, optional)
+
+- What: a keyset page of `(seq, object)` for one collection, with no `PimdirItem` built (flags, sort key, link id), or `list_items` made cheaper per row.
+- Why: after a reset, a purge anywhere in the store or the calendar moving, carillon lists its calendar again to find what changed (H2); at 10,000 events that listing is what is left of the poll: 2 to 3 ticks of CPU (20 to 30 ms) against 7 to 9 for the whole open, where the plan asked 5% of the open. A purge in a mail collection, which neverest does as it expunges, triggers it.
+- Evidence: journal.md 2026-11-23 17:20, seeder measure-purge on the 10k store, before 9 to 10 ticks, after 2 to 3.
+- App test: src/pimdir.rs `a_purge_elsewhere_reads_no_body_of_an_item_unchanged` (bodies), H4's purge measure (CPU).
+- Workaround: the full `list_items` listing, kept.

@@ -1,0 +1,30 @@
+---
+cairn: change
+id: follows-storage-draft-17
+part: journal
+---
+
+# Journal
+
+- 2026-11-23 16:48: lane started on c512bac, D1 to D6 taken, D7 out; cross-app J2 waits for the lead's final io-pimdir drop.
+- 2026-11-23 16:50: 0.1 green, suite 188 passed, 9 ignored at c512bac.
+- 2026-11-23 16:55: A1 lock moved io-pimdir alone (git source, no checksum, `libc` added); A2 17 of 17 clippy sets exit 0, no-imap suite 70 passed.
+- 2026-11-23 16:57: A3 url 2.5.9 moves url and form_urlencoded alone, `cargo deny check` all ok; A1 and A3 lock hunks split into ~/code/pimalaya/.lanes/carillon/a1.patch and a3.patch so the lead commits each alone.
+- 2026-11-23 17:00: io-pimdir drop 1 (cc3021b) folded into A1's pin rather than a commit of its own (A1 not yet committed); A4's first build at 7f16b27 stopped and re-run at cc3021b.
+- 2026-11-23 17:00: C1 fails on "this program" as planned (both cases); C2 maps `PimdirError::Version` to a `CodedError` naming carillon, other open errors kept typed so `store_code` still codes them; suite 189 passed, 9 ignored.
+- 2026-11-23 17:02: package.nix runs `cargo test --bins` in the nix build, so a test-first unit test left red in the tree fails A4: the G3 alarm test (red as planned) was taken out of the tree until A4 ran. Committed as 7618eb3, 3ae671f, d7e9b1f.
+- 2026-11-23 17:08: G1 builds the new store beside the root and swaps it in by two renames, so no poll meets a missing root (a failed open ends the session, D2); fails on the old `watch` (checked by restoring the held reader), passes with G2.
+- 2026-11-23 17:10: G3 both tests fail with two firings; G4 drops the item id from `AlarmFiring::key`; suite 192 passed, 9 ignored; clippy all-features, pimdir, caldav sets clean.
+- 2026-11-23 17:13: G5 sample points at ~/.local/state/neverest as cardamum and calendula do; `the_sample_names_no_unknown_key` passes.
+- 2026-11-23 17:16: committed as 7d8354b, 91c8b5f.
+- 2026-11-23 17:18: H1 (blob file deleted, purge in mail) fails on the whole re-read: the alarm goes. H2 keeps a seq to object hash map (`Known`) beside the book; a reset, purge or moved calendar lists it again and reads only the items new or of another hash, forgetting the missing ones, through `alarms.update`; the incremental path skips an item whose hash it knows. Suite 193 passed.
+- 2026-11-23 17:20: H2 perf gate, 10k events, purge poll (seeder measure-purge, CPU 15, measure lock, other lanes building, 3 runs): before 9 to 10 ticks and 112 MB peak, after 2 to 3 ticks and 64 MB (the open's 61 MB, no second book). The 5% of the open's CPU (7 to 9 ticks, so 0.4 tick) is not met: what is left is listing 10,000 items through `list_items` (no body read), which carillon cannot make cheaper. Parked as needs-io-pimdir.md N4; not re-tried (a second try changes nothing carillon owns).
+- 2026-11-23 17:22: H3 (D5) `poll::sleep` waits on a process-wide `Condvar` that `poll::stop` rings after setting the flag (the lock held across the read and the wait, so no ring is lost); `sleep_backoff` sleeps through it; the shutdown branch calls `poll::stop`; poll is no longer feature-gated (the backoff of every build uses it). The reaper waits on its state's `Condvar` while no command runs, rung by `submit` and by the drop of the last `HookCommands` (an `Owner` shared by the clones). Tests that set the flag to end a 30 s sleep now call `poll::stop`.
+- 2026-11-23 17:26: H3 idle measure, 10k events, 31 s, CPU 15: before 24.97 switches a second, after 10.03 (the signal loop's 100 ms step alone); open 97.7 ms, 9 ticks, peak 62.9 MB (before 96.3 ms, 9 ticks, 60.9 MB). Suite 193 passed, 17 clippy sets exit 0, no-imap suite 70 passed.
+- 2026-11-23 17:28: committed as 96908db, 79c97a9.
+- 2026-11-23 17:29: D4 landed with the docs group: `property-invalid` joins `ErrorCode` and `PIMDIR_CODES` (30 codes), the test also maps `PimdirError::Property`; suite 193 passed.
+- 2026-11-23 17:31: H4 A/A, two release builds of 79c97a9 (bit-identical) copied apart, open at 10k, 5 interleaved runs: medians 94.8 and 92.3 ms, 2.7% apart, over the 1% the frame asks: the machine is under load (other lanes building, the 100k base store seeding on the lane's CPUs). H4 tables are marked "under load"; a difference under 3% is noise.
+- 2026-11-23 17:35: I1 CHANGELOG, I2 README paragraph and I3 spec fold written; the change folder stays in changes/ until L1 (journal and report are its parts), moved to changes/archive/ with status `landed` in the last docs commit.
+- 2026-11-23 18:10: H4 done under load (tables for report.md): open median 1k 17.0 to 15.5 ms, 10k 96.2 to 106.8 ms, 100k 757.0 to 801.3 ms; peak 60.9 to 62.9 MB at 10k, 517.7 to 534.2 MB at 100k; idle 25 to 10 switches a second; reopen 609 µs at 10k; purge poll 9 to 2 ticks at 10k, 89 to 17 at 100k, no second book; latency 30.0 s on both; noise poll 2 to 0 ticks. Not met: open time within 5% (+11% at 10k with runs from 85 to 126 ms, +5.9% at 100k), under load, to re-run in a quiet window; the purge 5% (N4).
+- 2026-11-23 18:12: io-pimdir drop 2 (2314084) pinned: Cargo.lock moves the io-pimdir source line alone; suite 193 passed, 9 ignored; 17 clippy sets exit 0; no-imap 70 passed; fmt, deny clean. H4 binaries stay on cc3021b (drop 2 moved nothing carillon calls).
+- 2026-11-23 18:14: the harness refuses report.md from this agent (sub-agents write no report files): its content goes to the lead in the hand-back, for the lead to write at L1.

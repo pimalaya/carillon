@@ -26,9 +26,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Added an account-level `tls` table, inherited field by field by each backend's `tls` (`provider`, `rustls.crypto`, `cert`, and `client` as one).
 - Added `tls.client.cert` and `tls.client.key`, a PEM client certificate and its key presented to a server asking for one (mutual TLS), on the account and on every network backend.
 - Added `timeout` to every hook, beside its command, read as pimalaya-config's `Timeout` (`"30s"`, `"5m"`, `90`, zero refused): a command still running once it passed is sent SIGTERM, then SIGKILL five seconds later, and printed as a `hook-failed` naming the timeout. Unset, a command runs until it ends, as before.
+- Added `property-invalid` to the pimdir codes carillon relays, io-pimdir 0.20's code for a malformed item property, as himalaya relays it.
 
 ### Changed
 
+- **BREAKING**: Bumped io-pimdir to 0.20.0 (pimdir storage-draft-17): a pimdir watch reads the stores neverest writes on it, and refuses a store of storage-draft-16 or earlier (`store-version`), its message naming carillon and the draft it reads. A store is never migrated: let the neverest that wrote it drain its queue, move its directory aside, and let the new neverest sync a new store under the same root; a running carillon reads it on its next poll. Restart a carillon older than this release, which keeps reading the store moved aside.
+- Changed a pimdir watch listing its calendar again (the store reset, a purge anywhere in it, the calendar moved) to read only the events new or holding another body, keeping the others, where it read every body and built a second set of alarms beside the first: after a purge, a poll over 10,000 events costs about a quarter of the CPU and no extra memory.
+- Changed the sleeps of a watch to wait for the next round, the next hook command or the shutdown, where they woke every 100 to 200 ms: the poll between two rounds of every polled backend, the reconnect backoff and the hook runner with no command running. An idle watch wakes 10 times a second, where it woke 25.
 - Changed config.sample.toml to the compact shape of himalaya's and neverest's: one commented key per line with a trailing note, grouped by backend, the keys every backend shares (hooks, TLS, ALPN, proxy) shown once. Every hook name is in it, and it loads as written.
 - Changed `main` to install the detected SIMD CPU token first (simd-cpu 0.1), as the other Pimalaya binaries do, so the base64 and quoted-printable codecs mime-rs runs leave their portable baseline.
 - **BREAKING**: Changed hook commands to run off the watch, where a running command held it: a command runs with no stdin, one instance per command of an account, the firings meanwhile waiting their turn in order (an exact duplicate dropped, 1000 waiting at most), and a shutdown sends SIGTERM to the ones running, then SIGKILL after a second. A slow hook no longer delays the next change nor drops the alarms due meanwhile.
@@ -114,6 +118,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed a pimdir store moved aside and synced anew under `pimdir.root` while carillon ran never being read: the watch kept the file it opened and fired the moved store's alarms. The store is opened again on every poll.
+- Fixed an alarm firing twice when its pimdir store was synced anew within the grace window after it fired: a firing is told apart by its event's `UID`, alarm, occurrence and trigger, no longer by the item id, which a new store hands out again.
+- Fixed config.sample.toml pointing `pimdir.root` at `~/.local/share/pimdir`, where neverest keeps no store: it names `~/.local/state/neverest`, the store neverest syncs on Linux, and `pimdir.calendar` says to take the id `pimdir collection list` prints.
 - Fixed `install.sh` saving an HTTP error page as the archive: the download now fails on an HTTP error, so `tar` never reads a 404 page.
 
 - Fixed the Nix package and the release archives shipping no config.sample.toml, which the first-run welcome looks for beside the binary: package.nix installs it under share/doc/carillon/, and install.sh copies it from the archive, as neverest's do.
