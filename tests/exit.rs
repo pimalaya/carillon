@@ -110,11 +110,9 @@ fn a_failed_check_in_text_prints_its_report_alone_and_exits_3() {
     assert!(!stdout.contains("Error:"), "{stdout}");
 }
 
-/// A pimdir store of draft-11, a draft carillon read before, is
-/// refused with io-pimdir's code, which the row carries.
+/// The row of `account check` over a pimdir store stamped `draft`.
 #[cfg(feature = "pimdir")]
-#[test]
-fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
+fn check_store_of_draft(draft: &str) -> Value {
     let home = TempDir::new().unwrap();
     let root = home.path().join("pimdir");
     let store = io_pimdir::client::PimdirStore::open(&root).unwrap();
@@ -122,10 +120,7 @@ fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
     drop(store);
     rusqlite::Connection::open(root.join("pimdir.db"))
         .unwrap()
-        .execute(
-            "UPDATE store_meta SET format_version = ?1",
-            ["storage-draft-11"],
-        )
+        .execute("UPDATE store_meta SET format_version = ?1", [draft])
         .unwrap();
 
     let config = home.path().join("config.toml");
@@ -150,10 +145,36 @@ fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
 
     assert_eq!(output.status.code(), Some(3), "{stdout}");
     let json: Value = serde_json::from_str(&stdout).unwrap();
-    let row = &json["accounts"][0]["backends"][0];
+    let row = json["accounts"][0]["backends"][0].clone();
     assert_eq!(row["backend"], "pimdir", "{json}");
     assert_eq!(row["ok"], false, "{json}");
     assert_eq!(row["code"], "store-version", "{json}");
+    row
+}
+
+/// A pimdir store of draft-15, the draft io-pimdir 0.19.1 wrote and
+/// users hold, is refused with io-pimdir's code, its message naming
+/// carillon and the draft it reads.
+#[cfg(feature = "pimdir")]
+#[test]
+fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
+    let row = check_store_of_draft("storage-draft-15");
+    let error = row["error"].as_str().unwrap();
+
+    assert!(error.contains("storage-draft-15"), "{row}");
+    assert!(error.contains("carillon reads"), "{row}");
+    assert!(error.contains(io_pimdir::sql::FORMAT_VERSION), "{row}");
+    assert!(!error.contains("this program"), "{row}");
+}
+
+/// A pimdir store of a later draft asks to upgrade carillon.
+#[cfg(feature = "pimdir")]
+#[test]
+fn a_check_over_a_store_of_a_later_draft_asks_to_upgrade_carillon() {
+    let row = check_store_of_draft("storage-draft-99");
+    let error = row["error"].as_str().unwrap();
+
+    assert!(error.contains("upgrade carillon"), "{row}");
 }
 
 /// `manual`, `completion` and `json-schema` given no argument are a

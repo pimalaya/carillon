@@ -14,13 +14,18 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, bail};
-use io_pimdir::client::{
-    PimdirError,
-    blobs::PimdirBlobs,
-    reader::{PimdirChangeCursor, PimdirItem, PimdirReader},
+use anyhow::{Context, Error, Result, bail};
+use io_pimdir::{
+    client::{
+        PimdirError,
+        blobs::PimdirBlobs,
+        reader::{PimdirChangeCursor, PimdirItem, PimdirReader},
+    },
+    sql::FORMAT_VERSION,
+    version::PimdirFormatRefusal,
 };
 use log::{debug, trace, warn};
+use pimalaya_cli::error::CodedError;
 
 use crate::{
     alarm::{AlarmBook, AlarmShared},
@@ -39,6 +44,9 @@ const PAGE: usize = 500;
 
 /// The media type of a calendar collection, its parameters aside.
 const CALENDAR_KIND: &str = "text/calendar";
+
+/// The program a refused store's message names.
+const PROGRAM: &str = "carillon";
 
 /// What a member of the calendar became, read before the alarms are
 /// changed so the lock is held only to apply it.
@@ -88,11 +96,36 @@ pub fn probe(config: &PimdirConfig) -> Result<()> {
 
 /// Opens the store as a reader, which creates nothing: a store its owner
 /// has not created is refused, naming the root.
+///
+/// A store of another format version is refused naming carillon and the
+/// version it reads (see [`PimdirFormatRefusal`]), coded as io-pimdir
+/// codes it.
 fn open(config: &PimdirConfig) -> Result<PimdirReader> {
     let root = &config.root;
 
     PimdirReader::open(root)
+        .map_err(refusal)
         .with_context(|| format!("Cannot open pimdir store at {}", root.display()))
+}
+
+/// A failure to open the store, a store of another format version coded
+/// with the message naming carillon, any other kept as io-pimdir's.
+fn refusal(err: PimdirError) -> Error {
+    let PimdirError::Version { found } = &err else {
+        return Error::new(err);
+    };
+
+    let message = PimdirFormatRefusal {
+        found: found.as_deref(),
+        own: FORMAT_VERSION,
+        program: PROGRAM,
+    }
+    .to_string();
+
+    match ErrorCode::of_pimdir(&err) {
+        Some(code) => CodedError::new(code, message).into(),
+        None => Error::new(err),
+    }
 }
 
 /// The code of a store failure in an error chain, as io-pimdir names it
