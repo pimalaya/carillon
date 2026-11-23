@@ -40,8 +40,9 @@
 //! configuration block, learning about changes its own way and reporting
 //! them in the one vocabulary event defines. How a change is learned is
 //! the protocol crate's; what to do about it is here. poll holds the sleep
-//! every polled backend waits on and the retry of a failed round on a
-//! fresh connection, read the read every coroutine pump makes over a
+//! every polled backend and the reconnect backoff wait on, which a
+//! shutdown ends at once, and the retry of a failed round on a fresh
+//! connection, read the read every coroutine pump makes over a
 //! socket, and picture what a REST change feed (a Graph delta link, a
 //! Google sync token) is reconciled against.
 //!
@@ -101,7 +102,6 @@ mod msgraph;
 mod picture;
 #[cfg(feature = "pimdir")]
 mod pimdir;
-#[cfg(any(feature = "jmap", feature = "maildir", dav, feature = "pimdir", api))]
 mod poll;
 #[cfg(any(feature = "imap", feature = "jmap", dav))]
 mod read;

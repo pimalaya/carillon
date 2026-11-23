@@ -764,7 +764,7 @@ mod tests {
                 }
             }
 
-            shutdown.store(true, Ordering::SeqCst);
+            poll::stop(&shutdown);
             watch.join().unwrap().unwrap();
             seen
         });
@@ -791,14 +791,14 @@ mod tests {
             // Ends the test should the alarm never fire.
             scope.spawn(|| {
                 if poll::sleep(Duration::from_secs(30), &shutdown) {
-                    shutdown.store(true, Ordering::SeqCst);
+                    poll::stop(&shutdown);
                     alarms.update(|_| ());
                 }
             });
 
             alarm::run(&alarms, timer, &shutdown, |firing| {
                 fired.push((firing.uid.clone(), firing.trigger));
-                shutdown.store(true, Ordering::SeqCst);
+                poll::stop(&shutdown);
                 alarms.update(|_| ());
             });
 
@@ -838,7 +838,7 @@ mod tests {
 
             scope.spawn(|| {
                 if poll::sleep(Duration::from_secs(5), &shutdown) {
-                    shutdown.store(true, Ordering::SeqCst);
+                    poll::stop(&shutdown);
                     alarms.update(|_| ());
                 }
             });

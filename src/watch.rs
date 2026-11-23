@@ -71,6 +71,7 @@ use crate::{
     error::{self, ErrorCode},
     event::{ItemSummary, WatchEvent},
     hook::command::HookCommands,
+    poll,
     stream::{WatchEvents, WatchMethod, WatchOutput, WatchStop},
 };
 #[cfg(dav)]
@@ -97,8 +98,6 @@ const INITIAL_BACKOFF: Duration = Duration::from_secs(2);
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
 /// A session that lived at least this long resets the backoff.
 const HEALTHY_THRESHOLD: Duration = Duration::from_secs(60);
-/// Backoff sleep granularity, so a shutdown is noticed promptly.
-const BACKOFF_STEP: Duration = Duration::from_millis(200);
 /// How often the command reads the signal while no event comes.
 const SIGNAL_STEP: Duration = Duration::from_millis(100);
 /// How long the hook commands still running at a shutdown are given to end
@@ -174,7 +173,7 @@ impl WatchCommand {
             if !stopping && (signal.is_requested() || printed.is_err()) {
                 stopping = true;
                 info!("shutting down the watcher");
-                shutdown.store(true, Ordering::SeqCst);
+                poll::stop(&shutdown);
 
                 // NOTE: rung after the flag is set, so a woken alarm
                 // thread reads it and stops.
@@ -830,22 +829,14 @@ fn resolve_added(
 
 /// Sleeps the current backoff, then doubles it toward the ceiling.
 ///
-/// The sleep runs in small steps so a shutdown is noticed promptly, and
-/// returns false as soon as one is requested.
+/// The sleep is [`poll::sleep`], which a shutdown ends: it returns false
+/// as soon as one is requested.
 fn sleep_backoff(backoff: &mut Duration, shutdown: &Arc<AtomicBool>) -> bool {
-    let mut left = *backoff;
-
-    while left > Duration::ZERO {
-        if shutdown.load(Ordering::SeqCst) {
-            return false;
-        }
-
-        let step = left.min(BACKOFF_STEP);
-        thread::sleep(step);
-        left -= step;
+    if !poll::sleep(*backoff, shutdown) {
+        return false;
     }
 
     *backoff = (*backoff * 2).min(MAX_BACKOFF);
 
-    !shutdown.load(Ordering::SeqCst)
+    true
 }

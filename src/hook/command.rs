@@ -17,7 +17,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     io, mem,
     process::{Child, Command, ExitStatus, Stdio},
-    sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
+    sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
     thread,
     time::{Duration, Instant},
 };
@@ -28,7 +28,7 @@ use pimalaya_config::command::Timeout;
 
 use crate::hook::HookJob;
 
-/// How often the reaper looks at the running commands.
+/// How often the reaper looks at the running commands, while one runs.
 const REAP_STEP: Duration = Duration::from_millis(100);
 /// How many firings of one command may wait for it to end.
 const QUEUE: usize = 1000;
@@ -39,10 +39,21 @@ const QUEUE: usize = 1000;
 /// is dropped.
 #[derive(Clone)]
 pub struct HookCommands {
-    shared: Arc<Mutex<State>>,
+    shared: Arc<Shared>,
+    /// Dropped with the last clone, ending the reaper.
+    _owner: Arc<Owner>,
 }
 
 /// What the reaper and the firings share.
+#[derive(Default)]
+struct Shared {
+    state: Mutex<State>,
+    /// Rung when a command starts or the last [`HookCommands`] is
+    /// dropped, ending the reaper's wait while no command runs.
+    ring: Condvar,
+}
+
+/// The commands running and waiting.
 #[derive(Default)]
 struct State {
     /// The command running under each key, with the runs waiting on it.
@@ -50,6 +61,25 @@ struct State {
     /// Whether a shutdown was requested, after which nothing is spawned
     /// and nothing reported.
     stopping: bool,
+    /// Whether the last [`HookCommands`] was dropped, ending the reaper.
+    closed: bool,
+}
+
+/// Held by every clone of a [`HookCommands`], closing the shared state
+/// once the last one is dropped.
+struct Owner(Arc<Shared>);
+
+impl Drop for Owner {
+    fn drop(&mut self) {
+        self.0.lock().closed = true;
+        self.0.ring.notify_all();
+    }
+}
+
+impl Shared {
+    fn lock(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 /// A command running, and the runs waiting for it to end.
@@ -75,14 +105,17 @@ type Report = Box<dyn Fn(Error) + Send>;
 impl HookCommands {
     /// Starts the reaper, no command running.
     pub fn start() -> Result<Self> {
-        let shared = Arc::new(Mutex::new(State::default()));
-        let reaped = Arc::downgrade(&shared);
+        let shared = Arc::new(Shared::default());
+        let reaped = shared.clone();
 
         thread::Builder::new()
             .name(String::from("hooks"))
-            .spawn(move || reap(reaped))?;
+            .spawn(move || reap(&reaped))?;
 
-        Ok(Self { shared })
+        Ok(Self {
+            _owner: Arc::new(Owner(shared.clone())),
+            shared,
+        })
     }
 
     /// Runs `job` under `key`, or once the runs before it under that key
@@ -101,6 +134,7 @@ impl HookCommands {
                 key,
                 VecDeque::from([(job, Box::new(report) as Report)]),
             );
+            self.shared.ring.notify_all();
             return;
         };
 
@@ -157,7 +191,7 @@ impl HookCommands {
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.shared.lock().unwrap_or_else(PoisonError::into_inner)
+        self.shared.lock()
     }
 }
 
@@ -189,9 +223,24 @@ impl Running {
 
 /// Reaps the commands that ended, starting the run waiting first on
 /// each, until the last [`HookCommands`] is dropped.
-fn reap(shared: Weak<Mutex<State>>) {
-    while let Some(shared) = shared.upgrade() {
-        let mut state = shared.lock().unwrap_or_else(PoisonError::into_inner);
+///
+/// While no command runs it waits on the ring; while one runs it looks
+/// every [`REAP_STEP`].
+fn reap(shared: &Shared) {
+    loop {
+        let mut state = shared.lock();
+
+        while state.running.is_empty() && !state.closed {
+            state = shared
+                .ring
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+
+        if state.closed {
+            return;
+        }
+
         let mut ended = Vec::new();
 
         for (key, running) in state.running.iter_mut() {
@@ -226,7 +275,6 @@ fn reap(shared: Weak<Mutex<State>>) {
         }
 
         drop(state);
-        drop(shared);
         thread::sleep(REAP_STEP);
     }
 }

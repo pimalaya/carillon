@@ -1,39 +1,58 @@
 //! # Poll
 //!
-//! The interruptible sleep every polled backend waits on between two
-//! rounds, and the retry of a round on a fresh connection.
+//! The interruptible sleep every polled backend and the reconnect backoff
+//! wait on, which a requested shutdown ends at once, and the retry of a
+//! round on a fresh connection.
 
 use std::{
     sync::{
-        Arc,
+        Arc, Condvar, Mutex, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Result;
 use log::debug;
 
-/// How long a sleep runs at a time, so a shutdown is noticed promptly.
-const POLL_STEP: Duration = Duration::from_millis(200);
+/// Held to read a shutdown flag before waiting on [`RING`], and to ring
+/// it, so a ring never falls between the read and the wait.
+static RING_LOCK: Mutex<()> = Mutex::new(());
 
-/// Sleeps `total` in small steps, returning false as soon as a shutdown
-/// is requested.
+/// Rung by [`stop`], waking every sleep to read its shutdown flag again.
+static RING: Condvar = Condvar::new();
+
+/// Sleeps `total`, returning false as soon as a shutdown is requested
+/// through [`stop`].
 pub fn sleep(total: Duration, shutdown: &Arc<AtomicBool>) -> bool {
-    let mut left = total;
+    let deadline = Instant::now() + total;
+    let mut guard = RING_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
 
-    while left > Duration::ZERO {
+    loop {
         if shutdown.load(Ordering::SeqCst) {
             return false;
         }
 
-        let step = left.min(POLL_STEP);
-        thread::sleep(step);
-        left -= step;
-    }
+        let now = Instant::now();
 
-    !shutdown.load(Ordering::SeqCst)
+        if now >= deadline {
+            return true;
+        }
+
+        guard = RING
+            .wait_timeout(guard, deadline - now)
+            .unwrap_or_else(PoisonError::into_inner)
+            .0;
+    }
+}
+
+/// Requests a shutdown: sets `shutdown`, then wakes every sleep so the
+/// ones reading it end.
+pub fn stop(shutdown: &AtomicBool) {
+    shutdown.store(true, Ordering::SeqCst);
+
+    let _guard = RING_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+    RING.notify_all();
 }
 
 /// Runs `round` on `client`, and once more on a fresh client from `open`
