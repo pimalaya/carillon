@@ -40,12 +40,12 @@ Every build: `nix develop --command`, `CARGO_TARGET_DIR=~/code/pimalaya/.lanes/c
 
 - [x] I1 CHANGELOG.md Unreleased: **BREAKING** Changed "Bumped io-pimdir to 0.20.0 (storage-draft-17)", reading neverest's draft-17 stores, refusing storage-draft-16 and earlier (`store-version`) naming carillon, the start-over note (neverest syncs a new store once the old is moved aside; carillon reads it on its next poll; restart a carillon older than this release); Fixed lines for B2, B5, B6; Changed lines for P1, P2; Added `property-invalid` (D4).
 - [x] I2 README.md: one line under the pimdir backend for the start-over note. Gate: `sh cairn/verify.sh`.
-- [ ] I3 Fold delta.md into cairn/spec/daemon.md (:207-219, :540-552, :610-622, :651-684); log cairn/log/<date>-follows-storage-draft-17.md; status `landed`, folder to changes/archive/. Gate: `sh cairn/verify.sh`.
+- [x] I3 Fold delta.md into cairn/spec/daemon.md (:207-219, :540-552, :610-622, :651-684); log cairn/log/<date>-follows-storage-draft-17.md; status `landed`, folder to changes/archive/. Gate: `sh cairn/verify.sh`.
 
 ## J. Tests
 
 - [x] J1 Offline: suite, A2's matrix, `cargo fmt --check`. Gate: all pass.
-- [ ] J2 Cross-app, under the `servers` lock: tests/stalwart.sh, neverest at the same io-pimdir revision syncs its CalDAV calendar into a scratch store, carillon (`pimdir.root` there) fires an event's alarm; then the store is moved aside and synced anew while carillon runs: the next poll reads it, nothing fires twice. Gate: the `alarm-fired` lines, logged in journal.md. No queue row exists to drain (carillon writes none).
+- [x] J2 Cross-app, under the `servers` lock: tests/stalwart.sh, neverest at the same io-pimdir revision syncs its CalDAV calendar into a scratch store, carillon (`pimdir.root` there) fires an event's alarm; then the store is moved aside and synced anew while carillon runs: the next poll reads it, nothing fires twice. Gate: the `alarm-fired` lines, logged in journal.md. No queue row exists to drain (carillon writes none).
 - [x] J3 Live: none; no live suite reaches io-pimdir.
 
 ## K. Release readiness (owner)
@@ -56,4 +56,4 @@ Every build: `nix develop --command`, `CARGO_TARGET_DIR=~/code/pimalaya/.lanes/c
 
 ## L. Report
 
-- [ ] L1 report.md: what landed, the measures before and after, what is parked, what waits on the owner.
+- [x] L1 report.md: what landed, the measures before and after, what is parked, what waits on the owner.

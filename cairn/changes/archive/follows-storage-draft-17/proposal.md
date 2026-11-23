@@ -1,7 +1,7 @@
 ---
 cairn: change
 id: follows-storage-draft-17
-status: active
+status: landed
 created: 2026-11-23
 ---
 
