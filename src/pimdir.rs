@@ -7,6 +7,7 @@
 //! store's owner keeps it in sync; this backend only fires its alarms.
 
 use std::{
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -59,6 +60,10 @@ enum Moved {
     Gone(String),
 }
 
+/// The object hash of each item the alarms were read from, by its public
+/// id: a calendar listed again reads only the bodies it lacks.
+type Known = HashMap<String, String>;
+
 /// Watches the configured calendar until `shutdown` is set, keeping
 /// `alarms` current.
 ///
@@ -76,7 +81,14 @@ pub fn watch(
 ) -> Result<()> {
     let interval = config.interval().unwrap_or(POLL_INTERVAL);
     let account = config.account.as_deref();
-    let mut cursor = load(&open(config)?, &config.calendar, account, alarms)?;
+    let mut known = Known::new();
+    let mut cursor = load(
+        &open(config)?,
+        &config.calendar,
+        account,
+        alarms,
+        &mut known,
+    )?;
     on_open();
 
     while !shutdown.load(Ordering::SeqCst) {
@@ -85,7 +97,14 @@ pub fn watch(
         }
 
         let reader = open(config)?;
-        cursor = follow(&reader, &config.calendar, account, cursor, alarms)?;
+        cursor = follow(
+            &reader,
+            &config.calendar,
+            account,
+            cursor,
+            alarms,
+            &mut known,
+        )?;
     }
 
     Ok(())
@@ -160,20 +179,80 @@ fn check_calendar(reader: &PimdirReader, calendar: &str, account: Option<&str>) 
     Ok(())
 }
 
-/// Reads every item of the calendar, and answers the cursor it was read
-/// at: read before the items, so a change landing meanwhile is folded
-/// again rather than skipped.
+/// Reads every item of the calendar into a new book, and answers the
+/// cursor it was read at: read before the items, so a change landing
+/// meanwhile is folded again rather than skipped.
 fn load(
     reader: &PimdirReader,
     calendar: &str,
     account: Option<&str>,
     alarms: &AlarmShared,
+    known: &mut Known,
 ) -> Result<PimdirChangeCursor> {
     let cursor = reader.change_cursor()?;
     check_calendar(reader, calendar, account)?;
 
     let blobs = reader.blobs();
     let mut book = AlarmBook::new();
+    known.clear();
+
+    each_item(reader, calendar, |item| match body(&blobs, item) {
+        Moved::Read { key, etag, body } => {
+            book.read(&key, &key, etag.as_deref(), &body);
+            known.extend(etag.map(|etag| (key, etag)));
+        }
+        Moved::Gone(key) => book.forget(&key),
+    })?;
+
+    debug!("read {} pimdir items holding an alarm", book.len());
+    alarms.replace(book);
+
+    Ok(cursor)
+}
+
+/// Lists the calendar again, reads the items new or of another body than
+/// `known` holds, forgets the ones gone, and answers the cursor it was
+/// listed at.
+fn reread(
+    reader: &PimdirReader,
+    calendar: &str,
+    account: Option<&str>,
+    alarms: &AlarmShared,
+    known: &mut Known,
+) -> Result<PimdirChangeCursor> {
+    let cursor = reader.change_cursor()?;
+    check_calendar(reader, calendar, account)?;
+
+    let blobs = reader.blobs();
+    let mut listed = HashSet::new();
+    let mut moved = Vec::new();
+
+    each_item(reader, calendar, |item| {
+        let key = item.seq.to_string();
+
+        if !is_known(known, &key, item) {
+            moved.push(body(&blobs, item));
+        }
+
+        listed.insert(key);
+    })?;
+
+    for key in known.keys().filter(|key| !listed.contains(*key)) {
+        moved.push(Moved::Gone(key.clone()));
+    }
+
+    debug!("{} pimdir items moved since the last read", moved.len());
+    apply(alarms, known, moved);
+
+    Ok(cursor)
+}
+
+/// Calls `read` on every item of the calendar, page by page.
+fn each_item(
+    reader: &PimdirReader,
+    calendar: &str,
+    mut read: impl FnMut(&PimdirItem),
+) -> Result<()> {
     let mut after: Option<String> = None;
 
     loop {
@@ -186,38 +265,63 @@ fn load(
         };
 
         after = Some(last.link_id.0.clone());
-        let full = page.len() == PAGE;
+        page.iter().for_each(&mut read);
 
-        for item in &page {
-            match body(&blobs, item) {
-                Moved::Read { key, etag, body } => book.read(&key, &key, etag.as_deref(), &body),
-                Moved::Gone(key) => book.forget(&key),
-            }
-        }
-
-        if !full {
+        if page.len() < PAGE {
             break;
         }
     }
 
-    debug!("read {} pimdir items holding an alarm", book.len());
-    alarms.replace(book);
+    Ok(())
+}
 
-    Ok(cursor)
+/// Whether `item` holds the body the alarms were read from.
+fn is_known(known: &Known, key: &str, item: &PimdirItem) -> bool {
+    item.object
+        .as_ref()
+        .is_some_and(|hash| known.get(key) == Some(&hash.0))
+}
+
+/// Applies what moved to `alarms`, and records it in `known`.
+fn apply(alarms: &AlarmShared, known: &mut Known, moved: Vec<Moved>) {
+    if moved.is_empty() {
+        return;
+    }
+
+    for moved in &moved {
+        match moved {
+            Moved::Read { key, etag, .. } => match etag {
+                Some(etag) => known.insert(key.clone(), etag.clone()),
+                None => known.remove(key),
+            },
+            Moved::Gone(key) => known.remove(key),
+        };
+    }
+
+    alarms.update(|book| {
+        for moved in moved {
+            match moved {
+                Moved::Read { key, etag, body } => book.read(&key, &key, etag.as_deref(), &body),
+                Moved::Gone(key) => book.forget(&key),
+            }
+        }
+    });
 }
 
 /// Folds what moved in the calendar since `cursor`, and answers the
 /// cursor to look from next.
 ///
-/// A reset of the store, a purge or the calendar itself moving reads the
-/// calendar whole again; otherwise each item stamped above the cursor is
-/// read again, or forgotten when deleted or retained.
+/// A reset of the store, a purge or the calendar itself moving lists the
+/// calendar again, reading only the bodies `known` lacks; otherwise each
+/// item stamped above the cursor is read again unless its body is known,
+/// or forgotten when deleted or retained.
 fn follow(
     reader: &PimdirReader,
     calendar: &str,
     account: Option<&str>,
     cursor: PimdirChangeCursor,
     alarms: &AlarmShared,
+    known: &mut Known,
 ) -> Result<PimdirChangeCursor> {
     let now = reader.change_cursor()?;
 
@@ -236,8 +340,8 @@ fn follow(
     };
 
     if reset || renamed()? {
-        debug!("pimdir store reset or calendar moved, reading it again");
-        return load(reader, calendar, account, alarms);
+        debug!("pimdir store reset or calendar moved, listing it again");
+        return reread(reader, calendar, account, alarms, known);
     }
 
     let blobs = reader.blobs();
@@ -256,15 +360,17 @@ fn follow(
 
         for change in page.iter().filter(|change| change.collection == calendar) {
             trace!("pimdir item {} moved", change.seq);
+            let key = change.seq.to_string();
 
             if change.deleted || change.retained_at.is_some() {
-                moved.push(Moved::Gone(change.seq.to_string()));
+                moved.push(Moved::Gone(key));
                 continue;
             }
 
             match reader.get_item(calendar, change.seq)? {
+                Some(item) if is_known(known, &key, &item) => (),
                 Some(item) => moved.push(body(&blobs, &item)),
-                None => moved.push(Moved::Gone(change.seq.to_string())),
+                None => moved.push(Moved::Gone(key)),
             }
         }
 
@@ -273,18 +379,7 @@ fn follow(
         }
     }
 
-    if !moved.is_empty() {
-        alarms.update(|book| {
-            for moved in moved {
-                match moved {
-                    Moved::Read { key, etag, body } => {
-                        book.read(&key, &key, etag.as_deref(), &body)
-                    }
-                    Moved::Gone(key) => book.forget(&key),
-                }
-            }
-        });
-    }
+    apply(alarms, known, moved);
 
     Ok(now)
 }
@@ -507,7 +602,8 @@ mod tests {
         let reader = PimdirReader::open(dir.path()).unwrap();
         let timer = CeichasTimer::new(Default::default()).unwrap();
         let alarms = AlarmShared::new(timer.waker());
-        let cursor = load(&reader, CAL, None, &alarms).unwrap();
+        let mut known = Known::new();
+        let cursor = load(&reader, CAL, None, &alarms, &mut known).unwrap();
         let id = seq(dir.path(), "standup").to_string();
 
         assert_eq!(
@@ -524,7 +620,7 @@ mod tests {
                 resolves: None,
             }
         });
-        let cursor = follow(&reader, CAL, None, cursor, &alarms).unwrap();
+        let cursor = follow(&reader, CAL, None, cursor, &alarms, &mut known).unwrap();
 
         assert_eq!(
             vec![(id, at("09:45:00"))],
@@ -545,9 +641,55 @@ mod tests {
             .unwrap();
         drop(producer);
         drain(dir.path());
-        follow(&reader, CAL, None, cursor, &alarms).unwrap();
+        follow(&reader, CAL, None, cursor, &alarms, &mut known).unwrap();
 
         assert!(alarms.triggers(at("00:00:00"), at("23:00:00")).is_empty());
+    }
+
+    /// A purge in another collection reads the calendar again, but only
+    /// what moved in it: a body whose hash the watch knows is not read, so
+    /// its file gone, its alarm stays.
+    #[test]
+    fn a_purge_elsewhere_reads_no_body_of_an_item_unchanged() {
+        let dir = scratch();
+        add(dir.path(), CAL, &event("standup", "090000"));
+        add(dir.path(), "mail", &event("quoted", "090000"));
+
+        let timer = CeichasTimer::new(Default::default()).unwrap();
+        let alarms = AlarmShared::new(timer.waker());
+        let mut known = Known::new();
+        let reader = PimdirReader::open(dir.path()).unwrap();
+        let cursor = load(&reader, CAL, None, &alarms, &mut known).unwrap();
+        let id = seq(dir.path(), "standup").to_string();
+        let alarmed = vec![(id, at("08:45:00"))];
+        assert_eq!(alarmed, alarms.triggers(at("00:00:00"), at("23:00:00")));
+
+        let item = reader.get_item(CAL, seq(dir.path(), "standup")).unwrap();
+        let hash = item.unwrap().object.unwrap();
+        std::fs::remove_file(reader.blobs().path(&hash).unwrap()).unwrap();
+
+        let mail = reader.list_items("mail", None, 1).unwrap()[0].seq;
+        let mut producer = PimdirProducer::open(dir.path(), "test").unwrap();
+        let remove = PimdirAction::Remove {
+            seq: mail,
+            if_match: None,
+            resolves: None,
+        };
+        producer.enqueue("mail", &remove, None).unwrap();
+        drop(producer);
+        drain(dir.path());
+        assert!(
+            PimdirStore::open(dir.path())
+                .unwrap()
+                .purge("mail", mail)
+                .unwrap()
+        );
+
+        let reader = PimdirReader::open(dir.path()).unwrap();
+        assert_ne!(cursor.purges, reader.change_cursor().unwrap().purges);
+        follow(&reader, CAL, None, cursor, &alarms, &mut known).unwrap();
+
+        assert_eq!(alarmed, alarms.triggers(at("00:00:00"), at("23:00:00")));
     }
 
     /// An event of `uid` whose one `-PT15M` display alarm triggers at
