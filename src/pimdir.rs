@@ -64,16 +64,19 @@ enum Moved {
 ///
 /// `on_open` is called once the session is up and its collection read,
 /// right before the first wait.
+///
+/// The store is opened again at each poll: a reader keeps the file it
+/// opened, so a store moved aside and synced anew under the root is seen
+/// only by a new reader, its other `store_id` reading as a reset.
 pub fn watch(
     config: &PimdirConfig,
     shutdown: &Arc<AtomicBool>,
     alarms: &AlarmShared,
     on_open: impl FnOnce(),
 ) -> Result<()> {
-    let reader = open(config)?;
     let interval = config.interval().unwrap_or(POLL_INTERVAL);
     let account = config.account.as_deref();
-    let mut cursor = load(&reader, &config.calendar, account, alarms)?;
+    let mut cursor = load(&open(config)?, &config.calendar, account, alarms)?;
     on_open();
 
     while !shutdown.load(Ordering::SeqCst) {
@@ -81,6 +84,7 @@ pub fn watch(
             break;
         }
 
+        let reader = open(config)?;
         cursor = follow(&reader, &config.calendar, account, cursor, alarms)?;
     }
 
@@ -371,10 +375,16 @@ mod tests {
     /// A scratch store holding a calendar and a mail collection.
     fn scratch() -> TempDir {
         let dir = tempfile::tempdir().unwrap();
-        let store = PimdirStore::open(dir.path()).unwrap();
+        create(dir.path());
+        dir
+    }
+
+    /// Creates a store at `root` holding a calendar and a mail collection.
+    fn create(root: &Path) {
+        std::fs::create_dir_all(root).unwrap();
+        let store = PimdirStore::open(root).unwrap();
         store.ensure_collection(CAL, "text/calendar").unwrap();
         store.ensure_collection("mail", "message/rfc822").unwrap();
-        dir
     }
 
     fn config(dir: &Path, calendar: &str) -> PimdirConfig {
@@ -551,6 +561,76 @@ mod tests {
         )
     }
 
+    /// A store moved aside and synced anew under the same root, while the
+    /// watch runs, is read on the next poll.
+    #[cfg(unix)]
+    #[test]
+    fn a_store_synced_anew_under_the_watch_is_read() {
+        use crate::config::{PollWatchConfig, pimdir::PimdirWatchConfig};
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("store");
+        let now = Timestamp::now().as_second();
+        let (old, new) = (now + 3600, now + 7200);
+
+        create(&root);
+        add(&root, CAL, &event_alarming_at("standup", old));
+
+        let mut config = config(&root, CAL);
+        config.watch = Some(PimdirWatchConfig::Poll(PollWatchConfig {
+            interval: Some(Duration::from_millis(100)),
+        }));
+
+        let timer = CeichasTimer::new(Default::default()).unwrap();
+        let alarms = AlarmShared::new(timer.waker());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let opened = AtomicBool::new(false);
+        let has = |trigger: i64| {
+            alarms
+                .triggers(now, now + 10_000)
+                .iter()
+                .any(|(_, at)| *at == trigger)
+        };
+
+        let seen = thread::scope(|scope| {
+            let watch = scope.spawn(|| {
+                watch(&config, &shutdown, &alarms, || {
+                    opened.store(true, Ordering::SeqCst)
+                })
+            });
+
+            while !opened.load(Ordering::SeqCst) {
+                assert!(!watch.is_finished(), "the watch ended before it opened");
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert!(has(old));
+
+            let anew = dir.path().join("anew");
+            create(&anew);
+            add(&anew, CAL, &event_alarming_at("standup", new));
+            std::fs::rename(&root, dir.path().join("aside")).unwrap();
+            std::fs::rename(&anew, &root).unwrap();
+
+            let mut seen = false;
+
+            for _ in 0..20 {
+                thread::sleep(Duration::from_millis(100));
+
+                if has(new) {
+                    seen = true;
+                    break;
+                }
+            }
+
+            shutdown.store(true, Ordering::SeqCst);
+            watch.join().unwrap().unwrap();
+            seen
+        });
+
+        assert!(seen, "{:?}", alarms.triggers(now, now + 10_000));
+        assert!(!has(old));
+    }
+
     #[test]
     fn a_store_of_the_current_draft_is_watched_and_its_alarm_fires() {
         let dir = scratch();
@@ -583,6 +663,61 @@ mod tests {
             watch.join().unwrap().unwrap();
         });
 
+        assert_eq!(vec![(String::from("standup"), trigger)], fired);
+    }
+
+    /// A store synced anew right after a firing numbers the event again:
+    /// read under its new seq, the firing does not fire twice.
+    #[cfg(unix)]
+    #[test]
+    fn a_firing_never_fires_again_once_its_store_is_synced_anew() {
+        use crate::config::{PollWatchConfig, pimdir::PimdirWatchConfig};
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("store");
+        let trigger = Timestamp::now().as_second() + 2;
+        let body = event_alarming_at("standup", trigger);
+
+        create(&root);
+        add(&root, CAL, &body);
+
+        let mut config = config(&root, CAL);
+        config.watch = Some(PimdirWatchConfig::Poll(PollWatchConfig {
+            interval: Some(Duration::from_millis(100)),
+        }));
+
+        let timer = CeichasTimer::new(Default::default()).unwrap();
+        let alarms = AlarmShared::new(timer.waker());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut fired = Vec::new();
+
+        thread::scope(|scope| {
+            let watch = scope.spawn(|| watch(&config, &shutdown, &alarms, || ()));
+
+            scope.spawn(|| {
+                if poll::sleep(Duration::from_secs(5), &shutdown) {
+                    shutdown.store(true, Ordering::SeqCst);
+                    alarms.update(|_| ());
+                }
+            });
+
+            alarm::run(&alarms, timer, &shutdown, |firing| {
+                fired.push((firing.uid.clone(), firing.trigger));
+
+                if fired.len() == 1 {
+                    let anew = dir.path().join("anew");
+                    create(&anew);
+                    add(&anew, CAL, &event_alarming_at("other", trigger + 3600));
+                    add(&anew, CAL, &body);
+                    std::fs::rename(&root, dir.path().join("aside")).unwrap();
+                    std::fs::rename(&anew, &root).unwrap();
+                }
+            });
+
+            watch.join().unwrap().unwrap();
+        });
+
+        assert_eq!(seq(&root, "standup"), 2);
         assert_eq!(vec![(String::from("standup"), trigger)], fired);
     }
 }

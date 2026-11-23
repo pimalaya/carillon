@@ -87,13 +87,17 @@ pub struct AlarmFiring {
 impl AlarmFiring {
     /// What tells this firing apart from every other: an edit moving the
     /// alarm makes a new one, the trigger being part of it.
+    ///
+    /// The backend's item id is left out, a store synced anew numbering
+    /// its items again: two items of one calendar holding the same `UID`
+    /// fire one firing of an alarm instant once.
     fn key(&self) -> String {
         let over = self.over.as_deref().unwrap_or_default();
         let occurrence = self.occurrence.as_deref().unwrap_or_default();
 
         format!(
-            "{}/{}/{over}/{}/{occurrence}/{}@{}",
-            self.id, self.uid, self.alarm, self.repeat, self.trigger
+            "{}/{over}/{}/{occurrence}/{}@{}",
+            self.uid, self.alarm, self.repeat, self.trigger
         )
     }
 }
@@ -854,6 +858,26 @@ mod tests {
         queue.pass(&book, true, at("08:00:00"));
         assert_eq!(1, queue.pass(&book, false, at("08:45:00")).due.len());
         assert!(queue.pass(&book, true, at("08:46:00")).due.is_empty());
+    }
+
+    /// A store synced anew numbers its items again: the same body read
+    /// under another key is the same firing, which never fires twice.
+    #[test]
+    fn a_firing_read_again_under_another_key_never_fires_twice() {
+        let body = event("standup", "090000", "", &[("DISPLAY", "-PT15M")]);
+        let mut queue = AlarmQueue::new(at("08:00:00"));
+
+        queue.pass(&book(&[("1", &body)]), true, at("08:00:00"));
+        assert_eq!(
+            1,
+            queue
+                .pass(&book(&[("1", &body)]), false, at("08:45:00"))
+                .due
+                .len()
+        );
+
+        let pass = queue.pass(&book(&[("2", &body)]), true, at("08:46:00"));
+        assert!(pass.due.is_empty(), "{:?}", pass.due);
     }
 
     #[test]
