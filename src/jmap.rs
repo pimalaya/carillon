@@ -34,6 +34,7 @@ use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState},
     rfc8620::{
         changes::JmapChangesOutput,
+        error::JmapMethodError,
         event_source::{
             JmapCloseAfter, JmapStateChange,
             subscribe::{
@@ -56,7 +57,7 @@ use io_jmap::{
         query::{JmapContactCardFilter, JmapContactCardQueryOptions},
     },
 };
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use pimalaya_config::secret::SecretResolver;
 use pimalaya_stream::{retry::Retry, stream::Stream};
 use secrecy::{ExposeSecret, SecretString};
@@ -300,58 +301,75 @@ impl Watched {
     /// The state is read before the listing, so an item moving meanwhile is
     /// reported by the first round rather than lost between the two.
     fn arm(client: &mut JmapClientStd, domain: WatchDomain, name: &str) -> Result<Self> {
-        let (id, known, state) = match domain {
+        let id = match domain {
+            WatchDomain::Message => resolve_mailbox(client, name)?,
+            WatchDomain::Card => resolve_addressbook(client, name)?,
+            WatchDomain::Event => resolve_calendar(client, name)?,
+            WatchDomain::Task => unreachable!("JMAP has no task type"),
+        };
+
+        let mut watched = Self {
+            domain,
+            id,
+            known: Known::new(),
+            state: String::new(),
+        };
+
+        watched.state = watched.current_state(client)?;
+        watched.known = watched.list(client)?;
+
+        debug!(
+            "watching jmap {} `{name}` with {} items",
+            domain.collection_name(),
+            watched.known.len()
+        );
+
+        Ok(watched)
+    }
+
+    /// Reads the state this domain stands at, through a `/get` naming no
+    /// id.
+    fn current_state(&self, client: &mut JmapClientStd) -> Result<String> {
+        Ok(match self.domain {
             WatchDomain::Message => {
-                let id = resolve_mailbox(client, name)?;
-                let state = client
+                client
                     .email_get(Vec::new(), get_options(false))
-                    .context("cannot read the initial email state")?
-                    .new_state;
-                let known = baseline_mailbox(client, &id)?;
-                (id, known, state)
+                    .context("cannot read the email state")?
+                    .new_state
             }
             WatchDomain::Card => {
-                let id = resolve_addressbook(client, name)?;
                 let opts = JmapContactCardGetOptions {
                     ids: Some(Vec::new()),
                     properties: Some(vec![String::from("id")]),
                 };
-                let state = client
+
+                client
                     .contact_card_get(opts)
-                    .context("cannot read the initial contact state")?
-                    .new_state;
-                let known = baseline_addressbook(client, &id)?;
-                (id, known, state)
+                    .context("cannot read the contact state")?
+                    .new_state
             }
-            WatchDomain::Event => {
-                let id = resolve_calendar(client, name)?;
+            WatchDomain::Event | WatchDomain::Task => {
                 let opts = JmapCalendarEventGetOptions {
                     ids: Some(Vec::new()),
                     properties: Some(vec![String::from("id")]),
                     ..Default::default()
                 };
-                let state = client
+
+                client
                     .calendar_event_get(opts)
-                    .context("cannot read the initial event state")?
-                    .new_state;
-                let known = baseline_calendar(client, &id)?;
-                (id, known, state)
+                    .context("cannot read the event state")?
+                    .new_state
             }
-            WatchDomain::Task => unreachable!("JMAP has no task type"),
-        };
-
-        debug!(
-            "watching jmap {} `{name}` with {} items",
-            domain.collection_name(),
-            known.len()
-        );
-
-        Ok(Self {
-            domain,
-            id,
-            known,
-            state,
         })
+    }
+
+    /// Lists what the collection holds.
+    fn list(&self, client: &mut JmapClientStd) -> Result<Known> {
+        match self.domain {
+            WatchDomain::Message => baseline_mailbox(client, &self.id),
+            WatchDomain::Card => baseline_addressbook(client, &self.id),
+            WatchDomain::Event | WatchDomain::Task => baseline_calendar(client, &self.id),
+        }
     }
 
     /// The JMAP type the event stream subscribes to for this collection.
@@ -374,18 +392,118 @@ impl Watched {
     }
 
     /// Reads what moved since `state`, reports it, and advances `state`.
+    ///
+    /// A server answering part of the changes says so through
+    /// `hasMoreChanges`, the rest waiting behind the state it handed back,
+    /// so it is read now rather than at the next wake-up. Each answer is
+    /// applied whole, so a round failing part way leaves the picture and
+    /// the state at the last answer it completed.
     fn round(
         &mut self,
         client: &mut JmapClientStd,
         resolve: bool,
         on_event: &mut impl FnMut(WatchEvent, Option<ItemSummary>),
     ) -> Result<()> {
-        let changes = self.changes(client)?;
+        loop {
+            let changes = match self.changes(client) {
+                Ok(changes) => changes,
+                Err(err) if cannot_calculate(&err) => {
+                    warn!(
+                        "jmap changes cannot be calculated, listing the collection again: {err:#}"
+                    );
+                    return self.rebase(client, resolve, on_event);
+                }
+                Err(err) => return Err(err),
+            };
 
-        if changes.new_state == self.state {
-            return Ok(());
+            if changes.new_state == self.state {
+                return Ok(());
+            }
+
+            let more = changes.has_more_changes;
+            self.apply(client, changes, resolve, on_event)?;
+
+            if !more {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Lists the collection again and reports what differs from the
+    /// picture, which it replaces: what the server can no longer tell
+    /// through `/changes` (RFC 8620 §5.2).
+    ///
+    /// The state is read before the listing, as when the watch is armed. A
+    /// listing names ids and, for mail, keywords, so an edit to a card or
+    /// an event the gap hides is not told.
+    fn rebase(
+        &mut self,
+        client: &mut JmapClientStd,
+        resolve: bool,
+        on_event: &mut impl FnMut(WatchEvent, Option<ItemSummary>),
+    ) -> Result<()> {
+        let state = self.current_state(client)?;
+        let listed = self.list(client)?;
+        let domain = self.domain;
+        let mut reported = Vec::new();
+        let mut added = Vec::new();
+
+        for (id, keywords) in &listed {
+            let Some(before) = self.known.get(id) else {
+                added.push(id.clone());
+                continue;
+            };
+
+            for flag in keywords.difference(before) {
+                let id = id.clone();
+                let flag = flag.clone();
+                reported.push((WatchEvent::FlagAdded { domain, id, flag }, None));
+            }
+
+            for flag in before.difference(keywords) {
+                let id = id.clone();
+                let flag = flag.clone();
+                reported.push((WatchEvent::FlagRemoved { domain, id, flag }, None));
+            }
         }
 
+        for id in self.known.keys().filter(|id| !listed.contains_key(*id)) {
+            let id = id.clone();
+            reported.push((WatchEvent::ItemRemoved { domain, id }, None));
+        }
+
+        let mut summaries = BTreeMap::new();
+
+        if resolve && domain == WatchDomain::Message && !added.is_empty() {
+            for member in self.fetch(client, added.clone(), true)? {
+                summaries.insert(member.id, member.summary);
+            }
+        }
+
+        for id in added {
+            let summary = summaries.remove(&id).flatten();
+            reported.push((WatchEvent::ItemAdded { domain, id }, summary));
+        }
+
+        self.known = listed;
+        self.state = state;
+
+        for (event, summary) in reported {
+            on_event(event, summary);
+        }
+
+        Ok(())
+    }
+
+    /// Reports one `/changes` answer and advances `state` to the one it
+    /// hands back.
+    fn apply(
+        &mut self,
+        client: &mut JmapClientStd,
+        changes: JmapChangesOutput,
+        resolve: bool,
+        on_event: &mut impl FnMut(WatchEvent, Option<ItemSummary>),
+    ) -> Result<()> {
         trace!("jmap changes: {changes:?}");
 
         let touched: Vec<String> = changes
@@ -719,6 +837,18 @@ pub(crate) fn refusal_code(cause: &(dyn std::error::Error + 'static)) -> Option<
         507 => Some(ErrorCode::QuotaExceeded),
         _ => None,
     }
+}
+
+/// Whether the failure is a server that can no longer tell what moved
+/// since the state it was asked from, which asks for a listing rather
+/// than a retry.
+fn cannot_calculate(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<JmapMethodError>(),
+            Some(JmapMethodError::CannotCalculateChanges { .. })
+        )
+    })
 }
 
 /// Lists what the watched mailbox holds, with each message's keywords.
@@ -1229,6 +1359,12 @@ mod tests {
         /// Whether the event stream sends its head and then nothing, as a
         /// stream gone dead reads.
         silent: bool,
+        /// The oldest Email state `Email/changes` reads from, an older one
+        /// answered `cannotCalculateChanges`, as a server whose history no
+        /// longer reaches that far.
+        floor: u64,
+        /// The most ids one `Email/changes` names, every change when 0.
+        max_changes: u64,
     }
 
     /// A loopback JMAP server answering from `mock`: the session, the inbox,
@@ -1318,6 +1454,11 @@ mod tests {
                 for call in request["methodCalls"].as_array().unwrap() {
                     let name = call[0].as_str().unwrap();
                     let args = mock.call(name, &call[1], &mut ids);
+                    let name = if args.get("type").is_some() {
+                        "error"
+                    } else {
+                        name
+                    };
                     responses.push(serde_json::json!([name, args, call[2]]));
                 }
 
@@ -1395,12 +1536,24 @@ mod tests {
                 "Email/changes" => {
                     let since = args["sinceState"].as_str().unwrap();
                     let since: u64 = since[1..].parse().unwrap();
-                    let created: Vec<_> =
-                        (since + 1..=self.held).map(|i| format!("e{i}")).collect();
+
+                    if since < self.floor {
+                        return serde_json::json!({
+                            "type": "cannotCalculateChanges",
+                            "description": "outdated sinceState",
+                        });
+                    }
+
+                    let end = match self.max_changes {
+                        0 => self.held,
+                        max => (since + max).min(self.held),
+                    };
+                    let created: Vec<_> = (since + 1..=end).map(|i| format!("e{i}")).collect();
 
                     serde_json::json!({
-                        "accountId": "A1", "oldState": format!("s{since}"), "newState": state,
-                        "hasMoreChanges": false, "created": created, "updated": [], "destroyed": [],
+                        "accountId": "A1", "oldState": format!("s{since}"),
+                        "newState": format!("s{end}"), "hasMoreChanges": end < self.held,
+                        "created": created, "updated": [], "destroyed": [],
                     })
                 }
                 _ => serde_json::json!({ "type": "unknownMethod" }),
@@ -1596,5 +1749,66 @@ mod tests {
 
         let news = got.recv_timeout(Duration::from_secs(15)).unwrap();
         assert_eq!(Ok(false), news);
+    }
+
+    #[test]
+    fn changes_it_cannot_calculate_are_read_from_a_listing() {
+        let held = Mock {
+            held: 2,
+            ..Default::default()
+        };
+        let (mut client, config, mock, _dir) = opened(held);
+        let mut watched = [Watched::arm(&mut client, WatchDomain::Message, "INBOX").unwrap()];
+        let shutdown = AtomicBool::new(false);
+        let mut events = Vec::new();
+
+        {
+            let mut mock = mock.lock().unwrap();
+            mock.held = 3;
+            mock.floor = 3;
+        }
+
+        for _ in 0..2 {
+            rounds(
+                &mut client,
+                &config,
+                &mut watched,
+                false,
+                &shutdown,
+                &mut |event, _| events.push(event),
+            )
+            .unwrap();
+        }
+
+        let added = WatchEvent::ItemAdded {
+            domain: WatchDomain::Message,
+            id: String::from("e3"),
+        };
+        assert_eq!(vec![added], events);
+    }
+
+    #[test]
+    fn a_round_reads_every_page_of_changes() {
+        let paged = Mock {
+            held: 1,
+            max_changes: 2,
+            ..Default::default()
+        };
+        let (mut client, _config, mock, _dir) = opened(paged);
+        let mut watched = Watched::arm(&mut client, WatchDomain::Message, "INBOX").unwrap();
+        let mut events = Vec::new();
+
+        mock.lock().unwrap().held = 4;
+
+        watched
+            .round(&mut client, false, &mut |event, _| events.push(event))
+            .unwrap();
+
+        let added = |id: &str| WatchEvent::ItemAdded {
+            domain: WatchDomain::Message,
+            id: String::from(id),
+        };
+        assert_eq!(vec![added("e2"), added("e3"), added("e4")], events);
+        assert_eq!("s4", watched.state);
     }
 }

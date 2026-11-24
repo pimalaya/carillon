@@ -118,6 +118,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed a JMAP watch missing what moved while its server could no longer calculate changes: a `cannotCalculateChanges` answer ended the session, which reopened on a new baseline, so an arrival in between fired no hook. The collection is now listed again and only what differs from what the watch knew is reported, the session going on.
+- Fixed a JMAP round reading one `/changes` answer only: the rest of a batch the server answered with `hasMoreChanges` waited for the next push or poll. A round now asks again until the server has no more changes.
 - Fixed IMAP flags reaching `$flag` and the `--json` events as sent (`\Seen`, `\Answered`, `$Forwarded`) where JMAP and Maildir name them `Seen`, `Answered` and `Passed`: an IMAP system flag now reads without its backslash and `$Forwarded` reads `Passed`, other keywords as sent. Flag filters matched either spelling and are unchanged.
 - Fixed a pimdir store moved aside and synced anew under `pimdir.root` while carillon ran never being read: the watch kept the file it opened and fired the moved store's alarms. The store is opened again on every poll.
 - Fixed an alarm firing twice when its pimdir store was synced anew within the grace window after it fired: a firing is told apart by its event's `UID`, alarm, occurrence and trigger, no longer by the item id, which a new store hands out again.
