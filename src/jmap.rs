@@ -79,7 +79,7 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
 /// Per-read scratch buffer for the event stream.
 const READ_BUF: usize = 8 * 1024;
-/// How many items one baseline page asks for, at most.
+/// How many items one baseline page or one `/get` asks for, at most.
 const PAGE: u64 = 500;
 /// How many times a baseline is listed before a collection that keeps
 /// moving under it fails the session.
@@ -577,9 +577,27 @@ impl Watched {
         })
     }
 
-    /// Reads `ids` through this domain's `/get`, keeping what membership
-    /// and, for mail, keywords and the envelope need.
+    /// Reads `ids` through this domain's `/get`, in as many calls as the
+    /// session's `maxObjectsInGet` asks for (RFC 8620 §5.1), keeping what
+    /// membership and, for mail, keywords and the envelope need.
     fn fetch(
+        &self,
+        client: &mut JmapClientStd,
+        ids: Vec<String>,
+        resolve: bool,
+    ) -> Result<Vec<Member>> {
+        let limit = get_limit(client) as usize;
+        let mut members = Vec::with_capacity(ids.len());
+
+        for chunk in ids.chunks(limit) {
+            members.extend(self.fetch_chunk(client, chunk.to_vec(), resolve)?);
+        }
+
+        Ok(members)
+    }
+
+    /// Reads `ids` through one call of this domain's `/get`.
+    fn fetch_chunk(
         &self,
         client: &mut JmapClientStd,
         ids: Vec<String>,
@@ -954,11 +972,7 @@ fn baseline(
     client: &mut JmapClientStd,
     mut list: impl FnMut(&mut JmapClientStd, u64, u64) -> Result<Page>,
 ) -> Result<Known> {
-    let limit = client
-        .session()
-        .and_then(|session| session.core_capability().max_objects_in_get)
-        .unwrap_or(PAGE)
-        .clamp(1, PAGE);
+    let limit = get_limit(client);
 
     for listing in 1..=LISTINGS {
         let mut known = Known::new();
@@ -991,6 +1005,16 @@ fn baseline(
     }
 
     bail!("The watched collection kept moving while it was listed {LISTINGS} times")
+}
+
+/// How many ids one `/get` or one listing page asks for: the session's
+/// `maxObjectsInGet` (RFC 8620 §2), [`PAGE`] at most.
+fn get_limit(client: &JmapClientStd) -> u64 {
+    client
+        .session()
+        .and_then(|session| session.core_capability().max_objects_in_get)
+        .unwrap_or(PAGE)
+        .clamp(1, PAGE)
 }
 
 /// Resolves a mailbox name into the id every other call speaks.
@@ -1365,6 +1389,9 @@ mod tests {
         floor: u64,
         /// The most ids one `Email/changes` names, every change when 0.
         max_changes: u64,
+        /// The `maxObjectsInGet` the session declares, 500 when 0; an
+        /// `Email/get` naming more is answered `requestTooLarge`.
+        max_get: u64,
     }
 
     /// A loopback JMAP server answering from `mock`: the session, the inbox,
@@ -1445,7 +1472,7 @@ mod tests {
             }
 
             let json = if body.is_empty() {
-                session(addr)
+                session(addr, mock.max_get)
             } else {
                 let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
                 let mut ids = serde_json::Value::Null;
@@ -1518,9 +1545,13 @@ mod tests {
                     } else {
                         args["ids"].clone()
                     };
+                    let wanted = wanted.as_array().unwrap();
+
+                    if self.max_get > 0 && wanted.len() as u64 > self.max_get {
+                        return serde_json::json!({ "type": "requestTooLarge" });
+                    }
+
                     let list: Vec<_> = wanted
-                        .as_array()
-                        .unwrap()
                         .iter()
                         .map(|id| {
                             serde_json::json!({
@@ -1561,8 +1592,11 @@ mod tests {
         }
     }
 
-    /// The session [`serve`] answers.
-    fn session(addr: SocketAddr) -> serde_json::Value {
+    /// The session [`serve`] answers, declaring `max_get` objects per
+    /// `/get`, 500 when 0.
+    fn session(addr: SocketAddr, max_get: u64) -> serde_json::Value {
+        let max_get = if max_get == 0 { 500 } else { max_get };
+
         serde_json::json!({
             "username": "u",
             "state": "sess1",
@@ -1574,7 +1608,7 @@ mod tests {
                 "urn:ietf:params:jmap:core": {
                     "maxSizeUpload": 1, "maxConcurrentUpload": 1,
                     "maxSizeRequest": 1, "maxConcurrentRequests": 1,
-                    "maxCallsInRequest": 16, "maxObjectsInGet": 500,
+                    "maxCallsInRequest": 16, "maxObjectsInGet": max_get,
                     "maxObjectsInSet": 500, "collationAlgorithms": [],
                 },
                 "urn:ietf:params:jmap:mail": {},
@@ -1810,5 +1844,31 @@ mod tests {
         };
         assert_eq!(vec![added("e2"), added("e3"), added("e4")], events);
         assert_eq!("s4", watched.state);
+    }
+
+    #[test]
+    fn a_round_reads_more_changes_than_one_get_takes() {
+        let capped = Mock {
+            held: 1,
+            max_get: 2,
+            ..Default::default()
+        };
+        let (mut client, _config, mock, _dir) = opened(capped);
+        let mut watched = Watched::arm(&mut client, WatchDomain::Message, "INBOX").unwrap();
+        let mut events = Vec::new();
+
+        mock.lock().unwrap().held = 6;
+
+        watched
+            .round(&mut client, true, &mut |event, _| events.push(event))
+            .unwrap();
+
+        let added = |id: &str| WatchEvent::ItemAdded {
+            domain: WatchDomain::Message,
+            id: String::from(id),
+        };
+        let expected = ["e2", "e3", "e4", "e5", "e6"].map(added).to_vec();
+        assert_eq!(expected, events);
+        assert_eq!("s6", watched.state);
     }
 }

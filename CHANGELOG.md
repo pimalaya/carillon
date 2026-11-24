@@ -119,6 +119,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed a JMAP round reading every changed item through one `/get`, whatever the server's `maxObjectsInGet`: a batch larger than that (a flag set over 5000 messages on Stalwart) was refused with `requestTooLarge`, the session was lost and the reopened one took a new baseline, so none of the batch fired a hook. The items are now read in calls the server takes.
 - Fixed a JMAP watch missing what moved while its server could no longer calculate changes: a `cannotCalculateChanges` answer ended the session, which reopened on a new baseline, so an arrival in between fired no hook. The collection is now listed again and only what differs from what the watch knew is reported, the session going on.
 - Fixed a JMAP round reading one `/changes` answer only: the rest of a batch the server answered with `hasMoreChanges` waited for the next push or poll. A round now asks again until the server has no more changes.
 - Fixed IMAP flags reaching `$flag` and the `--json` events as sent (`\Seen`, `\Answered`, `$Forwarded`) where JMAP and Maildir name them `Seen`, `Answered` and `Passed`: an IMAP system flag now reads without its backslash and `$Forwarded` reads `Passed`, other keywords as sent. Flag filters matched either spelling and are unchanged.
