@@ -43,7 +43,7 @@ tempfile = "3"
 toml = "1"
 
 [build-dependencies]
-pimalaya-cli = { version = "0.8.0", default-features = false, features = ["build"] }
+pimalaya-cli = { version = "0.8.1", default-features = false, features = ["build"] }
 
 [dependencies]
 anyhow = "1"
@@ -53,20 +53,20 @@ clap = { version = "4.4", default-features = false, features = ["derive", "error
 io-http = { version = "0.9", default-features = false, optional = true }
 io-gcal = { version = "0.6.0", default-features = false, optional = true }
 io-gmail = { version = "0.10", default-features = false, optional = true }
-io-gpeople = { version = "0.9.0", default-features = false, optional = true }
+io-gpeople = { version = "0.9.1", default-features = false, optional = true }
 ical-rs = { version = "0.7.3", default-features = false, features = ["parser", "tzdb"], optional = true }
 idna_adapter = { version = "=1.0.0", default-features = false }
 io-imap = { version = "0.12", default-features = false, optional = true }
-io-jmap = { version = "0.11", default-features = false, optional = true }
+io-jmap = { version = "0.11.1", default-features = false, optional = true }
 io-maildir = { version = "0.5", default-features = false, optional = true }
-io-msgraph = { version = "0.10.0", default-features = false, optional = true }
+io-msgraph = { version = "0.11.0", default-features = false, optional = true }
 io-pimdir = { version = "0.20.0", default-features = false, optional = true }
 io-sasl = { version = "0.3", default-features = false, features = ["scram"] }
-io-webdav = { version = "0.13.0", default-features = false, optional = true }
+io-webdav = { version = "0.14.0", default-features = false, optional = true }
 jiff = { version = "1", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"], optional = true }
 log = "0.4"
 mime-rs = { version = "0.2.1", default-features = false, features = ["base64", "encoding", "parser"], optional = true }
-pimalaya-cli = { version = "0.8.0", default-features = false, features = ["signal", "terminal"] }
+pimalaya-cli = { version = "0.8.1", default-features = false, features = ["signal", "terminal"] }
 pimalaya-config = { version = "0.6.0", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.4.1", default-features = false, features = ["std"] }
 schemars = "1"
@@ -78,6 +78,3 @@ url = { version = "2.2", features = ["serde"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-[patch.crates-io]
-io-pimdir = { git = "https://github.com/pimalaya/io-pimdir", rev = "65a5026d9e8499ec7e24b401e9b689d3eebeea4e" }

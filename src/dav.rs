@@ -617,6 +617,7 @@ impl Watched {
         }
 
         let mut changes = Vec::new();
+        let mut unreadable = false;
         let mut token: Option<String> = None;
 
         loop {
@@ -635,11 +636,18 @@ impl Watched {
                 Err(err) => return Err(err),
             };
 
+            if !delta.unreadable.is_empty() {
+                let count = delta.unreadable.len();
+                let collection = &self.collection;
+                warn!("dav server could not read {count} members of {collection}");
+                unreadable = true;
+            }
+
             changes.extend(delta.changed);
             token = delta.sync_token;
 
             if !delta.truncated || token.is_none() || shutdown.load(Ordering::SeqCst) {
-                let complete = !delta.truncated;
+                let complete = !delta.truncated && !unreadable;
                 self.token = token;
                 return Ok(Snapshot { changes, complete });
             }
@@ -676,14 +684,15 @@ struct Snapshot {
     /// Every member listed, with its etag.
     changes: Vec<WebdavSyncChange>,
     /// Whether the server listed them all, a truncated one saying nothing
-    /// of the members it left out.
+    /// of the members it left out, nor one holding a member it could not
+    /// read.
     complete: bool,
 }
 
 impl From<WebdavSyncDelta> for Snapshot {
     fn from(delta: WebdavSyncDelta) -> Self {
         Self {
-            complete: !delta.truncated,
+            complete: !delta.truncated && delta.unreadable.is_empty(),
             changes: delta.changed,
         }
     }
@@ -692,8 +701,9 @@ impl From<WebdavSyncDelta> for Snapshot {
 /// Reads a full enumeration against `known`, which it replaces, and
 /// returns what differs: a member never seen is an arrival, a known one
 /// whose etag moved an edit, and one no longer listed a removal, under
-/// the domain remembered for it. A truncated enumeration reports no
-/// removal, since it does not say what it left out.
+/// the domain remembered for it. A truncated enumeration, or one holding
+/// a member the server could not read, reports no removal, since it does
+/// not say what it left out.
 fn rebase(
     known: &mut Known,
     domains: &Domains,
@@ -1069,6 +1079,11 @@ fn list(
 
     if delta.truncated {
         warn!("dav server truncated the listing of {collection}");
+    }
+
+    if !delta.unreadable.is_empty() {
+        let count = delta.unreadable.len();
+        warn!("dav server could not read {count} members of {collection}");
     }
 
     Ok(delta)
@@ -1513,6 +1528,36 @@ mod tests {
             &types,
             snapshot(vec![change("/b/a.vcf", "1")], false),
         );
+
+        assert!(events.is_empty(), "got {events:?}");
+        assert_eq!(2, known.len());
+    }
+
+    /// A member the server could not read is not a removed one.
+    #[test]
+    fn a_listing_with_an_unreadable_member_reports_no_removal() {
+        let domains = Domains::Fixed(WatchDomain::Card);
+        let types = BTreeMap::new();
+        let mut known = Known::new();
+
+        rebase(
+            &mut known,
+            &domains,
+            &types,
+            snapshot(vec![change("/b/a.vcf", "1"), change("/b/b.vcf", "1")], true),
+        );
+
+        let delta = WebdavSyncDelta {
+            changed: vec![change("/b/a.vcf", "1")],
+            unreadable: vec![io_webdav::rfc4918::typed::WebdavUnreadableEntry {
+                id: "b.vcf".to_string(),
+                href: "/b/b.vcf".to_string(),
+                status: Some(403),
+                failures: Vec::new(),
+            }],
+            ..WebdavSyncDelta::default()
+        };
+        let events = rebase(&mut known, &domains, &types, Snapshot::from(delta));
 
         assert!(events.is_empty(), "got {events:?}");
         assert_eq!(2, known.len());
