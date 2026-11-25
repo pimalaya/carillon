@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-Carillon 1 aligns on the other Pimalaya CLIs. `watch` prints what it observes as events, hooks run off the watch under an optional timeout, and every failure a caller acts on carries a stable `code`. It adds the `pimdir` backend, calendar alarm hooks and the `account list` and `account check` commands, and drops the configuration wizard.
+## [1.0.0] - 2026-11-25
+
+Carillon 1 is the first stable release: a local watcher firing hooks on what changes in mailboxes, addressbooks and calendars, over IMAP, JMAP, Maildir, CalDAV, CardDAV, Microsoft Graph, the Google APIs and the pimdir store Neverest syncs, alarms of events and tasks included. It shares the configuration and hook shapes of the other Pimalaya CLIs, and prints what it observes as events, `--json` feeding status bars and scripts.
 
 A 0.x configuration is not carried over: the hooks are renamed, their notifications take another template syntax, and unknown keys are refused. Start over from config.sample.toml.
 
@@ -57,7 +59,7 @@ A 0.x configuration is not carried over: the hooks are renamed, their notificati
 
 - Added the `carillon-error` schema of the failure object to `json-schema`, and those of `completion`, `manual` and `json-schema` itself.
 
-  Each schema carries an `$id` naming the contract version (`v0.2`).
+  Each schema carries an `$id` naming the contract version (`v1`).
 
 - Added config.sample.toml to the release archives and the Nix package, as share/doc/carillon/config.sample.toml, which install.sh copies under its prefix.
 
@@ -336,6 +338,7 @@ First release, renamed from mirador. The binary, the config directory, the `CARI
 
 - Generated the man pages and the shell completions, and shipped a systemd user unit.
 
-[unreleased]: https://github.com/pimalaya/carillon/compare/v0.2.0..HEAD
+[unreleased]: https://github.com/pimalaya/carillon/compare/v1.0.0..HEAD
+[1.0.0]: https://github.com/pimalaya/carillon/compare/v0.2.0..v1.0.0
 [0.2.0]: https://github.com/pimalaya/carillon/compare/v0.1.0..v0.2.0
 [0.1.0]: https://github.com/pimalaya/carillon/compare/root..v0.1.0

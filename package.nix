@@ -55,7 +55,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
   inherit buildNoDefaultFeatures;
 
   pname = "carillon";
-  version = "0.2.0";
+  version = "1.0.0";
   cargoHash = "";
 
   src = fetchFromGitHub {
