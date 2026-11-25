@@ -1180,40 +1180,248 @@ mod tests {
         assert!(seen > 0);
     }
 
-    /// The sample as written loads, and no line it comments out names a
-    /// key or a variant the schema refuses: config.sample.toml has no
-    /// sections, so a backend's lines do not load one at a time.
-    #[cfg(all(
-        feature = "jmap",
-        feature = "maildir",
-        feature = "caldav",
-        feature = "carddav",
-        feature = "msgraph",
-        feature = "gmail",
-        feature = "gcal",
-        feature = "gpeople",
-        feature = "pimdir",
-        feature = "notify"
-    ))]
+    /// Every hook a backend fires is shown in config.sample.toml at least
+    /// once.
     #[test]
-    fn the_sample_names_no_unknown_key() {
-        use pimalaya_config::sample::{Variant, variants};
-
+    fn the_sample_names_every_hook() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config.sample.toml");
-        Config::load(std::slice::from_ref(&path)).expect("the sample as written");
-
         let sample = std::fs::read_to_string(&path).unwrap();
-        let variants = variants(&sample, &[]);
-        assert!(variants.len() > 100, "{} variants", variants.len());
 
-        for Variant { name, text } in variants {
-            let Err(err) = toml::from_str::<Config>(&text) else {
-                continue;
+        for hook in [
+            "on-message-add",
+            "on-message-remove",
+            "on-message-change",
+            "on-flag-add",
+            "on-flag-remove",
+            "on-card-add",
+            "on-card-remove",
+            "on-card-change",
+            "on-event-add",
+            "on-event-remove",
+            "on-event-change",
+            "on-task-add",
+            "on-task-remove",
+            "on-task-change",
+            "on-alarm-trigger",
+        ] {
+            assert!(sample.contains(&format!(".hooks.{hook}.")), "{hook}");
+        }
+    }
+
+    /// The sample loaded as written and once per rank, a notification
+    /// being refused by a build without the `notify` feature.
+    #[cfg(feature = "notify")]
+    mod sample {
+        use std::{fs, io::Write, ops::Range};
+
+        use tempfile::NamedTempFile;
+
+        use super::*;
+
+        /// Checks config.sample.toml parses as written and once per rank
+        /// fully uncommented, `example` its only account and the default
+        /// each time.
+        #[test]
+        fn the_sample_configuration_parses_with_each_variant() {
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config.sample.toml");
+            let sample = fs::read_to_string(&path).unwrap();
+            let headers: Vec<_> = sample.lines().filter(|l| l.starts_with('[')).collect();
+            assert_eq!(headers, ["[accounts.example]"]);
+
+            load_sample(&sample, "as written");
+
+            let paragraphs = sample_paragraphs(&sample);
+
+            for rank in 1..=sample_ranks(&paragraphs) {
+                let text = sample_variant(&paragraphs, rank);
+                load_sample(&text, &format!("variant {rank}"));
+            }
+        }
+
+        /// One line of config.sample.toml.
+        struct SampleLine<'a> {
+            /// The line as written.
+            line: &'a str,
+            /// The code before the comment, one `#` off when commented.
+            code: &'a str,
+            /// Whether the code is commented.
+            commented: bool,
+            /// The field the code sets, a secret's `raw` and `command`
+            /// being one.
+            field: Option<&'a str>,
+            /// The other values the comment lists in brackets.
+            values: Vec<&'a str>,
+        }
+
+        impl<'a> SampleLine<'a> {
+            fn parse(line: &'a str) -> Self {
+                let (code, comment) = line.split_once('\t').unwrap_or((line, ""));
+                let commented = code.starts_with('#');
+                let code = code.strip_prefix('#').unwrap_or(code);
+
+                let field = code
+                    .split_once(" = ")
+                    .map(|(key, _)| key)
+                    .filter(|key| {
+                        key.chars()
+                            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+                    })
+                    .map(|key| {
+                        let secret = key.strip_suffix(".raw").or(key.strip_suffix(".command"));
+                        secret.unwrap_or(key)
+                    });
+
+                let values = comment
+                    .trim_end()
+                    .strip_suffix(']')
+                    .and_then(|comment| comment.rsplit_once('['))
+                    .map(|(_, values)| values.split(", ").collect())
+                    .unwrap_or_default();
+
+                Self {
+                    line,
+                    code,
+                    commented,
+                    field,
+                    values,
+                }
+            }
+
+            /// The first two segments of the field, the table a replacing
+            /// paragraph shares with the one above it (`imap.sasl`).
+            fn table(&self) -> Option<&'a str> {
+                let field = self.field?;
+                let end = field
+                    .match_indices('.')
+                    .nth(1)
+                    .map_or(field.len(), |(i, _)| i);
+                Some(&field[..end])
+            }
+
+            /// The values the line offers: its code as written, then each
+            /// bracketed value in its place, typed like the written one.
+            fn options(&self) -> Vec<String> {
+                let (key, value) = self.code.split_once(" = ").unwrap();
+                let mut options = vec![self.code.to_owned()];
+
+                for other in &self.values {
+                    if value.starts_with('"') {
+                        options.push(format!("{key} = \"{other}\""));
+                    } else {
+                        options.push(format!("{key} = {other}"));
+                    }
+                }
+
+                options
+            }
+        }
+
+        fn load_sample(text: &str, name: &str) {
+            let context = format!("config.sample.toml, {name}");
+
+            let mut file = NamedTempFile::new().unwrap();
+            file.write_all(text.as_bytes()).unwrap();
+
+            let mut config = Config::load(&[file.path().to_path_buf()])
+                .unwrap_or_else(|err| panic!("{context}: {err:?}\n{text}"));
+            let (account, _) = config
+                .take_account(None)
+                .unwrap_or_else(|err| panic!("{context}: {err:?}"));
+
+            assert_eq!(account, "example", "{context}");
+        }
+
+        fn sample_paragraphs(sample: &str) -> Vec<Vec<SampleLine<'_>>> {
+            let paragraphs = sample.split("\n\n");
+            let paragraphs = paragraphs.map(|p| p.lines().map(SampleLine::parse).collect());
+            paragraphs.collect()
+        }
+
+        /// Whether `below`, all commented, replaces `above`, setting keys
+        /// under a table one of its lines sets.
+        fn sample_replaces(above: &[SampleLine], below: &[SampleLine]) -> bool {
+            let mut code = below.iter().filter(|line| line.field.is_some());
+            let Some(first) = code.next() else {
+                return false;
             };
 
-            let err = err.to_string();
-            assert!(!err.contains("unknown"), "{name}: {err}");
-            assert!(!err.contains("MIGRATION.md"), "{name}: {err}");
+            if !first.commented || code.any(|line| !line.commented) {
+                return false;
+            }
+
+            above
+                .iter()
+                .filter_map(SampleLine::table)
+                .any(|t| Some(t) == first.table())
+        }
+
+        /// The runs of paragraphs each replacing the one above it, as
+        /// index ranges, a paragraph replacing none being a run of one.
+        fn sample_runs(paragraphs: &[Vec<SampleLine>]) -> Vec<Range<usize>> {
+            let mut runs: Vec<Range<usize>> = Vec::new();
+
+            for i in 0..paragraphs.len() {
+                match runs.last_mut() {
+                    Some(run) if sample_replaces(&paragraphs[i - 1], &paragraphs[i]) => {
+                        run.end = i + 1;
+                    }
+                    _ => runs.push(i..i + 1),
+                }
+            }
+
+            runs
+        }
+
+        /// The values each field takes in turn, the lines setting it in
+        /// their order, each followed by its bracketed values.
+        fn sample_options<'a>(lines: &[&'a SampleLine<'a>]) -> HashMap<&'a str, Vec<String>> {
+            let mut options: HashMap<&str, Vec<String>> = HashMap::new();
+
+            for line in lines {
+                if let Some(field) = line.field {
+                    options.entry(field).or_default().extend(line.options());
+                }
+            }
+
+            options
+        }
+
+        /// How many variants give every value its turn: the most values
+        /// of one field, or the longest run of replacing paragraphs.
+        fn sample_ranks(paragraphs: &[Vec<SampleLine>]) -> usize {
+            let lines: Vec<&SampleLine> = paragraphs.iter().flatten().collect();
+            let options = sample_options(&lines);
+            let values = options.values().map(Vec::len).max().unwrap_or(0);
+
+            let runs = sample_runs(paragraphs);
+            let longest = runs.iter().map(Range::len).max().unwrap_or(0);
+
+            values.max(longest)
+        }
+
+        /// The sample at `rank`, every line uncommented, each field set to
+        /// its value of that rank and each run of replacing paragraphs to
+        /// its paragraph of that rank (the last when either has fewer).
+        fn sample_variant(paragraphs: &[Vec<SampleLine>], rank: usize) -> String {
+            let runs = sample_runs(paragraphs).into_iter();
+            let kept = runs.map(|run| &paragraphs[run.start + rank.min(run.len()) - 1]);
+            let lines: Vec<&SampleLine> = kept.flatten().collect();
+
+            let mut options = sample_options(&lines);
+            let mut text = Vec::with_capacity(lines.len());
+
+            for line in lines {
+                let Some(field) = line.field else {
+                    text.push(line.line.to_owned());
+                    continue;
+                };
+
+                if let Some(values) = options.remove(field) {
+                    text.push(values[rank.min(values.len()) - 1].clone());
+                }
+            }
+
+            text.join("\n")
         }
     }
 }

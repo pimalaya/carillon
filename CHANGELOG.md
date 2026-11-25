@@ -137,7 +137,7 @@ A 0.x configuration is not carried over: the hooks are renamed, their notificati
 
   An IMAP mailbox recreated meanwhile still takes one. The JMAP event stream reopens from the last event read, so a server keeping its events pushes what moved between two streams.
 
-- Changed config.sample.toml to one commented key per line, grouped by backend, listing every hook; it loads as written.
+- Changed config.sample.toml to Himalaya's shape: one commented key per line with a short note, a section per backend, flat `proxy` and `tls` keys, every hook listed; it loads as written and with each alternative uncommented.
 - Changed the help to print each paragraph on one line whatever the terminal width, and without colour.
 
 ### Removed
