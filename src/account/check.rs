@@ -25,8 +25,6 @@ use pimalaya_config::toml::TomlConfig;
 #[cfg(dav)]
 use url::Url;
 
-#[cfg(feature = "maildir")]
-use crate::config::maildir::MaildirConfig;
 #[cfg(feature = "gcal")]
 use crate::gcal;
 #[cfg(feature = "gmail")]
@@ -51,6 +49,8 @@ use crate::{
 use crate::{config::imap::ImapConfig, imap};
 #[cfg(feature = "jmap")]
 use crate::{config::jmap::JmapConfig, jmap};
+#[cfg(feature = "maildir")]
+use crate::{config::maildir::MaildirConfig, maildir};
 
 /// Validate the account configuration.
 ///
@@ -299,16 +299,7 @@ fn check_jmap(jmap_config: JmapConfig, resolver: &mut SecretResolver) -> Backend
 
 #[cfg(feature = "maildir")]
 fn check_maildir(maildir_config: MaildirConfig) -> BackendCheck<ErrorCode> {
-    let result = (|| -> Result<()> {
-        if !maildir_config.root.is_dir() {
-            bail!(
-                "Maildir root `{}` does not exist or is not a directory",
-                maildir_config.root.display()
-            );
-        }
-        Ok(())
-    })();
-
+    let result = maildir::probe(&maildir_config, &maildir_config.mailbox);
     row("maildir", result)
 }
 

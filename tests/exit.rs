@@ -91,7 +91,7 @@ fn a_failed_check_prints_its_report_and_exits_3() {
     let row = &json["accounts"][0]["backends"][0];
     assert_eq!(row["backend"], "maildir", "{json}");
     assert_eq!(row["ok"], false, "{json}");
-    assert_eq!(row["code"], Value::Null, "{json}");
+    assert_eq!(row["code"], "mailbox-not-found", "{json}");
     assert!(row["error"].as_str().unwrap().contains("missing"), "{json}");
     assert_eq!(stdout.lines().count(), 1, "{stdout}");
 }

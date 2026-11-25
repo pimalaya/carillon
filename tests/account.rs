@@ -353,3 +353,57 @@ fn a_check_row_names_the_tls_its_backend_inherited() {
     assert_eq!(account["backends"][1]["ok"], true, "{json}");
     assert_eq!(account["backends"][1]["tls"], Value::Null, "{json}");
 }
+
+/// The maildir row of an `account check` over the mailbox `mailbox` of a
+/// root holding `dirs`, asserting the check printed its report.
+#[cfg(feature = "maildir")]
+fn maildir_check(dirs: &[&str], mailbox: &str) -> (Option<i32>, Value) {
+    let home = TempDir::new().unwrap();
+    let root = home.path().join("mail");
+    fs::create_dir_all(&root).unwrap();
+    for dir in dirs {
+        fs::create_dir_all(root.join(dir)).unwrap();
+    }
+
+    let path = home.path().join("config.toml");
+    let toml = format!(
+        "[accounts.a]\ndefault = true\nmaildir.mailbox = {mailbox:?}\nmaildir.root = {:?}\n",
+        root.display().to_string()
+    );
+    fs::write(&path, toml).unwrap();
+
+    let output = run_in(home.path(), &path, &["account", "check"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    (
+        output.status.code(),
+        json["accounts"][0]["backends"][0].clone(),
+    )
+}
+
+/// A maildir row opens the mailbox as a watch would: a root lacking the
+/// Maildir directories fails it, where a check passed on any directory
+/// and the watch then lost its session.
+#[cfg(feature = "maildir")]
+#[test]
+fn a_maildir_check_fails_on_a_root_that_is_no_maildir() {
+    let (status, row) = maildir_check(&[], "INBOX");
+    assert_eq!(status, Some(3), "{row}");
+    assert_eq!(row["backend"], "maildir", "{row}");
+    assert_eq!(row["ok"], false, "{row}");
+
+    let (status, row) = maildir_check(&["cur", "new", "tmp"], "INBOX");
+    assert_eq!(status, Some(0), "{row}");
+    assert_eq!(row["ok"], true, "{row}");
+}
+
+/// A maildir row naming a mailbox the root does not hold fails coded
+/// `mailbox-not-found`, as the watch's `session-lost` does.
+#[cfg(feature = "maildir")]
+#[test]
+fn a_maildir_check_codes_a_missing_mailbox() {
+    let (status, row) = maildir_check(&["cur", "new", "tmp"], "Archive");
+    assert_eq!(status, Some(3), "{row}");
+    assert_eq!(row["ok"], false, "{row}");
+    assert_eq!(row["code"], "mailbox-not-found", "{row}");
+}

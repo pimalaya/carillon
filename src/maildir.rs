@@ -88,6 +88,15 @@ pub fn watch(
     Ok(())
 }
 
+/// Opens `collection` under the configured root and lists it once, as a
+/// watch does before its first wait, for `account check`.
+pub fn probe(config: &MaildirConfig, collection: &str) -> Result<()> {
+    let client = MaildirClient::new(config.root.clone());
+    let maildir = resolve(&client, collection)?;
+    list(&client, &maildir)?;
+    Ok(())
+}
+
 /// Lists the mailbox as message id to flag names.
 fn list(client: &MaildirClient, maildir: &Maildir) -> Result<BTreeMap<String, BTreeSet<String>>> {
     let entries = client

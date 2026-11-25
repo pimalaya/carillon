@@ -148,6 +148,7 @@ A 0.x configuration is not carried over: the hooks are renamed, their notificati
 
 ### Fixed
 
+- Fixed `account check` passing a `maildir` block whose root is no Maildir or lacks the mailbox: the row opens and lists the mailbox as a watch does, failing coded `mailbox-not-found`.
 - Fixed an IMAP watch losing every change against a server answering its `ENABLE` with a bare `OK`: it takes the QRESYNC path only when `ENABLED` names QRESYNC.
 - Fixed IMAP flags reaching `$flag` and the `--json` events as sent (`\Seen`, `$Forwarded`).
 
