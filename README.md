@@ -1,16 +1,27 @@
-# 🔔 carillon [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya) [![Sponsor](https://img.shields.io/badge/sponsor-pink?style=flat&logo=github-sponsors&logoColor=white)](https://pimalaya.org/sponsor/)
+# 🔔 Carillon [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya) [![Sponsor](https://img.shields.io/badge/sponsor-pink?style=flat&logo=github-sponsors&logoColor=white)](https://pimalaya.org/sponsor/)
 
-CLI to watch PIM collection changes, written in Rust
+CLI to watch PIM collection changes
 
-> [!CAUTION]
-> Carillon is `v0.x`: expect breaking changes between releases until it stabilises.
+```sh
+$ carillon watch
+```
+
+```text
+[personal] watching mailbox `INBOX` over maildir, polling
+[personal] mailbox `INBOX`: message 1795248000.1.laptop added
+Watch stopped by a signal
+```
 
 ## Table of contents
 
 - [Features](#features)
 - [Installation](#installation)
 - [Configuration](#configuration)
+  - [Google](#google)
+  - [Microsoft](#microsoft)
+  - [Fastmail](#fastmail)
 - [Usage](#usage)
+- [Alternatives](#alternatives)
 - [AI policy](https://github.com/pimalaya/.github/blob/master/AI_POLICY.md)
 - [License](#license)
 - [Social](#social)
@@ -19,140 +30,209 @@ CLI to watch PIM collection changes, written in Rust
 
 ## Features
 
-- Mail backend support: **IMAP** <sup>[rfc2177](https://www.rfc-editor.org/rfc/rfc2177)</sup>, **JMAP** <sup>[rfc8621](https://www.rfc-editor.org/rfc/rfc8621)</sup>, **Maildir** <sup>[specs](https://cr.yp.to/proto/maildir.html)</sup>
-- Calendars and contacts backend support: **CalDAV**, **CardDAV** <sup>[rfc6578](https://www.rfc-editor.org/rfc/rfc6578)</sup>, **JMAP** <sup>[rfc9610](https://www.rfc-editor.org/rfc/rfc9610), [calendars](https://datatracker.ietf.org/doc/draft-ietf-jmap-calendars/)</sup>
-- Alarms of events and tasks <sup>[rfc5545](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6)</sup>, fired from a **CalDAV** calendar or a local **pimdir** store, no sync needed for the former
-- Vendor API support: **Microsoft Graph** (mail, contacts, calendar), **Gmail**, **Google Calendar**, **Google People**
-- **Watch** support: IMAP idle, JMAP event stream, collection poll everywhere else
-- **Hook** support: desktop notification, shell command, or both, on every change
-- **Simple auth** support for IMAP: anonymous, login, plain, oauthbearer, xoauth2, scram-sha-256
-- **HTTP auth** support for JMAP (basic, bearer, raw header), DAV (basic, bearer) and the vendor APIs (bearer)
-- **TLS** support:
-  - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature, enabled by default)
-  - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
-  - [Native TLS](https://crates.io/crates/native-tls) (requires `native-tls` feature)
-- **Multi-account** watch: every configured account at once, each reconnecting on its own
-
-> [!TIP]
-> Carillon is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
+- **Mail, contacts and calendars** over IMAP, JMAP, Maildir, CalDAV, CardDAV, Microsoft Graph and the Google APIs
+- **Push where offered**: IMAP IDLE and the JMAP event stream, a poll everywhere else
+- **Hooks**: a command, a desktop notification or both on any change, the item given as variables
+- **Alarms** of events and tasks fired on time, from a CalDAV calendar or the pimdir store Neverest syncs
+- **Multi-account**: every account watched at once, each reconnecting on its own
+- **Account check** proving every backend connects and authenticates
+- **JSON output** of every event and result, described by `carillon json-schema`
+- **TLS** via Rustls (`rustls-ring` default, `rustls-aws`) or Native TLS (`native-tls`), client certificates included
 
 ## Installation
 
-### Pre-built binary
+<details>
+  <summary>Debian, Ubuntu</summary>
 
-As root:
+  Carillon is not in the official repositories yet, but the signed APT repository of [pkg.pimalaya.org](https://pkg.pimalaya.org) ships the latest release with its man pages and shell completions. Add the repository once:
 
-```sh
-curl -sSL https://raw.githubusercontent.com/pimalaya/carillon/master/install.sh | sudo sh
-```
+  ```sh
+  sudo install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://pkg.pimalaya.org/pimalaya.asc | sudo tee /etc/apt/keyrings/pimalaya.asc >/dev/null
+  sudo tee /etc/apt/sources.list.d/pimalaya.sources >/dev/null <<EOF
+  Types: deb
+  URIs: https://pkg.pimalaya.org/apt
+  Suites: stable
+  Components: main
+  Signed-By: /etc/apt/keyrings/pimalaya.asc
+  EOF
+  sudo apt update
+  ```
 
-As a regular user:
+  Then install Carillon:
 
-```sh
-curl -sSL https://raw.githubusercontent.com/pimalaya/carillon/master/install.sh | PREFIX=~/.local sh
-```
+  ```sh
+  sudo apt install carillon
+  ```
+</details>
 
-These commands install the latest binary from the GitHub [releases](https://github.com/pimalaya/carillon/releases) section.
+<details>
+  <summary>Fedora, RHEL, Rocky Linux, AlmaLinux</summary>
 
-For a more up-to-date version, check the [releases](https://github.com/pimalaya/carillon/actions/workflows/releases.yml) workflow and look for the *Artifacts* section: those are built from `master`, with the default cargo features.
+  Carillon is not in the official repositories yet, but the signed DNF repository of [pkg.pimalaya.org](https://pkg.pimalaya.org) ships the latest release with its man pages and shell completions:
 
-### Cargo
+  ```sh
+  sudo curl -fsSL -o /etc/yum.repos.d/pimalaya.repo https://pkg.pimalaya.org/pimalaya.repo
+  sudo dnf install carillon
+  ```
+</details>
 
-```sh
-cargo install --locked --git https://github.com/pimalaya/carillon.git
-```
+<details>
+  <summary>Homebrew (macOS, Linux)</summary>
 
-With IMAP support only, which drops every other backend:
+  Carillon is not in homebrew-core yet, but the [pimalaya/tap](https://github.com/pimalaya/homebrew-tap) formula installs the latest release with its man pages and shell completions:
 
-```sh
-cargo install --locked --git https://github.com/pimalaya/carillon.git \
-  --no-default-features \
-  --features imap,rustls-ring
-```
+  ```sh
+  brew install pimalaya/tap/carillon
+  ```
+</details>
 
-### Nix
+<details>
+  <summary>Pre-built binary</summary>
 
-If you have the [Flakes](https://nixos.wiki/wiki/Flakes) feature enabled:
+  For other systems, Carillon can be installed with the installer:
 
-```sh
-nix profile install github:pimalaya/carillon
-```
+  *As root:*
 
-Or run without installing:
+  ```sh
+  curl -sSL https://raw.githubusercontent.com/pimalaya/carillon/master/install.sh | sudo sh
+  ```
 
-```sh
-nix run github:pimalaya/carillon
-```
+  *As a regular user:*
 
-### Sources
+  ```sh
+  curl -sSL https://raw.githubusercontent.com/pimalaya/carillon/master/install.sh | PREFIX=~/.local sh
+  ```
 
-```sh
-git clone https://github.com/pimalaya/carillon
-cd carillon
-nix run
-```
+  These commands install the latest [release](https://github.com/pimalaya/carillon/releases), built with the default cargo features. For a build of `master`, check out the [releases](https://github.com/pimalaya/carillon/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section.
+</details>
+
+<details>
+  <summary>Cargo</summary>
+
+  ```sh
+  cargo install --locked carillon
+  ```
+
+  For a build of `master`:
+
+  ```sh
+  cargo install --locked --git https://github.com/pimalaya/carillon.git
+  ```
+</details>
+
+<details>
+  <summary>Nix</summary>
+
+  ```sh
+  nix profile install github:pimalaya/carillon
+  ```
+</details>
+
+<details>
+  <summary>Sources</summary>
+
+  Requires [Rust](https://www.rust-lang.org/tools/install) 1.89 or later:
+
+  ```sh
+  git clone https://github.com/pimalaya/carillon
+  cd carillon
+  cargo build --release --locked
+  ```
+
+  The binary lands at target/release/carillon.
+</details>
 
 ## Configuration
 
-The configuration is loaded from every existing path among, each one merged on top of the ones before it (the rc file last):
+A TOML configuration is loaded from every existing path among the following, each one deep-merged on top of the ones before:
 
 - `$XDG_CONFIG_HOME/carillon/config.toml`
 - `$HOME/.config/carillon/config.toml`
 - `$HOME/.carillonrc`
 
-Override the path with `carillon -c <PATH>`, one path per flag: repeat it to merge several files, the first being the base and the next ones deep-merged on top. A path is never split on `:`, and no environment variable names one. The full field reference lives in [config.sample.toml](./config.sample.toml).
+Override the path with `-c <PATH>`, repeated to merge several files.
 
-Carillon never writes a configuration: copy [config.sample.toml](./config.sample.toml) to one of the paths above, then uncomment the keys of one backend and the hooks you want. A command finding no configuration fails naming the path it looked at and the sample, and a person at a terminal is shown the commands creating the file from it; `carillon` with no command does the same, and prints the help once a configuration exists. Leave the watch method out unless you need one: an account takes the best one its backend supports. Then run `carillon account check` to test the connection.
+> [!TIP]
+> See [config.sample.toml](./config.sample.toml) for a complete configuration of one example account with commented fields; rename the account and uncomment what you need, or start from a provider below.
 
-An account declares one backend block (`imap`, `jmap`, `maildir`, `caldav`, `carddav`, `msgraph`, `gmail`, `gcal`, `gpeople`, `pimdir`) carrying the collection it watches (one per domain over JMAP and Microsoft Graph, sharing one connection), how it watches it (`watch`) and what it fires (`hooks`, each named `on-<subject>-<verb>` and running a `notify` notification, a `command` or both). Declaring several is allowed, `-b/--backend` then selecting one. A backend the build leaves out still loads, a command reaching it failing with the cargo feature to build with, named as the block (`caldav`, `carddav` and so on), so one file serves every build. A duration (`watch.poll.interval`, `watch.idle.timeout`, `watch.push.ping`) is an integer of seconds or a number and its unit (`"90s"`, `"5m"`, `"2h"`). Without `-a`, `account check` takes the account marked `default = true`; `-a default` names the account called `default`.
+An account declares the backend it watches, the collection it watches there and the hooks it fires, each named `on-<subject>-<verb>`. Carillon never issues nor refreshes an OAuth 2.0 token, so Google and Microsoft accounts read theirs from [Ortie](https://github.com/pimalaya/ortie).
 
-The `pimdir` backend reads the store neverest syncs (`~/.local/state/neverest` on Linux), of the pimdir draft its io-pimdir reads alone (storage-draft-17): a store of an earlier draft is refused coded `store-version`, never migrated. To start over, let the neverest that wrote it drain its queue, move its directory aside and let the new neverest sync a new store under the same root: a running carillon reads it on its next poll.
+### Google
+
+Watch the inbox through the Gmail API, with a token from Ortie's Google account, or a calendar through `gcal` with the same token.
+
+```toml
+[accounts.google]
+
+gmail.mailbox = "INBOX"
+gmail.auth.token.command = ["ortie", "token", "show", "-a", "google"]
+gmail.hooks.on-message-add.notify.summary = "New mail from $sender"
+gmail.hooks.on-message-add.notify.body = "$subject"
+```
+
+### Microsoft
+
+Watch the inbox and the calendar through Microsoft Graph, with a token from Ortie's Graph account.
+
+```toml
+[accounts.microsoft]
+
+msgraph.mailbox = "inbox"
+msgraph.calendar = "Calendar"
+msgraph.auth.token.command = ["ortie", "token", "show", "-a", "microsoft-graph"]
+msgraph.hooks.on-message-add.notify.summary = "New mail from $sender"
+msgraph.hooks.on-event-change.notify.summary = "Event changed in $calendar"
+```
+
+### Fastmail
+
+Watch the inbox over the JMAP event stream, with a token from Ortie or an [API token](https://www.fastmail.help/hc/en-us/articles/5254602856719).
+
+```toml
+[accounts.fastmail]
+
+jmap.mailbox = "INBOX"
+jmap.server = "https://api.fastmail.com/jmap/session"
+jmap.auth.bearer.token.command = ["ortie", "token", "show", "-a", "fastmail"]
+jmap.hooks.on-message-add.notify.summary = "New mail from $sender"
+jmap.hooks.on-message-add.notify.body = "$subject"
+```
 
 ## Usage
 
-Watch every configured account, until interrupted:
+**Step 1**: once your first account is configured, check that every backend connects and authenticates:
+
+```sh
+carillon account check
+```
+
+**Step 2**: watch every account, firing its hooks, until interrupted:
 
 ```sh
 carillon watch
 ```
 
-A watch prints one line per thing it observes (a session opened or lost, a change, a failed hook, a fired alarm), then one result line once SIGINT or SIGTERM stops it, exiting 0. The lines reach a pipe as they come, so a status bar can read them, and `--json` prints each as an object tagged `event`.
-
-Watch one account:
+A watch covers every account and any other command the default one, unless `-a` names another, and the `--help` of each command details its flags, exit codes and JSON output. More use cases:
 
 ```sh
+# Watch the work account only
 carillon -a work watch
-```
 
-Check that an account still connects and authenticates, on every backend it declares, before trusting a watch to keep running:
+# Pick the backend of an account declaring several
+carillon -b jmap watch
 
-```sh
-carillon -a work account check
-```
+# Feed a status bar with every change
+carillon watch --json | jq -r --unbuffered 'select(.event == "changed") | "\(.account): \(.change.kind)"'
 
-List the configured accounts and the backends each declares, a backend the build leaves out marked `(not built)`:
-
-```sh
+# List the accounts and the backends each declares
 carillon account list
 ```
 
-Force a backend on an account declaring several:
+## Alternatives
 
-```sh
-carillon -b jmap watch
-```
-
-A command exits 0 on success and 1 on a failure, which `--json` prints as a failure object carrying a stable `code` when a caller can act on it (`permission-denied`, `quota-exceeded`, `rate-limited`, `mailbox-not-found`, `calendar-not-found`, `addressbook-not-found`, `store-version`, `account-missing`, `backend-not-built`…). Exit 2 is a command line carillon refused, printed under `--json` as a failure object coded `usage-invalid`, and exit 3 an `account check` that printed its report with a failed backend, each row carrying its own `code`.
-
-Every command and every flag is documented behind `--help`. Shell completions, man pages and the JSON Schemas of the `--json` output are generated by `carillon completion --dir <DIR>`, `carillon manual --dir <DIR>` and `carillon json-schema --dir <DIR>`.
-
-Logs go to stderr, so they can be redirected to a file while the command output stays on stdout:
-
-```sh
-carillon watch --log-level debug 2>/tmp/carillon.log
-```
-
-Use `--log-file <PATH>` to append them to a file directly. When `--log-level` is omitted the `RUST_LOG` environment variable is consulted, and `RUST_BACKTRACE=1` adds the full error backtrace.
+- [goimapnotify](https://gitlab.com/shackra/goimapnotify): runs a command on IMAP IDLE events, IMAP only
+- [inotifywait](https://github.com/inotify-tools/inotify-tools): watches a local Maildir for new files, Linux only
 
 ## License
 

@@ -6,155 +6,206 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+Carillon 1 aligns on the other Pimalaya CLIs. `watch` prints what it observes as events, hooks run off the watch under an optional timeout, and every failure a caller acts on carries a stable `code`. It adds the `pimdir` backend, calendar alarm hooks and the `account list` and `account check` commands, and drops the configuration wizard.
+
+A 0.x configuration is not carried over: the hooks are renamed, their notifications take another template syntax, and unknown keys are refused. Start over from config.sample.toml.
+
 ### Added
 
-- Added a stable `code` to the failures a caller acts on, under `--json` in the failure object and in each `check` row, `null` for a failure carrying none: `permission-denied`, `quota-exceeded` and `rate-limited` for a server's refusal (an IMAP `NOPERM` or `OVERQUOTA`, a DAV 403, 429 or 507, a Graph, Gmail, Google Calendar, Google People or JMAP 403, 429 or 507), io-pimdir's codes for a pimdir store it cannot read (`store-version`, `store-uncreated`, `store-foreign`, `store-corrupt`, `store-not-current`, `store-hash-algo`, `store-exposed`, `sync-version`), `account-missing`, `account-default-missing` and `account-default-several` for an account `-a` could not take, and `backend-not-built` for a backend the build leaves out. A watch's `session-lost` event carries the code too, so a reader tells a refused account from a network blip.
-- Added `$collection` to every hook, templates and command environment alike: the collection as the account configured it, whatever the backend calls it, so one command serves every domain.
-- Added `msgraph.hooks.on-message-change`, fired when a draft is edited in place (its `changeKey` moving while no flag does).
-- Added the `notify` cargo feature, on by default, gating desktop notifications. A build without it refuses a `notify` table, naming the feature, and needs no D-Bus.
+- Added the `pimdir` backend, on by default, firing the alarms of one calendar of a local pimdir store that another tool, such as neverest, keeps in sync.
+
+  It reads `pimdir.root`, `pimdir.calendar`, `pimdir.account` (the account the calendar is grouped under, any when unset), `pimdir.watch.poll.interval` and `pimdir.hooks.on-alarm-trigger`. The store is never written, and is opened again on every poll.
+
+  It reads stores of pimdir storage-draft-17, the ones the current neverest writes, and refuses any other draft coded `store-version`, naming its root.
+
 - Added `caldav.hooks.on-alarm-trigger`, fired when an alarm of an event or a task of the watched calendar reaches its trigger ([pimalaya/calendula#29](https://github.com/pimalaya/calendula/discussions/29)).
 
-  Alarms are resolved over the next 48 hours and kept current as the calendar changes, the bodies read only when this hook is set. They wait on the system's wall-clock timer through ceichas, so time asleep counts and a clock change is followed. The hook reads `$summary`, `$kind`, `$trigger`, `$at`, `$uid`, `$etag`, `$recurrenceId`, `$alarm`, `$alarmUid` and `$action`. Nothing is stored: an alarm due while carillon was not running never fires, and one reached more than 15 minutes late (a machine asleep) is dropped with a log line. Cancelled events, completed tasks, acknowledged alarms and `EMAIL` alarms never fire.
+  Alarms are resolved 48 hours ahead and follow the calendar as it changes. They wait on the wall clock, so time asleep counts and a clock change is followed. The hook reads `$summary`, `$kind`, `$trigger`, `$at`, `$uid`, `$etag`, `$recurrenceId`, `$alarm`, `$alarmUid` and `$action`.
 
-- Added the `pimdir` backend, on by default, firing the alarms of one calendar of a local pimdir store another tool keeps in sync: `pimdir.root`, `pimdir.calendar`, `pimdir.watch.poll.interval` and `pimdir.hooks.on-alarm-trigger`. The store is read and never written. It reads stores of pimdir draft-14, the ones neverest writes (io-pimdir 0.18), and refuses a store of another draft, draft-13 and draft-11 included (`store-version`), naming its root.
-- Added `mailbox-not-found`, `calendar-not-found` and `addressbook-not-found`, coding a watched collection that does not exist wherever the backend can tell: an IMAP `NONEXISTENT`, a Maildir folder that is no directory, a DAV 404 on the collection, a JMAP, Gmail, Google Calendar, Google People or Microsoft Graph collection no listing names (Graph answering its direct read 404 or 400 `ErrorInvalidIdMalformed`), a pimdir calendar the store does not hold. A watch's `session-lost` event and a `check` row carry them.
-- Added the pimdir codes himalaya relays to the failure codes: `store-busy`, `store-owned`, `store-staging`, `store-in-flight`, `store-reset`, `lock-replaced`, `item-duplicate`, `flag-invalid`, `action-malformed`, `conflict-unread`, `unsupported`, `no-performer`, `ambiguous-performer`, `index-missing`, `index-outdated`, `index-version`, `index-zone-unknown`, `index-fts5-missing`, `query-refused`, `query-unanswerable` and `tag-refused`, so the `carillon-error` schema names io-pimdir's vocabulary as every pimdir app does.
-- Added `caldav.home` and `carddav.home`, the home set pinned as cardamum and calendula take it: discovery is skipped and the connection opens on it, `server` being optional and unread when `home` is set. A block naming neither is refused when read.
-- Added `pimdir.account`, the account of the store the calendar is grouped under, as himalaya reads it: a calendar grouped under another account is `calendar-not-found`. Unset, the calendar is read whichever account it is grouped under, as before.
-- Added the `account` group every family binary carries, on pimalaya-cli's shared outputs. `account check` checks an account as `check` did, and `check` runs on as its hidden alias, its `carillon-check` schema kept beside `carillon-account-check`. `account list` (alias `ls`) prints every account sorted by name with the backends it declares, `backends` the ones the build serves and `notBuilt` the ones it leaves out, marked `(not built)` in the text, opening nothing and taking no account.
-- Added units to the watch durations, as pimalaya-config reads a duration: `<backend>.watch.poll.interval`, `imap.watch.idle.timeout` and `jmap.watch.push.ping` take `"90s"`, `"5m"`, `"2h"`, `"1d"` or `"1w"` beside integer seconds, which read as before.
+  Nothing is stored: an alarm due while carillon was not running never fires, and one reached more than 15 minutes late is dropped with a log line. Cancelled events, completed tasks, acknowledged alarms and `EMAIL` alarms never fire.
+
+- Added `msgraph.hooks.on-message-change`, fired when a draft is edited in place.
+- Added `$collection` to every hook, in notifications and command environments: the collection as the account configured it, whatever the backend calls it.
+- Added `timeout` to every hook (`"30s"`, `"5m"`, `90`, zero refused).
+
+  A command still running past it is sent SIGTERM, then SIGKILL five seconds later, and reported as a `hook-failed` naming the timeout. Unset, a command runs until it ends.
+
+- Added `account list` (alias `ls`), printing every account sorted by name with the backends it declares.
+
+  Under `--json`, `backends` holds the ones the build serves and `notBuilt` the ones it leaves out, which the text marks `(not built)`. It opens nothing and takes no `-a`.
+
+- Added `account check`, replacing `check`, which stays as its hidden alias with its `carillon-check` schema beside `carillon-account-check`.
+- Added a stable `code` to the `--json` failure object and to each `account check` row, `null` for a failure carrying none.
+
+  `permission-denied`, `quota-exceeded` and `rate-limited` code a server's refusal (an IMAP `NOPERM` or `OVERQUOTA`, an HTTP 403, 429 or 507). `mailbox-not-found`, `calendar-not-found` and `addressbook-not-found` code a watched collection that does not exist, wherever the backend can tell.
+
+  `account-missing`, `account-default-missing` and `account-default-several` code an account `-a` could not take. A pimdir store carillon cannot read gets io-pimdir's codes: `store-version`, `store-uncreated`, `store-foreign`, `store-corrupt`, `store-not-current`, `store-hash-algo`, `store-exposed` and `sync-version`.
+
+  A watch's `session-lost` event carries the code too, so a reader tells a refused account from a network blip.
+
+- Added the rest of io-pimdir's codes to the `carillon-error` schema, as every pimdir app names them.
+- Added `caldav.home` and `carddav.home`, pinning the home set.
+
+  Discovery is skipped and `server` becomes optional, unread when `home` is set. A block naming neither is refused when read.
+
 - Added an account-level `tls` table, inherited field by field by each backend's `tls` (`provider`, `rustls.crypto`, `cert`, and `client` as one).
-- Added `tls.client.cert` and `tls.client.key`, a PEM client certificate and its key presented to a server asking for one (mutual TLS), on the account and on every network backend.
-- Added `timeout` to every hook, beside its command, read as pimalaya-config's `Timeout` (`"30s"`, `"5m"`, `90`, zero refused): a command still running once it passed is sent SIGTERM, then SIGKILL five seconds later, and printed as a `hook-failed` naming the timeout. Unset, a command runs until it ends, as before.
-- Added `property-invalid` to the pimdir codes carillon relays, io-pimdir 0.20's code for a malformed item property, as himalaya relays it.
+- Added `tls.client.cert` and `tls.client.key` on the account and every network backend, a PEM client certificate and its key for mutual TLS.
+- Added units to `<backend>.watch.poll.interval`, `imap.watch.idle.timeout` and `jmap.watch.push.ping`: `"90s"`, `"5m"`, `"2h"`, `"1d"` or `"1w"`, beside integer seconds.
+- Added the `notify` cargo feature, on by default, gating desktop notifications.
+
+  A build without it needs no D-Bus and refuses a `notify` table, naming the feature.
+
+- Added the `carillon-error` schema of the failure object to `json-schema`, and those of `completion`, `manual` and `json-schema` itself.
+
+  Each schema carries an `$id` naming the contract version (`v0.2`).
+
+- Added config.sample.toml to the release archives and the Nix package, as share/doc/carillon/config.sample.toml, which install.sh copies under its prefix.
 
 ### Changed
 
-- **BREAKING**: Bumped io-pimdir to 0.20.0 (pimdir storage-draft-17): a pimdir watch reads the stores neverest writes on it, and refuses a store of storage-draft-16 or earlier (`store-version`), its message naming carillon and the draft it reads. A store is never migrated: let the neverest that wrote it drain its queue, move its directory aside, and let the new neverest sync a new store under the same root; a running carillon reads it on its next poll. Restart a carillon older than this release, which keeps reading the store moved aside.
-- Bumped pimalaya-cli to 0.8.1, io-gpeople to 0.9.1 and io-webdav to 0.14.0: `--log-file` refuses a symbolic link to an existing file, as its help says; a `gpeople` watch reads a sync-token page whose `totalItems` is negative (`-1`) where it failed to parse it; a DAV listing or re-enumeration holding a member the server answered with an error (a 403, a 5xx) reports no removal and logs a warning, where it read that member as removed.
-- Changed a pimdir watch listing its calendar again (the store reset, a purge anywhere in it, the calendar moved) to read only the events new or holding another body, keeping the others, where it read every body and built a second set of alarms beside the first: after a purge, a poll over 10,000 events costs about a quarter of the CPU and no extra memory.
-- Changed the sleeps of a watch to wait for the next round, the next hook command or the shutdown, where they woke every 100 to 200 ms: the poll between two rounds of every polled backend, the reconnect backoff and the hook runner with no command running. An idle watch wakes 10 times a second, where it woke 25.
-- Changed config.sample.toml to the compact shape of himalaya's and neverest's: one commented key per line with a trailing note, grouped by backend, the keys every backend shares (hooks, TLS, ALPN, proxy) shown once. Every hook name is in it, and it loads as written.
-- Changed `main` to install the detected SIMD CPU token first (simd-cpu 0.1), as the other Pimalaya binaries do, so the base64 and quoted-printable codecs mime-rs runs leave their portable baseline.
-- **BREAKING**: Changed hook commands to run off the watch, where a running command held it: a command runs with no stdin, one instance per command of an account, the firings meanwhile waiting their turn in order (an exact duplicate dropped, 1000 waiting at most), and a shutdown sends SIGTERM to the ones running, then SIGKILL after a second. A slow hook no longer delays the next change nor drops the alarms due meanwhile.
-- **BREAKING**: Changed a host that is not ASCII to be refused everywhere: url builds its IDNA without a Unicode back end (`idna_adapter` pinned to 1.0.0, as Himalaya, Cardamum, Calendula and Ortie do), so 21 crates (the ICU4X ones among them) leave the tree, and a DAV `server` or `home` or a JMAP `server` naming such a host fails with "Host `bücher.de` is not ASCII: write it in its Punycode form (xn--...)", where it was turned into its Punycode form silently.
-- **BREAKING**: Changed `watch` to print what it observes on stdout, one event per line as it comes (`session-opened` once a session is connected, authenticated and its collections read, `session-lost`, `changed`, `hook-failed`, `alarm-fired`), then one result line once SIGINT, SIGTERM or SIGHUP stops it (`{"stoppedBy":"signal"}`, exit 0), where it printed nothing but logs and a Ctrl+C notice on stderr. Text events reach a pipe too, for a status bar. A lost session and a failed hook are events rather than `warn` log lines, a hook command exiting non-zero is now a failed hook, a hook command's stdout goes to carillon's stderr, and a second signal ends the process at once with 130. `hook-failed` names the `hook` and the item `id` it fired for, and `alarm-fired` its `trigger` as an instant in UTC (`2026-11-20T15:22:22Z`), the hook variables `$trigger` and `$at` keeping the system zone's offset. `json-schema` describes them as `carillon-watch` and `carillon-watch.events` (pimalaya-cli 51ce8b1).
-- **BREAKING**: Changed the hooks to the shape Comodoro's take: the table under each backend is `hooks`, a hook's command is `command`, and every event is named with a bare verb, `on-<subject>-add`, `-remove` and `-change` (`on-message-add`, `on-flag-remove`, `on-card-change`, `on-event-add`, `on-task-remove`…). The former spellings are refused as unknown keys, where 0.2 read them: `<backend>.hook` and `on-message-added`, `on-message-removed`, `on-message-changed`, `on-flag-added`, `on-flag-removed`, `on-card-added`, `on-card-removed`, `on-card-changed`, `on-event-added`, `on-event-removed`, `on-event-changed`, `on-task-added`, `on-task-removed` and `on-task-changed`. `on-alarm-trigger` keeps its name, and `cmd` still reads as the alias of `command`, as everywhere the family configures a command.
-- **BREAKING**: Changed the configuration to refuse a key it does not read at the root and in an account, which it ignored, as every backend table already refused one: a file is no longer shared with himalaya's account keys, and a backend the build leaves out, which 0.2 skipped, loads but fails coded `backend-not-built` naming its cargo feature when `watch` or `check` reaches it, so one file serves every build. `watch` stops such an account for the run rather than retrying it, the others watching on, and fails with that code, exit 1, when no account is left. The keys carillon moved under each backend before 0.1 (the account-level `folder`, `mailbox`, `collection`, `watch` and `hooks`, and the `dav` backend) are refused as any unknown key.
-- **BREAKING**: Changed a command line the grammar refuses under `--json` to print the failure object coded `usage-invalid` on stdout, nothing on stderr, still exiting 2; without `--json`, clap's message stays on stderr.
-- **BREAKING**: Changed `check` to exit 3 when a backend failed, once its report is printed, and to print pimalaya-cli's list of accounts, `{"accounts": [{"account", "backends"}]}`, each row carrying `code` and `tls` beside `backend`, `ok` and `error` (pimalaya-cli's backend check row).
+- **BREAKING**: Changed the hooks to the shape Comodoro's take: the table is `<backend>.hooks` and a hook's command is `command`, `cmd` staying its alias.
 
-  `tls` is the TLS the backend's table resolved to, `{provider, crypto, cert, clientCert}`, and `null` for a local backend or a cleartext connection; the text appends `, TLS <parts>` to the row.
-- **BREAKING**: Changed `-c` to take one path per flag, as pimalaya-cli's `ConfigFlags` do: repeat it to merge several files. A value is never split on `:`, so `-c a:b` now names one file called `a:b`, and the `CARILLON_CONFIG` environment variable is no longer read.
-- **BREAKING**: Changed `-a` to resolve one way in `watch` and `check`, through pimalaya-config 0.5: `-a default` names the account called `default` like any other name, where `check` took the account marked default (omit `-a` for that), `check` naming an unknown account lists the ones the configuration holds, and several accounts marked default are refused naming them, where one of them was picked.
-- **BREAKING**: Changed a bare `carillon` finding no configuration to fail as any command does, exit 1 naming the path it looked at and the sample (the welcome at a terminal), as himalaya's does, where it printed the help and exited 0; with a configuration, a broken one included, it still prints the help. Under `--json` it is refused coded `usage-invalid`, "A command is required, see --help", exit 2, its configuration unread. `manual`, `completion` and `json-schema` given no argument are refused by clap naming `--dir`, exit 2, coded `usage-invalid` under `--json`, where `manual` and `completion` printed their help on stderr.
-- **BREAKING**: Changed the `dav` cargo feature into `caldav` and `carddav`, each named as the configuration block it builds, as cardamum and calendula name theirs: `caldav` builds the `caldav` block and the alarms of a calendar, `carddav` the `carddav` block, both on by default. A packager building with `--features dav` builds with `--features caldav,carddav`; no configuration key changes, and a build leaving one out names that feature when a command reaches its block.
-- Changed the text of `check` to the layout of every family `account check`: `Account:` and one `<backend>:` field per backend, aligned past the longest label, where the backend lines were indented.
-- Changed the text events of `watch` to sanitize what a server, a store or the configuration hands them (an account, a collection, an id, a flag, a summary, an error) through pimalaya-cli's `sanitize::text`, so a control or bidi character prints as U+FFFD and an event stays one line.
-- Changed the abouts of `completion`, `manual` and `json-schema` to pimalaya-cli's and their order to himalaya's (`completion`, `manual`, `json-schema`).
-- Changed the help to print each paragraph on one line whatever the terminal width, and without colour, clap taking the feature set of the other Pimalaya CLIs, where it wrapped at the terminal width (100 columns with none) and coloured itself on a terminal.
-- Changed the `account` and `account list` abouts to himalaya's: "Manage accounts defined in the TOML configuration file" and "List all accounts declared in the configuration".
-- Changed the refusal of a key carillon read before (the account-level `folder`, `mailbox`, `collection`, `watch` and `hooks`, the `dav` backend) to serde's unknown-field error, as any key it does not read, where carillon said "moved under each backend as" or "is now".
-- Changed the default features to include `vendored`, as every family binary's do: a default build bundles SQLite and D-Bus, where it linked the system libsqlite3 and libdbus and failed to start where they were missing.
-- **BREAKING**: Changed hook notifications to pimalaya-config's templates, in the shell's syntax shared with hook commands.
+  Every event is named with a bare verb: `on-<subject>-added`, `-removed` and `-changed` become `on-<subject>-add`, `-remove` and `-change` (`on-message-add`, `on-flag-remove`, `on-event-change`). The former spellings, `<backend>.hook` included, are refused as unknown keys. `on-alarm-trigger` keeps its name.
 
-  `${name:default}` becomes `${name:-default}`, and the envelope variables become camelCase: `$sender_name`, `$sender_address`, `$recipient_name` and `$recipient_address` become `$senderName`, `$senderAddress`, `$recipientName` and `$recipientAddress`, in notifications and in the environment of commands alike. A notification in the former spelling is refused when the configuration is read, naming what to rewrite. A default no longer excuses a variable the hook does not have.
+- **BREAKING**: Changed hook notifications to pimalaya-config's templates, in the shell syntax hook commands use.
 
-- Bumped crypto-bigint to 0.7.10, ctutils to 0.4.6, rustls-webpki to 0.103.16 and webpki-root-certs to 1.0.11, fixing RUSTSEC-2026-0382, RUSTSEC-2026-0383, RUSTSEC-2026-0385 and RUSTSEC-2026-0387.
-- Changed `caldav.calendar` and `carddav.addressbook` named by one path segment to be looked up under the calendar or addressbook home set the server's principal names, which is the id a listing of the account gives. Absolute paths and other relative paths read as before.
+  `${name:default}` becomes `${name:-default}`. `$sender_name`, `$sender_address`, `$recipient_name` and `$recipient_address` become `$senderName`, `$senderAddress`, `$recipientName` and `$recipientAddress`, in command environments too.
 
-- Changed `gpeople.addressbook = "contacts"` to watch every contact the account owns, and `msgraph.addressbook = "contacts"` to name the default contact folder first; a Graph contact folder or calendar is also found by id beyond the first listing page, nested contact folders included.
+  The former spelling is refused when the configuration is read, naming what to rewrite. A default no longer excuses a variable the hook does not have.
 
-- Bumped pimalaya-stream to 0.4, io-gcal to 0.5, io-gmail to 0.9, io-gpeople to 0.8, io-http to 0.8, io-imap to 0.11, io-jmap to 0.10, io-maildir to 0.5, io-msgraph to 0.9, io-pimdir to 0.13, io-sasl to 0.2, io-webdav to 0.11 and pimalaya-cli to 0.5.
+- **BREAKING**: Changed hook commands to run off the watch, with no stdin, one instance per command of an account.
 
-  A WebDAV multistatus is parsed 3.4 to 9 times faster, and an answer that is not one whole multistatus fails the round instead of reading as a shorter listing. `json-schema` now also describes `completion`, `manual` and `json-schema`.
+  A slow hook no longer delays the next change nor drops the alarms due meanwhile. Firings wait their turn in order, an exact duplicate dropped, 1000 waiting at most. A shutdown sends SIGTERM to the running commands, then SIGKILL after a second.
 
-  io-webdav 0.10 and later read a listed id percent-decoded, so the family's DAV listings print `My Book` where they printed `My%20Book`: `caldav.calendar` and `carddav.addressbook` take either. A DAV hook's `$id` keeps the spelling of the href the server serves, `%20` included.
+- **BREAKING**: Changed `watch` to print what it observes on stdout, one event per line, then one result line once SIGINT, SIGTERM or SIGHUP stops it (`{"stoppedBy":"signal"}`, exit 0).
 
-- Bumped pimalaya-config to 0.5.2: an unknown key's error lists no removed key.
+  The events are `session-opened`, `session-lost`, `changed`, `hook-failed` and `alarm-fired`, described by the `carillon-watch` and `carillon-watch.events` schemas. Text events reach a pipe too, for a status bar, a control or bidi character a server or store handed them printing as U+FFFD.
 
-- Bumped pimalaya-cli to 0.6.0, whose listing frame carillon does not print: no output moves.
+  A lost session and a failed hook are events rather than `warn` log lines, and a hook command exiting non-zero is a failed hook. A hook command's stdout goes to carillon's stderr. A second signal ends the process at once with 130.
 
-- Bumped io-imap to 0.11.2: an IMAP watch takes the QRESYNC path only when the server's `ENABLED` names QRESYNC, and diffs the whole mailbox otherwise, where a server answering its `ENABLE` with a bare `OK` had every arrival, flag change and expunge lost.
+  `hook-failed` names the `hook` and the item `id`. `alarm-fired` gives its `trigger` in UTC (`2026-11-20T15:22:22Z`), while `$trigger` and `$at` keep the system zone's offset.
 
-- Bumped io-pimdir to 0.16.0 (pimdir draft-13): a pimdir watch reads the stores the current neverest writes, and refuses a draft-11 one (`store-version`).
+- **BREAKING**: Changed the configuration to refuse an unknown key at the root and in an account, as backend tables already did.
 
-  A pimdir watch no longer reads a sync's commit half way.
+  A file is no longer shared with himalaya's account keys. The keys moved under each backend before 0.1 (the account-level `folder`, `mailbox`, `collection`, `watch` and `hooks`, and the `dav` backend) are refused as any unknown key.
 
-- Bumped io-pimdir to 0.17.0 (pimdir draft-14): a pimdir watch reads the stores neverest writes on it, and refuses a draft-13 one (`store-version`), its message saying which of the store and carillon is the earlier.
+- **BREAKING**: Changed a backend the build leaves out to fail coded `backend-not-built` when a command reaches it, where 0.2 skipped it.
 
-- Bumped io-pimdir to 0.19.0 (pimdir draft-15): a pimdir watch reads the stores neverest writes on it, and refuses a draft-14 one (`store-version`).
+  The configuration still loads, so one file serves every build. `watch` stops such an account for the run, the others watching on, and fails with exit 1 when none is left.
 
-- Bumped pimalaya-config to 0.6.0, pimalaya-cli to 0.6.1 and io-jmap to 0.10.1.
+- **BREAKING**: Changed the `dav` cargo feature into `caldav` and `carddav`, both on by default.
 
-  A hook notification receives its variables as text: `&`, `<`, `>`, `"` and `'` are escaped where the daemon reads markup (every Unix but macOS), a line break or a tab turns into a space, and other control and bidirectional override characters are dropped, so `Alice <alice@example.org>` shows as written rather than as a broken tag. A failing secret command ends its message with ", run `<command>` yourself to see why", and a TOML parse error no longer prints the source line, which may hold a secret. A text error report sanitizes its chain line by line, and `--log-file` creates its file at 0600, refusing a symbolic link.
+  A packager building with `--features dav` builds with `--features caldav,carddav`. No configuration key changes.
 
-- Changed the io-imap dependency to 0.12.
-- Changed the io-sasl dependency to 0.3.
-- Changed the io-pimdir dependency to 0.18 (still pimdir draft-14).
-- Changed the pimalaya-cli dependency to 0.7: the `carillon-error` schema admits the family's `request-origin` code, which carillon never raises.
-- Changed the ical-rs dependency to 0.7.2.
+- **BREAKING**: Changed a host that is not ASCII to be refused.
 
-- Bumped io-gcal to 0.5.1, io-gpeople to 0.8.1 and io-msgraph to 0.9.2: their changes write series and update persons, which a watch never does, so no watch moves.
+  A DAV `server` or `home` or a JMAP `server` naming one fails asking for its Punycode form (`xn--...`), where it was converted silently.
 
-- Changed an IMAP watch reopened after a lost connection to resume from what the lost one knew.
+- **BREAKING**: Changed `-c` to take one path per flag, repeated to merge several files.
 
-  What moved in the mailbox during the outage is reported, where the reopened watch used to take a new baseline. A mailbox recreated meanwhile still takes one.
+  A value is no longer split on `:`, and the `CARILLON_CONFIG` environment variable is no longer read.
 
-- Changed the Microsoft Graph mail and contacts deltas to ask for 1000 items a page (`Prefer: odata.maxpagesize`), where Graph's default of 10 made the first listing of a 20,000-message folder about 2,000 requests.
+- **BREAKING**: Changed `-a` to resolve one way in `watch` and `account check`.
 
-- Changed a Gmail watch reopened after a lost session to read its history from the cursor the lost one had reached.
+  `-a default` names the account called `default`, where `check` took the account marked default (omit `-a` for that). An unknown name lists the accounts the configuration holds, and several accounts marked default are refused, where one of them was picked.
 
-- Changed the JMAP event stream to be reopened with the id of the last event read.
+- **BREAKING**: Changed a bare `carillon` finding no configuration to fail with exit 1, naming the path it looked at and the sample, where it printed the help and exited 0.
 
-  A server keeping its events pushes what moved between two streams.
+  With a configuration, a broken one included, it still prints the help. Under `--json` it is refused coded `usage-invalid`, exit 2.
 
-- Changed piped `--json` output to print one value per line, each schema of `json-schema` to carry an `$id` naming the contract version (`v0.2`), and added `carillon-error`, the schema of the JSON failure object (pimalaya-cli `55b6693`).
+- **BREAKING**: Changed `manual`, `completion` and `json-schema` given no argument to be refused naming `--dir`, exit 2, where `manual` and `completion` printed their help.
+- **BREAKING**: Changed a command line refused under `--json` to print the failure object coded `usage-invalid` on stdout, nothing on stderr, still exiting 2.
+- **BREAKING**: Changed `account check` to exit 3 when a backend failed, once its report is printed.
+- **BREAKING**: Changed the `account check` output to pimalaya-cli's list of accounts.
+
+  `--json` prints `{"accounts": [{"account", "backends"}]}`, each backend row carrying `backend`, `ok`, `error`, `code` and `tls`. The text prints `Account:` then one aligned `<backend>:` field per backend.
+
+  `tls` is the TLS the backend resolved to, `{provider, crypto, cert, clientCert}`, or `null` for a local backend or a cleartext connection. The text appends `, TLS <parts>` to the row.
+
+- Changed piped `--json` output to print one value per line.
+- Changed the default features to include `vendored`: a default build bundles SQLite and D-Bus, where it linked the system libraries and failed to start without them.
+- Changed `caldav.calendar` and `carddav.addressbook` naming one path segment to be looked up under the home set the server's principal names, the id an account listing gives.
+
+  Absolute paths and other relative paths read as before.
+
+- Changed `caldav.calendar` and `carddav.addressbook` to take a listed id percent-decoded or not (`My Book` or `My%20Book`).
+
+  A DAV hook's `$id` keeps the spelling of the href the server serves, `%20` included.
+
+- Changed `gpeople.addressbook = "contacts"` to watch every contact the account owns, and `msgraph.addressbook = "contacts"` to name the default contact folder.
+- Changed an IMAP or Gmail watch reopened after a lost session to report what moved during the outage, where it took a new baseline.
+
+  An IMAP mailbox recreated meanwhile still takes one. The JMAP event stream reopens from the last event read, so a server keeping its events pushes what moved between two streams.
+
+- Changed config.sample.toml to one commented key per line, grouped by backend, listing every hook; it loads as written.
+- Changed the help to print each paragraph on one line whatever the terminal width, and without colour.
 
 ### Removed
 
-- **BREAKING**: Removed the wizard: the `configure` command (alias `wizard`), and the offer a bare `carillon` or a command finding no configuration made.
+- **BREAKING**: Removed the wizard: the `configure` command (alias `wizard`) and the offer to run it when no configuration is found.
 
-  A configuration is written by hand from config.sample.toml. A command finding no configuration, a bare `carillon` included, fails naming the path it looked at and the sample, a person at a terminal being shown the commands creating the file from the sample instead (pimalaya-cli's welcome).
+  A configuration is written by hand from config.sample.toml. A command finding none at a terminal shows the commands creating it from the sample.
 
 ### Fixed
 
-- Fixed a JMAP round reading every changed item through one `/get`, whatever the server's `maxObjectsInGet`: a batch larger than that (a flag set over 5000 messages on Stalwart) was refused with `requestTooLarge`, the session was lost and the reopened one took a new baseline, so none of the batch fired a hook. The items are now read in calls the server takes.
-- Fixed a JMAP watch missing what moved while its server could no longer calculate changes: a `cannotCalculateChanges` answer ended the session, which reopened on a new baseline, so an arrival in between fired no hook. The collection is now listed again and only what differs from what the watch knew is reported, the session going on.
-- Fixed a JMAP round reading one `/changes` answer only: the rest of a batch the server answered with `hasMoreChanges` waited for the next push or poll. A round now asks again until the server has no more changes.
-- Fixed IMAP flags reaching `$flag` and the `--json` events as sent (`\Seen`, `\Answered`, `$Forwarded`) where JMAP and Maildir name them `Seen`, `Answered` and `Passed`: an IMAP system flag now reads without its backslash and `$Forwarded` reads `Passed`, other keywords as sent. Flag filters matched either spelling and are unchanged.
-- Fixed a pimdir store moved aside and synced anew under `pimdir.root` while carillon ran never being read: the watch kept the file it opened and fired the moved store's alarms. The store is opened again on every poll.
-- Fixed an alarm firing twice when its pimdir store was synced anew within the grace window after it fired: a firing is told apart by its event's `UID`, alarm, occurrence and trigger, no longer by the item id, which a new store hands out again.
-- Fixed config.sample.toml pointing `pimdir.root` at `~/.local/share/pimdir`, where neverest keeps no store: it names `~/.local/state/neverest`, the store neverest syncs on Linux, and `pimdir.calendar` says to take the id `pimdir collection list` prints.
-- Fixed `install.sh` saving an HTTP error page as the archive: the download now fails on an HTTP error, so `tar` never reads a 404 page.
+- Fixed an IMAP watch losing every change against a server answering its `ENABLE` with a bare `OK`: it takes the QRESYNC path only when `ENABLED` names QRESYNC.
+- Fixed IMAP flags reaching `$flag` and the `--json` events as sent (`\Seen`, `$Forwarded`).
 
-- Fixed the Nix package and the release archives shipping no config.sample.toml, which the first-run welcome looks for beside the binary: package.nix installs it under share/doc/carillon/, and install.sh copies it from the archive, as neverest's do.
-- Fixed install.sh fetching from soywod/carillon and asking `arm64-linux`, `x86_64-macos` and `arm64-macos`, which no release publishes: it fetches from pimalaya/carillon the `aarch64-linux`, `x86_64-darwin` and `aarch64-darwin` archives, and installs on i686, armv6l and armv7l Linux too, as neverest's does.
-- Fixed `-b` naming a backend the account has no block for failing uncoded, and `watch` retrying it for ever: `account check` and `watch` fail coded `capability-missing`, "Account `a` has no `imap` block", as himalaya refuses its `--backend`, and `watch` stops that account for the run.
-- Fixed a JMAP event stream gone dead holding a push watch: one that sent nothing for three pings is opened again.
-- Fixed the sample's `on-flag-add` command notifying the literal `$flag set on $id`: a list runs as written, its variables in its environment only, so the sample hands it to `sh -c`, and says so.
-- Fixed a DAV watch or an IMAP envelope resolution holding a dead connection until TCP gave up, after a resume or a network change: a request the server sends nothing back to for 60 seconds fails, and the connection is reopened.
-- Fixed a Gmail arrival reading `$recipient` from `To` cut at its first comma, so `"Doe, Jane" <jane@example.org>, bob@example.org` gave `"Doe`: `To` and `From` are read as an address list, their first mailbox taken as on the other backends.
-- Fixed a Gmail arrival handing its hook RFC 2047 encoded words, were the API to leave any: `$subject` and the names are decoded as on IMAP.
-- Fixed a CalDAV server truncating the alarm `calendar-query` leaving the alarms of the members it left out unfired for the session: they are read by `calendar-multiget`.
-- Fixed an IMAP arrival handing its hook the subject and names as RFC 2047 encoded words (`=?UTF-8?Q?R=C3=A9union?=`): `$subject`, `$senderName`, `$recipientName`, `$sender` and `$recipient` are decoded, as the other mail backends and himalaya read them.
-- Fixed a JMAP collection larger than one page being watched as its first page: the baseline is listed page by page, and read again when its count does not end at the server's `total`.
-- Fixed a JMAP item moving while its collection was first listed being lost: the state is read before the listing, so the first round reports it.
-- Fixed a JMAP watch presenting its first credential after a reconnect: a round retried on a fresh connection and every event stream present the credential resolved for them, so a rotated token no longer loses the session and the change that came with its expiry.
-- Fixed a DAV server answering 401 to a block with no `auth` failing with the bare `WebDAV server returned HTTP 401`: the watch and `account check` say the server asks for credentials and the account configures no `auth`, still uncoded.
-- Fixed the Ctrl+C notice of `watch` printed on stdout, which `--json` reserves for values: it goes to stderr.
-- Fixed a credential command prompting for a password hanging: it reads the terminal again (pimalaya-config 0.4.1).
+  A system flag now reads without its backslash and `$Forwarded` reads `Passed`, as on JMAP and Maildir. Flag filters matched either spelling and are unchanged.
+
+- Fixed IMAP and Gmail arrivals handing their hook RFC 2047 encoded words (`=?UTF-8?Q?R=C3=A9union?=`).
+
+  `$subject`, `$sender`, `$senderName`, `$recipient` and `$recipientName` are decoded.
+
+- Fixed a Gmail arrival reading `$recipient` from `To` cut at its first comma, so `"Doe, Jane" <jane@example.org>` gave `"Doe`.
+- Fixed an IMAP arrival resolving to another message's data when the server adds a FETCH of its own to the answer.
+- Fixed `imap.sasl.scram-sha-256` failing as an unsupported mechanism.
+- Fixed a Gmail history listing that never ends holding the watch: it stops on a repeated page token or past 1000 pages, and the watch resumes from now.
+- Fixed `-b` naming a backend the account has no block for failing uncoded, `watch` retrying it for ever.
+
+  `account check` and `watch` fail coded `capability-missing`, and `watch` stops that account for the run.
+
+- Fixed a JMAP round of more items than the server's `maxObjectsInGet` being refused, so none of them fired a hook.
+- Fixed a JMAP round reading one `/changes` answer only, the rest of a `hasMoreChanges` batch waiting for the next push or poll.
+- Fixed a JMAP watch missing what moved while its server answered `cannotCalculateChanges`: the collection is listed again and only what differs is reported.
+- Fixed a JMAP collection larger than one page being watched as its first page.
+- Fixed a JMAP item moving while its collection was first listed being lost.
+- Fixed a JMAP watch presenting its first credential after a reconnect, so a rotated token lost the session and the change that came with its expiry.
+- Fixed a dead JMAP event stream holding a push watch: one that sent nothing for three pings is opened again.
+- Fixed a DAV watch or an IMAP envelope resolution holding a dead connection after a resume or a network change until TCP gave up: a request unanswered for 60 seconds fails and the connection is reopened.
 - Fixed a DAV watch losing what moved when the server closed its idle connection: the round is run again on a fresh connection.
 - Fixed a DAV server with no `sync-collection` being unwatchable: the collection is listed on every poll instead.
-- Fixed a rejected DAV sync token hiding what moved meanwhile: the collection is read again against what the watch knew.
+- Fixed a rejected DAV sync token hiding what moved meanwhile.
+- Fixed a DAV listing reading a member the server answered with an error (a 403, a 5xx) as removed: no removal is reported and a warning is logged.
+- Fixed a DAV answer that is not one whole multistatus reading as a shorter listing: the round fails.
 - Fixed a calendar holding events and tasks skipping every member whose content type names no component.
-- Fixed a DAV collection id naming no collection reaching the server, where `""`, `/`, `..` or `work/x/..` addressed the home set, the server root, the home set's parent or the calendar `work`: an id that is empty, `/` alone, or holds an empty, `.` or `..` segment (percent-encoded or `\`-separated forms included) is refused by `watch` and `account check` before connecting, coded `calendar-not-found` or `addressbook-not-found` (io-webdav 0.9.1's `check_collection_id`).
-- Fixed a relative DAV collection id holding a byte a path segment cannot hold raw being sent as given, a `\` read as a separator: each such byte is percent-encoded as io-webdav 0.9.1 encodes one, an escape already there kept, and the collection path ends with a slash.
-- Fixed `-b` leaving `pimdir` out of the order its help gives and refusing an unknown backend without naming the others: its help and its refusal list every backend as `[possible values: auto, imap, jmap, maildir, caldav, carddav, msgraph, gmail, gcal, gpeople, pimdir]`.
-- Fixed `imap.sasl.scram-sha-256` failing as an unsupported mechanism: io-imap is built with its `scram` feature.
-- Fixed an IMAP arrival resolving to the data of another message when the server adds a FETCH of its own to the answer.
-- Fixed a Gmail history listing that does not end holding the watch: it stops on a repeated page token or past 1000 pages, and the watch resumes from now.
-- Fixed a hostile or broken server reaching the watch through its protocol libraries, now released. io-http (e181530, in 0.6) caps response heads at 64 KiB and bodies at 256 MiB, fails on a body cut short instead of spinning forever, and no longer panics on a huge chunk size. io-imap (b1ab38e, in 0.8) no longer panics on a greeting carrying a literal, scans FETCH lines incrementally under a cap, and keeps passwords and SASL responses out of trace logs. io-webdav (0.7) parses a multistatus in linear time and caps its nesting at 64, where a deep one overflowed the stack.
+- Fixed a DAV collection id naming no collection reaching the server (`""`, `/`, `..`, `work/x/..`).
+
+  An id that is empty, `/` alone, or holds an empty, `.` or `..` segment, encoded forms included, is refused before connecting, coded `calendar-not-found` or `addressbook-not-found`.
+
+- Fixed a relative DAV collection id holding a byte a path segment cannot hold raw being sent as given: it is percent-encoded, `\` included.
+- Fixed a DAV server answering 401 to a block with no `auth` failing with a bare `WebDAV server returned HTTP 401`: the error says the account configures no `auth`.
+- Fixed a Microsoft Graph contact folder or calendar past the first listing page not being found by id, nested contact folders included.
+- Fixed a `gpeople` watch failing on a sync-token page whose `totalItems` is negative.
+- Fixed hook notification variables read as markup where the daemon reads it: `Alice <alice@example.org>` shows as written.
+
+  `&`, `<`, `>`, `"` and `'` are escaped, a line break or a tab turns into a space, and other control and bidirectional override characters are dropped.
+
+- Fixed a credential command prompting for a password hanging: it reads the terminal again.
+- Fixed install.sh fetching from soywod/carillon archive names no release publishes: it fetches the `aarch64-linux`, `x86_64-darwin` and `aarch64-darwin` archives from pimalaya/carillon, and installs on i686, armv6l and armv7l Linux too.
+- Fixed install.sh saving an HTTP error page as the archive: the download fails on an HTTP error.
+
+### Security
+
+- Fixed RUSTSEC-2026-0382, RUSTSEC-2026-0383, RUSTSEC-2026-0385 and RUSTSEC-2026-0387 by bumping crypto-bigint to 0.7.10, ctutils to 0.4.6, rustls-webpki to 0.103.16 and webpki-root-certs to 1.0.11.
+- Fixed a hostile or broken server crashing, stalling or exhausting the watch.
+
+  HTTP response heads are capped at 64 KiB and bodies at 256 MiB, a body cut short fails, and a huge chunk size no longer panics. An IMAP greeting carrying a literal no longer panics, FETCH lines are scanned under a cap, and a WebDAV multistatus is parsed in linear time, its nesting capped at 64 where a deep one overflowed the stack.
+
+- Fixed passwords and SASL responses reaching IMAP trace logs.
+- Fixed a TOML parse error printing its source line, which may hold a secret.
+- Fixed a text error report printing raw the control characters a server handed it: its chain is sanitized line by line.
+- Changed `--log-file` to create its file readable by its owner alone (0600) and to refuse a symbolic link.
 
 ## [0.2.0] - 2026-10-02
 

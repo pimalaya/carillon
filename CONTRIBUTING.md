@@ -35,6 +35,10 @@ The CI `features` job of .github/workflows/tests.yml runs clippy over these sets
 
 ## Watching against a real server
 
-`cargo test` runs offline: the unit tests and tests/first_run.rs, which runs the built binary as a first run meets it. A watch needs a server, a collection and something moving in it, so the suites proving one are live and ignored by default: tests/google.rs, tests/msgraph.rs and tests/jmap.rs (a local Stalwart provisioned by tests/stalwart.sh, and Fastmail), each header naming the credentials it reads and the command running it, one thread at a time. A backend without a live suite is verified by hand against a real account, `carillon -a <account> check` first for the connection, then `carillon -a <account> watch` with the event provoked from another client. Report what you ran against in the change proposal, since providers disagree on what they advertise and on what they then honour.
+`cargo test` runs offline, a local Maildir standing in for a server. A watch over a network backend needs a server, a collection and something moving in it, so the suites proving one are live and ignored by default: tests/google.rs, tests/msgraph.rs and tests/jmap.rs.
 
-In CI, the offline jobs run on every push. The live job (tests/google.rs, tests/msgraph.rs, tests/jmap.rs) never runs on push: it runs weekly (Mondays, 06:00 UTC) and by hand with `gh workflow run tests.yml`. A release runs it by hand on the commit to tag. The Google calendar test works in a long-lived calendar, `pimalaya-live-carillon-hooks`, created when absent, emptied at the start and end of a run, and never deleted.
+The JMAP suite runs against a local Stalwart provisioned by tests/stalwart.sh, and Fastmail. Each suite's header names the credentials it reads and the command running it, one thread at a time.
+
+A backend without a live suite is verified by hand against a real account: `carillon account check -a <account>`, then `carillon watch -a <account>` with the event provoked from another client. Report what you ran against in the change proposal.
+
+In CI, the offline jobs run on every push. The live job never runs on push: it runs weekly (Mondays, 06:00 UTC) and by hand with `gh workflow run tests.yml`, and a release runs it on the commit to tag. The Google calendar test works in a long-lived calendar, `pimalaya-live-carillon-hooks`, emptied at the start and end of a run and never deleted.
