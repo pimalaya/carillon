@@ -20,10 +20,10 @@ The pieces exist: the alarm path holds firings in memory and waits on ceichas's 
 - Variables: `$name` (the card's `FN`), `$kind` (`birthday` or `anniversary`), `$date` (the date, year included when the card states one), `$age` (the years it completes, empty for a year-less date), `$uid`, plus the account and collection variables every hook has.
 - Year-less dates (`--MMDD`, RFC 6350 §4.3.1, and Google People's year-less birthday) fire with `$age` empty. A 29 February fires on 28 February in a common year.
 - Reading: a card the watch reports added or changed is read again and its dates replaced, a removed card's forgotten, as an edited calendar moves its alarms. On `carddav` this means reading the cards' bodies, which the watch does not do today (it reports etag moves only); on `pimdir` the card bodies are read from the store, since no summary carries a birthday.
-- Firings are held in memory on the alarm path's horizon and never repeated after a restart. The grace window differs from alarms: a birthday reached late (the machine asleep at 09:00) fires on waking the same local day, since a date reminder is still useful later that day; the next day it is dropped with an info line.
+- Firings are held in memory on the alarm path's horizon and never repeated after a restart. The grace window differs from alarms: a birthday reached late (the machine asleep at 09:00) fires on waking the same local day, since a date reminder is still useful later that day; later it is dropped with an info line, unless the hook's `late-days` (default 0) allows that many days more, the hook then carrying `$late` (the days late, 0 on time). A watch starting still fires nothing before its start, since carillon writes no state between runs: `late-days` covers a machine asleep while the watch runs, not one switched off.
 - Out of scope here: `gpeople`, `msgraph` and `jmap` contacts (Google and Graph state birthdays in their own fields; a follow-up once the two first backends land), and a dedupe against a provider's Birthdays calendar, which the docs name instead (watch one or the other).
 
-## Open for the owner
+## Owner rulings (2026-11-26)
 
-- The hook's name. `on-birthday-trigger` with `$kind` follows the `on-<subject>-<verb>` rule loosely (an anniversary is not a birthday); the alternative is two hooks, `on-birthday-trigger` and `on-anniversary-trigger`. Recommended: one hook with `$kind`, one config block per account.
-- The late rule: same local day (recommended) or the alarms' 15-minute grace window.
+- One hook, `on-birthday-trigger`, with `$kind`.
+- The late rule: the same local day, plus the `late-days` option.
