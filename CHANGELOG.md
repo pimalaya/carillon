@@ -45,7 +45,7 @@ A 0.x configuration is not carried over: the hooks are renamed, their notificati
 
   A watch's `session-lost` event carries the code too, so a reader tells a refused account from a network blip.
 
-- Added the rest of io-pimdir's codes to the `carillon-error` schema, as every pimdir app names them.
+- Added the rest of io-pimdir's codes to the `carillon-error` schema, as every pimdir app names them, io-pimdir 1.0.0's `source-empty` included.
 - Added `caldav.home` and `carddav.home`, pinning the home set.
 
   Discovery is skipped and `server` becomes optional, unread when `home` is set. A block naming neither is refused when read.

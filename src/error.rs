@@ -135,6 +135,10 @@ pub enum ErrorCode {
     /// handle, a copy restored since.
     #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
     StoreReset,
+    /// The pimdir store was bound to an empty source id, which no row may
+    /// hold.
+    #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
+    SourceEmpty,
     /// The lock file of the pimdir store was removed or replaced under a
     /// write. Retry.
     #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
@@ -239,6 +243,7 @@ const PIMDIR_CODES: &[(&str, ErrorCode)] = &[
     ("store-in-flight", ErrorCode::StoreInFlight),
     ("store-exposed", ErrorCode::StoreExposed),
     ("store-reset", ErrorCode::StoreReset),
+    ("source-empty", ErrorCode::SourceEmpty),
     ("lock-replaced", ErrorCode::LockReplaced),
     ("item-duplicate", ErrorCode::ItemDuplicate),
     ("flag-invalid", ErrorCode::FlagInvalid),
@@ -463,7 +468,7 @@ mod tests {
 
     use super::*;
 
-    /// Each store code is spelled as io-pimdir 0.14's `PimdirError::code`
+    /// Each store code is spelled as io-pimdir 1.0's `PimdirError::code`
     /// spells the failure it names, and is the code that failure reads as.
     #[test]
     fn a_store_code_keeps_io_pimdirs_spelling() {
@@ -511,7 +516,7 @@ mod tests {
     /// spelling, the owner's codes included.
     #[test]
     fn the_relayed_pimdir_codes_are_himalayas() {
-        assert_eq!(30, PIMDIR_CODES.len());
+        assert_eq!(31, PIMDIR_CODES.len());
 
         for (pimdir, ours) in PIMDIR_CODES {
             assert_eq!(serde_json::to_value(ours).unwrap(), *pimdir);
@@ -523,5 +528,8 @@ mod tests {
         let property = PimdirError::Property(String::from("x"));
         let property = ErrorCode::of_pimdir(&property);
         assert_eq!(Some(ErrorCode::PropertyInvalid), property);
+
+        let source = ErrorCode::of_pimdir(&PimdirError::SourceEmpty);
+        assert_eq!(Some(ErrorCode::SourceEmpty), source);
     }
 }

@@ -77,6 +77,7 @@ mod tests {
             "request-origin",
             "permission-denied",
             "store-version",
+            "source-empty",
             "account-missing",
             "account-default-missing",
             "account-default-several",
