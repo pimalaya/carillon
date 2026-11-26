@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-11-25
+## [1.0.0] - 2026-11-26
 
 Carillon 1 is the first stable release: a local watcher firing hooks on what changes in mailboxes, addressbooks and calendars, over IMAP, JMAP, Maildir, CalDAV, CardDAV, Microsoft Graph, the Google APIs and the pimdir store Neverest syncs, alarms of events and tasks included. It shares the configuration and hook shapes of the other Pimalaya CLIs, and prints what it observes as events, `--json` feeding status bars and scripts.
 
