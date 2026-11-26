@@ -92,8 +92,9 @@ pub enum ErrorCode {
         allow(dead_code)
     )]
     AddressbookNotFound,
-    /// The pimdir store is of another draft than the one carillon reads:
-    /// its owner reinstalls it.
+    /// The pimdir store is of a version carillon does not read: an
+    /// earlier one is synced until nothing is pending, then moved aside
+    /// for a new one; a later one asks to upgrade carillon.
     #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
     StoreVersion,
     /// The pimdir root holds no store yet: its sync engine creates it.
@@ -169,7 +170,7 @@ pub enum ErrorCode {
     /// engine rebuilds it.
     #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
     IndexOutdated,
-    /// The pimdir search index is of another draft or shape.
+    /// The pimdir search index is of another version or shape.
     #[cfg_attr(not(feature = "pimdir"), allow(dead_code))]
     IndexVersion,
     /// The zone the pimdir search index reads floating times in is not

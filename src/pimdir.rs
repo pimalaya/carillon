@@ -510,7 +510,7 @@ mod tests {
     }
 
     fn drain(dir: &Path) {
-        let mut owner = PimdirStore::open(dir).unwrap().for_source("test");
+        let mut owner = PimdirStore::open(dir).unwrap().for_source("test").unwrap();
         owner.drain().unwrap();
     }
 

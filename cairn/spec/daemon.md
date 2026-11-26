@@ -628,7 +628,7 @@ A CalDAV watch SHALL read member bodies only when its account configures `on-ala
 - **THEN** fired.log ends with `standup 2026-11-05T08:45:00+01:00`
 
 ### Requirement: A pimdir calendar is watchable
-The `pimdir` backend SHALL watch one collection of one pimdir store of the draft io-pimdir 0.20 reads (pimdir storage-draft-17, the one neverest writes), given by `pimdir.root` and `pimdir.calendar` (the collection id a listing of the store gives), and optionally `pimdir.account`, the account of the store the calendar is grouped under (pimdir STORAGE §9.2), unset reading the calendar whichever account it is grouped under, as a reader (pimdir STORAGE §8, §14.1): it SHALL take no lock, SHALL write nothing to the store, and SHALL read the committed rows, the pending queue not folded in. It SHALL open the store again on every poll, every `pimdir.watch.poll.interval` (30 seconds by default), and read its change cursor (pimdir STORAGE §4.5): the items stamped above it are read again and the deleted or retained ones forgotten; a store of another id or incarnation, a purge count moved or the collection itself moved SHALL have the collection listed again, only the items new to the watch or holding another body read, the others kept and the missing ones forgotten. A store moved aside and synced anew under `pimdir.root` is so read on the next poll, and a store that poll cannot open SHALL end the session with its failure, the alarms already read firing on until a session reads the store again. An item SHALL be named by its public id (pimdir STORAGE §9.1), its object hash standing as its `$etag`, and an item whose body is not local SHALL be skipped until a change brings it. The backend SHALL declare `on-alarm-trigger` and no other hook, and an account configuring none SHALL be refused when read. A collection the store does not hold, or holds under another account than `pimdir.account` names, SHALL fail the watch and `account check` coded `calendar-not-found`, naming it; one holding no calendars SHALL fail them naming it. A store of another draft SHALL fail them coded `store-version`, in the wording every pimdir program shows (io-pimdir's `PimdirFormatRefusal`) naming carillon: for a store of an earlier draft, that its sync engine drains it and a new store is synced once it is moved aside; for a later one, that carillon is to be upgraded.
+The `pimdir` backend SHALL watch one collection of one pimdir store of pimdir storage-v1.0.0 as io-pimdir 1 reads it (the one neverest writes), given by `pimdir.root` and `pimdir.calendar` (the collection id a listing of the store gives), and optionally `pimdir.account`, the account of the store the calendar is grouped under (pimdir STORAGE §9.2), unset reading the calendar whichever account it is grouped under, as a reader (pimdir STORAGE §8, §14.1): it SHALL take no lock, SHALL write nothing to the store, and SHALL read the committed rows, the pending queue not folded in. It SHALL open the store again on every poll, every `pimdir.watch.poll.interval` (30 seconds by default), and read its change cursor (pimdir STORAGE §4.5): the items stamped above it are read again and the deleted or retained ones forgotten; a store of another id or incarnation, a purge count moved or the collection itself moved SHALL have the collection listed again, only the items new to the watch or holding another body read, the others kept and the missing ones forgotten. A store moved aside and synced anew under `pimdir.root` is so read on the next poll, and a store that poll cannot open SHALL end the session with its failure, the alarms already read firing on until a session reads the store again. An item SHALL be named by its public id (pimdir STORAGE §9.1), its object hash standing as its `$etag`, and an item whose body is not local SHALL be skipped until a change brings it. The backend SHALL declare `on-alarm-trigger` and no other hook, and an account configuring none SHALL be refused when read. A collection the store does not hold, or holds under another account than `pimdir.account` names, SHALL fail the watch and `account check` coded `calendar-not-found`, naming it; one holding no calendars SHALL fail them naming it. A store of a later version whose `read_version` is 1 SHALL be read as any other (pimdir STORAGE §4.2). A store any draft wrote, or one of a later version whose `read_version` is above 1, SHALL fail them coded `store-version`, in the wording every pimdir program shows (io-pimdir's `PimdirFormatRefusal`) naming carillon: for a store a draft wrote, which is never migrated, that its sync engine drains it until nothing is pending and a new store is synced once it is moved aside; for a later one, that carillon is to be upgraded.
 
 #### Scenario: A store the owner has not created
 - **GIVEN** a `pimdir.root` holding no pimdir.db
@@ -645,10 +645,15 @@ The `pimdir` backend SHALL watch one collection of one pimdir store of the draft
 - **WHEN** the store is moved aside, neverest syncs a new one under `pimdir.root` holding the event moved an hour later, and the watch polls
 - **THEN** the alarm fires at 09:45, read from the new store, and not at 08:45
 
-#### Scenario: A store of an earlier draft
-- **GIVEN** a `pimdir.root` holding a store of storage-draft-16, beside a second account watching a store of storage-draft-17
+#### Scenario: A store a draft wrote
+- **GIVEN** a `pimdir.root` holding a store of storage-draft-17, beside a second account watching a store of storage-v1
 - **WHEN** `carillon --json watch` runs
-- **THEN** the first account prints `session-lost` coded `store-version`, its error naming carillon and storage-draft-17 and saying to move the store aside and sync a new one, retried on its backoff, and the second account's alarms fire on time
+- **THEN** the first account prints `session-lost` coded `store-version`, its error naming carillon and storage-v1 and saying to move the store aside and sync a new one, retried on its backoff, and the second account's alarms fire on time
+
+#### Scenario: A later store a version 1 reader reads
+- **GIVEN** a `pimdir.root` holding a store of storage-v2 whose `read_version` is 1
+- **WHEN** `carillon --json account check` runs
+- **THEN** the pimdir row reads `ok: true`
 
 #### Scenario: A purge elsewhere in the store
 - **GIVEN** a pimdir watch over a calendar of 10,000 events
@@ -695,7 +700,7 @@ A failure a caller is expected to act on SHALL carry a stable code, printed unde
 | `mailbox-not-found` | the mailbox a backend watches does not exist: an IMAP `NONEXISTENT` (RFC 5530 §3), a Maildir folder that is no directory, a JMAP, Gmail or Graph mailbox no listing names, Graph answering its direct read 404 or 400 `ErrorInvalidIdMalformed` |
 | `calendar-not-found` | the calendar a backend watches does not exist: a DAV 404 on it, a DAV calendar id naming no collection, a JMAP, Google Calendar or Graph calendar not found as a mailbox is, a pimdir collection the store does not hold or holds under another account than `pimdir.account` |
 | `addressbook-not-found` | the addressbook a backend watches does not exist: a DAV 404 on it, a DAV addressbook id naming no collection, a JMAP addressbook, Google People contact group or Graph contact folder not found as a mailbox is |
-| `store-version` | the pimdir store is of another storage draft than the one carillon reads (storage-draft-17), its message naming carillon and which of the two is the earlier; neverest syncs a new store once the old one is moved aside |
+| `store-version` | the pimdir store is one carillon does not read: a draft's, or a later version's whose `read_version` is above 1, its message naming carillon and which of the two is the earlier; neverest syncs a new store once the old one is moved aside |
 | `store-uncreated` | the pimdir root holds no store yet; its sync engine creates it |
 | `store-foreign` | the pimdir root holds a database another program wrote |
 | `store-corrupt` | the pimdir store's version records disagree |
@@ -712,8 +717,8 @@ A failure a caller is expected to act on SHALL carry a stable code, printed unde
 
 A DAV 403 naming another precondition is no matter of rights and SHALL carry no code. A watch's `session-lost` event SHALL carry the code of the failure that ended the session, `null` when it carries none.
 
-#### Scenario: A store another draft wrote
-- **GIVEN** an account whose `pimdir.root` holds a store of another pimdir draft
+#### Scenario: A store a draft wrote, checked
+- **GIVEN** an account whose `pimdir.root` holds a store of a pimdir draft
 - **WHEN** `carillon --json account check` runs
 - **THEN** the pimdir row reads `ok: false`, `code: "store-version"`, its error naming carillon, and the command exits 3
 

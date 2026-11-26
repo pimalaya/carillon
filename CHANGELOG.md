@@ -18,7 +18,7 @@ A 0.x configuration is not carried over: the hooks are renamed, their notificati
 
   It reads `pimdir.root`, `pimdir.calendar`, `pimdir.account` (the account the calendar is grouped under, any when unset), `pimdir.watch.poll.interval` and `pimdir.hooks.on-alarm-trigger`. The store is never written, and is opened again on every poll.
 
-  It reads stores of pimdir storage-draft-17, the ones the current neverest writes, and refuses any other draft coded `store-version`, naming its root.
+  It reads stores of pimdir storage-v1.0.0 through io-pimdir 1.0.0, a later store too while its `read_version` is 1, and refuses a draft's store coded `store-version`, naming its root.
 
 - Added `caldav.hooks.on-alarm-trigger`, fired when an alarm of an event or a task of the watched calendar reaches its trigger ([pimalaya/calendula#29](https://github.com/pimalaya/calendula/discussions/29)).
 

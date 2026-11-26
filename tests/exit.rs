@@ -110,9 +110,10 @@ fn a_failed_check_in_text_prints_its_report_alone_and_exits_3() {
     assert!(!stdout.contains("Error:"), "{stdout}");
 }
 
-/// The row of `account check` over a pimdir store stamped `draft`.
+/// The exit code and the row of `account check` over a pimdir store
+/// whose `store_meta` the SQL `stamp` rewrites.
 #[cfg(feature = "pimdir")]
-fn check_store_of_draft(draft: &str) -> Value {
+fn check_store_stamped(stamp: &str) -> (Option<i32>, Value) {
     let home = TempDir::new().unwrap();
     let root = home.path().join("pimdir");
     let store = io_pimdir::client::PimdirStore::open(&root).unwrap();
@@ -120,7 +121,7 @@ fn check_store_of_draft(draft: &str) -> Value {
     drop(store);
     rusqlite::Connection::open(root.join("pimdir.db"))
         .unwrap()
-        .execute("UPDATE store_meta SET format_version = ?1", [draft])
+        .execute_batch(stamp)
         .unwrap();
 
     let config = home.path().join("config.toml");
@@ -141,40 +142,64 @@ fn check_store_of_draft(draft: &str) -> Value {
         "check",
     ];
     let output = run(home.path(), &args);
-    let stdout = text(&output.stdout);
-
-    assert_eq!(output.status.code(), Some(3), "{stdout}");
-    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let json: Value = serde_json::from_str(&text(&output.stdout)).unwrap();
     let row = json["accounts"][0]["backends"][0].clone();
     assert_eq!(row["backend"], "pimdir", "{json}");
-    assert_eq!(row["ok"], false, "{json}");
-    assert_eq!(row["code"], "store-version", "{json}");
+    (output.status.code(), row)
+}
+
+/// The row of `account check` over a pimdir store `stamp` makes one
+/// carillon refuses, coded `store-version`.
+#[cfg(feature = "pimdir")]
+fn check_store_refused(stamp: &str) -> Value {
+    let (code, row) = check_store_stamped(stamp);
+
+    assert_eq!(code, Some(3), "{row}");
+    assert_eq!(row["ok"], false, "{row}");
+    assert_eq!(row["code"], "store-version", "{row}");
     row
 }
 
-/// A pimdir store of draft-15, the draft io-pimdir 0.19.1 wrote and
+/// A pimdir store of storage-draft-17, the draft carillon 1.0.0 read and
 /// users hold, is refused with io-pimdir's code, its message naming
-/// carillon and the draft it reads.
+/// carillon and the version it reads, and telling to start over.
 #[cfg(feature = "pimdir")]
 #[test]
-fn a_check_over_a_store_of_another_draft_is_coded_store_version() {
-    let row = check_store_of_draft("storage-draft-15");
+fn a_check_over_a_store_of_a_draft_is_coded_store_version() {
+    let row = check_store_refused("UPDATE store_meta SET format_version = 'storage-draft-17'");
     let error = row["error"].as_str().unwrap();
 
-    assert!(error.contains("storage-draft-15"), "{row}");
+    assert!(error.contains("storage-draft-17"), "{row}");
     assert!(error.contains("carillon reads"), "{row}");
     assert!(error.contains(io_pimdir::sql::FORMAT_VERSION), "{row}");
+    assert!(error.contains("move its directory aside"), "{row}");
     assert!(!error.contains("this program"), "{row}");
 }
 
-/// A pimdir store of a later draft asks to upgrade carillon.
+/// A pimdir store of a later version that takes a later reader asks to
+/// upgrade carillon.
 #[cfg(feature = "pimdir")]
 #[test]
-fn a_check_over_a_store_of_a_later_draft_asks_to_upgrade_carillon() {
-    let row = check_store_of_draft("storage-draft-99");
+fn a_check_over_a_store_a_later_reader_reads_asks_to_upgrade_carillon() {
+    let stamp = "PRAGMA user_version = 2; UPDATE store_meta SET format_version = 'storage-v2', version = 2, read_version = 2";
+    let row = check_store_refused(stamp);
     let error = row["error"].as_str().unwrap();
 
+    assert!(error.contains("storage-v2"), "{row}");
     assert!(error.contains("upgrade carillon"), "{row}");
+}
+
+/// A pimdir store of a later version a version 1 reader still reads, its
+/// `read_version` left at 1, is checked as any other.
+#[cfg(feature = "pimdir")]
+#[test]
+fn a_check_over_a_later_store_carillon_reads_passes() {
+    let stamp =
+        "PRAGMA user_version = 2; UPDATE store_meta SET format_version = 'storage-v2', version = 2";
+    let (code, row) = check_store_stamped(stamp);
+
+    assert_eq!(code, Some(0), "{row}");
+    assert_eq!(row["ok"], true, "{row}");
 }
 
 /// `manual`, `completion` and `json-schema` given no argument are a
