@@ -22,6 +22,8 @@ pub mod command;
 use std::collections::BTreeMap;
 
 use anyhow::{Error, Result, bail};
+#[cfg(birthday)]
+use jiff::civil::Date;
 #[cfg(alarm)]
 use jiff::{Timestamp, tz::TimeZone};
 use log::{trace, warn};
@@ -36,6 +38,8 @@ use serde::Serialize;
 use crate::alarm::AlarmAction;
 #[cfg(alarm)]
 use crate::alarm::AlarmFiring;
+#[cfg(birthday)]
+use crate::{birthday::BirthdayFiring, config::BirthdayHook};
 use crate::{
     config::{FlagHook, Hook, ItemHook},
     event::{ItemSummary, WatchEvent},
@@ -74,6 +78,8 @@ const ALARM_VARS: &[&str] = &[
     "trigger",
     "at",
 ];
+/// What a birthday hook adds: the date, and the card stating it.
+const BIRTHDAY_VARS: &[&str] = &["uid", "name", "kind", "date", "age", "late"];
 /// The sound an `AUDIO` alarm asks the notification for, from the
 /// freedesktop sound naming specification.
 #[cfg(all(alarm, feature = "notify"))]
@@ -147,6 +153,8 @@ pub struct Vocabulary {
     flag: bool,
     /// Whether this hook is about one alarm firing.
     alarm: bool,
+    /// Whether this hook is about one date of a card.
+    birthday: bool,
 }
 
 impl Vocabulary {
@@ -158,6 +166,7 @@ impl Vocabulary {
             envelope: false,
             flag: false,
             alarm: false,
+            birthday: false,
         }
     }
 
@@ -168,6 +177,7 @@ impl Vocabulary {
             envelope: true,
             flag: false,
             alarm: false,
+            birthday: false,
         }
     }
 
@@ -178,6 +188,7 @@ impl Vocabulary {
             envelope: false,
             flag: true,
             alarm: false,
+            birthday: false,
         }
     }
 
@@ -189,6 +200,19 @@ impl Vocabulary {
             envelope: false,
             flag: false,
             alarm: true,
+            birthday: false,
+        }
+    }
+
+    /// A birthday hook.
+    #[cfg(birthday)]
+    pub const fn birthday(collection: &'static str) -> Self {
+        Self {
+            collection,
+            envelope: false,
+            flag: false,
+            alarm: false,
+            birthday: true,
         }
     }
 
@@ -197,12 +221,14 @@ impl Vocabulary {
         let envelope: &[&str] = if self.envelope { ENVELOPE_VARS } else { &[] };
         let flag = self.flag.then_some(FLAG_VAR);
         let alarm: &[&str] = if self.alarm { ALARM_VARS } else { &[] };
+        let birthday: &[&str] = if self.birthday { BIRTHDAY_VARS } else { &[] };
 
         [ID_VAR, COLLECTION_VAR, self.collection]
             .into_iter()
             .chain(envelope.iter().copied())
             .chain(flag)
             .chain(alarm.iter().copied())
+            .chain(birthday.iter().copied())
     }
 
     /// The names, rendered the way a template writes them, for an
@@ -424,6 +450,39 @@ pub fn run_alarm(
         hook.timeout,
         &vars,
         sound,
+    )
+}
+
+/// Fires `on-birthday-trigger` for one firing of a date of `collection`,
+/// reached on the local day `today`, handing back the reactions that
+/// failed and the command to run.
+#[cfg(birthday)]
+pub fn run_birthday(
+    hook: &BirthdayHook,
+    collection: HookCollection<'_>,
+    firing: &BirthdayFiring,
+    today: Date,
+) -> HookFired {
+    let mut vars = seeded(Vocabulary::birthday(collection.name));
+
+    vars.insert(ID_VAR, firing.id.clone());
+    vars.insert(COLLECTION_VAR, collection.value.to_string());
+    vars.insert(collection.name, collection.value.to_string());
+    vars.insert("uid", firing.uid.clone());
+    vars.insert("name", firing.name.clone().unwrap_or_default());
+    vars.insert("kind", firing.kind.as_str().to_string());
+    vars.insert("date", firing.date.clone());
+    vars.insert(
+        "age",
+        firing.age.map(|age| age.to_string()).unwrap_or_default(),
+    );
+    vars.insert("late", firing.late(today).to_string());
+
+    fire(
+        hook.notify.as_ref(),
+        hook.command.as_ref(),
+        hook.timeout,
+        &vars,
     )
 }
 
@@ -766,5 +825,84 @@ mod tests {
         let (uid, at) = fired.split_once(' ').expect("two words");
         assert_eq!("standup", uid);
         assert_eq!(trigger, at.parse::<Timestamp>().unwrap().as_second());
+    }
+
+    #[cfg(birthday)]
+    #[test]
+    fn a_birthday_hook_templates_against_its_date() {
+        let birthday = Vocabulary::birthday("addressbook");
+        let hook = "carddav.hooks.on-birthday-trigger";
+
+        validate(
+            Some(&notified(
+                "$name turns $age: $kind $date, $late late ($uid)",
+            )),
+            birthday,
+            hook,
+        )
+        .expect("a date has a name, an age, a kind, a date, its days late and a uid");
+        validate(Some(&notified("$summary")), birthday, hook).expect_err("a date has no summary");
+        validate(
+            Some(&notified("$age")),
+            Vocabulary::item("addressbook"),
+            "carddav.hooks.on-card-add",
+        )
+        .expect_err("a card addition has no age");
+    }
+
+    #[cfg(all(birthday, unix))]
+    #[test]
+    fn a_birthday_command_reads_the_date_in_its_environment() {
+        use jiff::civil::Time;
+
+        use crate::birthday::BirthdayKind;
+
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("fired");
+        let line = format!(
+            "printf '%s|%s|%s|%s|%s|%s|%s' \"$name\" \"$kind\" \"$date\" \"$age\" \"$late\" \"$uid\" \"$addressbook\" > '{}'",
+            out.display()
+        );
+        let hook = BirthdayHook {
+            notify: None,
+            command: Some(CommandConfig::Shell(line)),
+            timeout: None,
+            at: Time::constant(9, 0, 0, 0),
+            days_before: 0,
+            late_days: 2,
+        };
+
+        let firing = BirthdayFiring {
+            id: String::from("/books/jane.vcf"),
+            uid: String::from("jane"),
+            name: Some(String::from("Jane Doe")),
+            kind: BirthdayKind::Birthday,
+            date: String::from("1990-11-27"),
+            age: Some(36),
+            day: Date::constant(2026, 11, 27),
+            trigger: 0,
+            deadline: 0,
+        };
+        let collection = HookCollection {
+            name: "addressbook",
+            value: "default",
+        };
+        let today = Date::constant(2026, 11, 28);
+
+        let job = run_birthday(&hook, collection, &firing, today)
+            .command
+            .unwrap();
+        let commands = command::HookCommands::start().unwrap();
+        commands.submit(String::from("birthday"), job, |err| panic!("{err:#}"));
+
+        for _ in 0..50 {
+            if out.exists() && !std::fs::read_to_string(&out).unwrap().is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        let fired = std::fs::read_to_string(&out).expect("the command ran");
+        assert_eq!("Jane Doe|birthday|1990-11-27|36|1|jane|default", fired);
     }
 }

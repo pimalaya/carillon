@@ -12,25 +12,31 @@ const DAV: &[&str] = &["CALDAV", "CARDDAV"];
 const API: &[&str] = &["MSGRAPH", "GMAIL", "GCAL", "GPEOPLE"];
 /// The backends firing the alarms of a calendar.
 const ALARM: &[&str] = &["CALDAV", "PIMDIR"];
+/// The backends firing the birthdays and anniversaries of an addressbook.
+const BIRTHDAY: &[&str] = &["CARDDAV", "PIMDIR"];
 
 fn main() {
     features_env(include_str!("./Cargo.toml"));
     target_envs();
     git_envs();
 
-    // NOTE: `backend`, `network`, `api`, `dav` and `alarm` collapse the
-    // repeated backend feature lists: `backend` is set when any backend
-    // reporting changes is enabled (pimdir reports none), which is what
-    // makes the watch vocabulary and the hook runner reachable, `network`
-    // when any backend opening a socket is, `api` when any vendor REST API
-    // is, `dav` when either DAV backend is, and `alarm` when any backend
-    // firing the alarms of a calendar is. Cargo exports
-    // `CARGO_FEATURE_<NAME>` for every enabled feature.
+    // NOTE: `backend`, `network`, `api`, `dav`, `alarm`, `birthday` and
+    // `firing` collapse the repeated backend feature lists: `backend` is
+    // set when any backend reporting changes is enabled (pimdir reports
+    // none), which is what makes the watch vocabulary and the hook runner
+    // reachable, `network` when any backend opening a socket is, `api`
+    // when any vendor REST API is, `dav` when either DAV backend is,
+    // `alarm` when any backend firing the alarms of a calendar is,
+    // `birthday` when any firing the dates of an addressbook is, and
+    // `firing` when either is. Cargo exports `CARGO_FEATURE_<NAME>` for
+    // every enabled feature.
     println!("cargo::rustc-check-cfg=cfg(backend)");
     println!("cargo::rustc-check-cfg=cfg(network)");
     println!("cargo::rustc-check-cfg=cfg(api)");
     println!("cargo::rustc-check-cfg=cfg(dav)");
     println!("cargo::rustc-check-cfg=cfg(alarm)");
+    println!("cargo::rustc-check-cfg=cfg(birthday)");
+    println!("cargo::rustc-check-cfg=cfg(firing)");
 
     let enabled = |feature: &&str| env::var_os(format!("CARGO_FEATURE_{feature}")).is_some();
 
@@ -44,6 +50,14 @@ fn main() {
 
     if ALARM.iter().any(enabled) {
         println!("cargo::rustc-cfg=alarm");
+    }
+
+    if BIRTHDAY.iter().any(enabled) {
+        println!("cargo::rustc-cfg=birthday");
+    }
+
+    if ALARM.iter().chain(BIRTHDAY).any(enabled) {
+        println!("cargo::rustc-cfg=firing");
     }
 
     if NETWORK.iter().any(enabled) {

@@ -1,10 +1,12 @@
 //! # Pimdir
 //!
-//! The pimdir backend: one calendar collection of a local pimdir store,
-//! read as a reader (pimdir STORAGE §8, §14.1) and never written. Its
-//! committed rows are read, the pending queue left out, and the store's
-//! change feed (§4.5) is followed to read again only what moved. The
-//! store's owner keeps it in sync; this backend only fires its alarms.
+//! The pimdir backend: a calendar, an addressbook or both of a local
+//! pimdir store, read as a reader (pimdir STORAGE §8, §14.1) and never
+//! written. Its committed rows are read, the pending queue left out, and
+//! the store's change feed (§4.5) is followed to read again only what
+//! moved. The store's owner keeps it in sync; this backend only fires the
+//! alarms of the calendar and the birthdays and anniversaries of the
+//! addressbook.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -29,10 +31,10 @@ use log::{debug, trace, warn};
 use pimalaya_cli::error::CodedError;
 
 use crate::{
-    alarm::{AlarmBook, AlarmShared},
     config::pimdir::PimdirConfig,
     error::{self, ErrorCode},
     event::WatchDomain,
+    firing::{FiringBook, FiringShared},
     poll,
 };
 
@@ -43,13 +45,10 @@ const POLL_INTERVAL: Duration = Duration::from_secs(30);
 /// How many rows one page of a listing or of the change feed holds.
 const PAGE: usize = 500;
 
-/// The media type of a calendar collection, its parameters aside.
-const CALENDAR_KIND: &str = "text/calendar";
-
 /// The program a refused store's message names.
 const PROGRAM: &str = "carillon";
 
-/// What a member of the calendar became, read before the alarms are
+/// What a member of a collection became, read before the firings are
 /// changed so the lock is held only to apply it.
 enum Moved {
     Read {
@@ -60,14 +59,159 @@ enum Moved {
     Gone(String),
 }
 
-/// The object hash of each item the alarms were read from, by its public
-/// id: a calendar listed again reads only the bodies it lacks.
+/// The object hash of each item the firings were read from, by its public
+/// id: a collection listed again reads only the bodies it lacks.
 type Known = HashMap<String, String>;
 
-/// Watches the configured calendar until `shutdown` is set, keeping
-/// `alarms` current.
+/// What a watched collection holds, which is what its items fire.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PimdirKind {
+    /// A calendar, whose items fire their alarms.
+    Calendar,
+    /// An addressbook, whose cards fire their birthdays and anniversaries.
+    Addressbook,
+}
+
+impl PimdirKind {
+    /// The media type of a collection of this kind, its parameters aside.
+    const fn media_type(self) -> &'static str {
+        match self {
+            Self::Calendar => "text/calendar",
+            Self::Addressbook => "text/vcard",
+        }
+    }
+
+    /// The word the configuration names a collection of this kind with.
+    const fn noun(self) -> &'static str {
+        match self {
+            Self::Calendar => PimdirConfig::CALENDAR,
+            Self::Addressbook => PimdirConfig::ADDRESSBOOK,
+        }
+    }
+
+    /// What a collection of this kind holds, for a refusal.
+    const fn items(self) -> &'static str {
+        match self {
+            Self::Calendar => "calendars",
+            Self::Addressbook => "contacts",
+        }
+    }
+
+    /// The domain a missing collection of this kind is coded by.
+    const fn domain(self) -> WatchDomain {
+        match self {
+            Self::Calendar => WatchDomain::Event,
+            Self::Addressbook => WatchDomain::Card,
+        }
+    }
+
+    /// Folds what an item of a collection of this kind became into
+    /// `book`.
+    fn fold(self, book: &mut FiringBook, moved: Moved) {
+        match (self, moved) {
+            (Self::Calendar, Moved::Read { key, etag, body }) => {
+                book.alarms.read(&key, &key, etag.as_deref(), &body)
+            }
+            (Self::Calendar, Moved::Gone(key)) => book.alarms.forget(&key),
+            (Self::Addressbook, Moved::Read { key, body, .. }) => {
+                book.birthdays.read(&key, &key, &body)
+            }
+            (Self::Addressbook, Moved::Gone(key)) => book.birthdays.forget(&key),
+        }
+    }
+}
+
+/// One collection the watch reads, and what it knows of it.
+struct Watched {
+    /// The collection id.
+    id: String,
+    kind: PimdirKind,
+    known: Known,
+}
+
+impl Watched {
+    /// The collections `config` names, the calendar first.
+    fn of(config: &PimdirConfig) -> Vec<Self> {
+        let calendar = config.calendar.iter().map(|id| (id, PimdirKind::Calendar));
+        let addressbook = config
+            .addressbook
+            .iter()
+            .map(|id| (id, PimdirKind::Addressbook));
+
+        calendar
+            .chain(addressbook)
+            .map(|(id, kind)| Self {
+                id: id.clone(),
+                kind,
+                known: Known::new(),
+            })
+            .collect()
+    }
+
+    /// Refuses a collection the store does not hold, one grouped under
+    /// another account than `account` when given, and one holding
+    /// another kind of item.
+    fn check(&self, reader: &PimdirReader, account: Option<&str>) -> Result<()> {
+        let (id, noun) = (&self.id, self.kind.noun());
+
+        let Some(kind) = reader.collection_kind(id)? else {
+            let message = format!("Cannot find pimdir {noun} `{id}`");
+            return Err(error::not_found(self.kind.domain(), message));
+        };
+
+        if let Some(account) = account
+            && reader.collection_account(id)?.flatten().as_deref() != Some(account)
+        {
+            let message = format!("Cannot find pimdir {noun} `{id}` under account `{account}`");
+            return Err(error::not_found(self.kind.domain(), message));
+        }
+
+        let media_type = self.kind.media_type();
+        let holds = kind
+            .split(';')
+            .next()
+            .is_some_and(|kind| kind.trim().eq_ignore_ascii_case(media_type));
+
+        if !holds {
+            bail!(
+                "Pimdir collection `{id}` holds {kind}, not {}",
+                self.kind.items()
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Applies what moved to `shared`, and records it in what is known.
+    fn apply(&mut self, shared: &FiringShared, moved: Vec<Moved>) {
+        if moved.is_empty() {
+            return;
+        }
+
+        for moved in &moved {
+            match moved {
+                Moved::Read { key, etag, .. } => match etag {
+                    Some(etag) => self.known.insert(key.clone(), etag.clone()),
+                    None => self.known.remove(key),
+                },
+                Moved::Gone(key) => self.known.remove(key),
+            };
+        }
+
+        let kind = self.kind;
+
+        shared.update(|book| {
+            for moved in moved {
+                kind.fold(book, moved);
+            }
+        });
+    }
+}
+
+/// Watches the configured collections until `shutdown` is set, keeping
+/// `firings` current.
 ///
-/// `on_open` is called once the session is up and its collection read,
+/// `on_open` is called once the session is up and its collections read,
 /// right before the first wait.
 ///
 /// The store is opened again at each poll: a reader keeps the file it
@@ -76,19 +220,13 @@ type Known = HashMap<String, String>;
 pub fn watch(
     config: &PimdirConfig,
     shutdown: &Arc<AtomicBool>,
-    alarms: &AlarmShared,
+    firings: &FiringShared,
     on_open: impl FnOnce(),
 ) -> Result<()> {
     let interval = config.interval().unwrap_or(POLL_INTERVAL);
     let account = config.account.as_deref();
-    let mut known = Known::new();
-    let mut cursor = load(
-        &open(config)?,
-        &config.calendar,
-        account,
-        alarms,
-        &mut known,
-    )?;
+    let mut watched = Watched::of(config);
+    let mut cursor = load(&open(config)?, &mut watched, account, firings)?;
     on_open();
 
     while !shutdown.load(Ordering::SeqCst) {
@@ -97,24 +235,23 @@ pub fn watch(
         }
 
         let reader = open(config)?;
-        cursor = follow(
-            &reader,
-            &config.calendar,
-            account,
-            cursor,
-            alarms,
-            &mut known,
-        )?;
+        cursor = follow(&reader, &mut watched, account, cursor, firings)?;
     }
 
     Ok(())
 }
 
-/// Checks that the store opens and holds the calendar, without reading
-/// any item.
+/// Checks that the store opens and holds the collections, without
+/// reading any item.
 pub fn probe(config: &PimdirConfig) -> Result<()> {
     let reader = open(config)?;
-    check_calendar(&reader, &config.calendar, config.account.as_deref())
+    let account = config.account.as_deref();
+
+    for watched in Watched::of(config) {
+        watched.check(&reader, account)?;
+    }
+
+    Ok(())
 }
 
 /// Opens the store as a reader, which creates nothing: a store its owner
@@ -157,108 +294,109 @@ pub(crate) fn store_code(cause: &(dyn std::error::Error + 'static)) -> Option<Er
     ErrorCode::of_pimdir(cause.downcast_ref::<PimdirError>()?)
 }
 
-/// Refuses a calendar the store does not hold, one grouped under another
-/// account than `account` when given, and one holding no calendars.
-fn check_calendar(reader: &PimdirReader, calendar: &str, account: Option<&str>) -> Result<()> {
-    let Some(kind) = reader.collection_kind(calendar)? else {
-        let message = format!("Cannot find pimdir calendar `{calendar}`");
-        return Err(error::not_found(WatchDomain::Event, message));
-    };
-
-    if let Some(account) = account
-        && reader.collection_account(calendar)?.flatten().as_deref() != Some(account)
-    {
-        let message = format!("Cannot find pimdir calendar `{calendar}` under account `{account}`");
-        return Err(error::not_found(WatchDomain::Event, message));
-    }
-
-    if !is_calendar(&kind) {
-        bail!("Pimdir collection `{calendar}` holds {kind}, not calendars");
-    }
-
-    Ok(())
-}
-
-/// Reads every item of the calendar into a new book, and answers the
-/// cursor it was read at: read before the items, so a change landing
+/// Reads every item of the collections into new firings, and answers the
+/// cursor they were read at: read before the items, so a change landing
 /// meanwhile is folded again rather than skipped.
 fn load(
     reader: &PimdirReader,
-    calendar: &str,
+    watched: &mut [Watched],
     account: Option<&str>,
-    alarms: &AlarmShared,
-    known: &mut Known,
+    shared: &FiringShared,
 ) -> Result<PimdirChangeCursor> {
     let cursor = reader.change_cursor()?;
-    check_calendar(reader, calendar, account)?;
+
+    for watched in watched.iter() {
+        watched.check(reader, account)?;
+    }
 
     let blobs = reader.blobs();
-    let mut book = AlarmBook::new();
-    known.clear();
+    let mut fresh = FiringBook::new();
 
-    each_item(reader, calendar, |item| match body(&blobs, item) {
-        Moved::Read { key, etag, body } => {
-            book.read(&key, &key, etag.as_deref(), &body);
-            known.extend(etag.map(|etag| (key, etag)));
+    for watched in watched.iter_mut() {
+        let (kind, known) = (watched.kind, &mut watched.known);
+        known.clear();
+
+        each_item(reader, &watched.id, |item| {
+            let moved = body(&blobs, item);
+
+            if let Moved::Read {
+                key,
+                etag: Some(etag),
+                ..
+            } = &moved
+            {
+                known.insert(key.clone(), etag.clone());
+            }
+
+            kind.fold(&mut fresh, moved);
+        })?;
+    }
+
+    let calendar = watched.iter().any(|w| w.kind == PimdirKind::Calendar);
+    let addressbook = watched.iter().any(|w| w.kind == PimdirKind::Addressbook);
+
+    debug!(
+        "read {} pimdir items holding an alarm, {} stating a date",
+        fresh.alarms.len(),
+        fresh.birthdays.len()
+    );
+
+    shared.update(|book| {
+        if calendar {
+            book.alarms = fresh.alarms;
         }
-        Moved::Gone(key) => book.forget(&key),
-    })?;
 
-    debug!("read {} pimdir items holding an alarm", book.len());
-    alarms.replace(book);
+        if addressbook {
+            book.birthdays = fresh.birthdays;
+        }
+    });
 
     Ok(cursor)
 }
 
-/// Lists the calendar again, reads the items new or of another body than
-/// `known` holds, forgets the ones gone, and answers the cursor it was
-/// listed at.
-fn reread(
-    reader: &PimdirReader,
-    calendar: &str,
-    account: Option<&str>,
-    alarms: &AlarmShared,
-    known: &mut Known,
-) -> Result<PimdirChangeCursor> {
-    let cursor = reader.change_cursor()?;
-    check_calendar(reader, calendar, account)?;
-
+/// Lists the collection again, reads the items new or of another body
+/// than it knows, and forgets the ones gone.
+fn reread(reader: &PimdirReader, watched: &mut Watched, shared: &FiringShared) -> Result<()> {
     let blobs = reader.blobs();
     let mut listed = HashSet::new();
     let mut moved = Vec::new();
 
-    each_item(reader, calendar, |item| {
+    each_item(reader, &watched.id, |item| {
         let key = item.seq.to_string();
 
-        if !is_known(known, &key, item) {
+        if !is_known(&watched.known, &key, item) {
             moved.push(body(&blobs, item));
         }
 
         listed.insert(key);
     })?;
 
-    for key in known.keys().filter(|key| !listed.contains(*key)) {
+    for key in watched.known.keys().filter(|key| !listed.contains(*key)) {
         moved.push(Moved::Gone(key.clone()));
     }
 
-    debug!("{} pimdir items moved since the last read", moved.len());
-    apply(alarms, known, moved);
+    debug!(
+        "{} items of pimdir collection `{}` moved since the last read",
+        moved.len(),
+        watched.id
+    );
+    watched.apply(shared, moved);
 
-    Ok(cursor)
+    Ok(())
 }
 
-/// Calls `read` on every item of the calendar, page by page.
+/// Calls `read` on every item of the collection, page by page.
 fn each_item(
     reader: &PimdirReader,
-    calendar: &str,
+    collection: &str,
     mut read: impl FnMut(&PimdirItem),
 ) -> Result<()> {
     let mut after: Option<String> = None;
 
     loop {
         let page = reader
-            .list_items(calendar, after.as_deref(), PAGE)
-            .with_context(|| format!("Cannot list pimdir collection `{calendar}`"))?;
+            .list_items(collection, after.as_deref(), PAGE)
+            .with_context(|| format!("Cannot list pimdir collection `{collection}`"))?;
 
         let Some(last) = page.last() else {
             break;
@@ -275,53 +413,26 @@ fn each_item(
     Ok(())
 }
 
-/// Whether `item` holds the body the alarms were read from.
+/// Whether `item` holds the body the firings were read from.
 fn is_known(known: &Known, key: &str, item: &PimdirItem) -> bool {
     item.object
         .as_ref()
         .is_some_and(|hash| known.get(key) == Some(&hash.0))
 }
 
-/// Applies what moved to `alarms`, and records it in `known`.
-fn apply(alarms: &AlarmShared, known: &mut Known, moved: Vec<Moved>) {
-    if moved.is_empty() {
-        return;
-    }
-
-    for moved in &moved {
-        match moved {
-            Moved::Read { key, etag, .. } => match etag {
-                Some(etag) => known.insert(key.clone(), etag.clone()),
-                None => known.remove(key),
-            },
-            Moved::Gone(key) => known.remove(key),
-        };
-    }
-
-    alarms.update(|book| {
-        for moved in moved {
-            match moved {
-                Moved::Read { key, etag, body } => book.read(&key, &key, etag.as_deref(), &body),
-                Moved::Gone(key) => book.forget(&key),
-            }
-        }
-    });
-}
-
-/// Folds what moved in the calendar since `cursor`, and answers the
+/// Folds what moved in the collections since `cursor`, and answers the
 /// cursor to look from next.
 ///
-/// A reset of the store, a purge or the calendar itself moving lists the
-/// calendar again, reading only the bodies `known` lacks; otherwise each
-/// item stamped above the cursor is read again unless its body is known,
-/// or forgotten when deleted or retained.
+/// A reset of the store, a purge or a watched collection itself moving
+/// lists every collection again, reading only the bodies not known;
+/// otherwise each item stamped above the cursor is read again unless its
+/// body is known, or forgotten when deleted or retained.
 fn follow(
     reader: &PimdirReader,
-    calendar: &str,
+    watched: &mut [Watched],
     account: Option<&str>,
     cursor: PimdirChangeCursor,
-    alarms: &AlarmShared,
-    known: &mut Known,
+    shared: &FiringShared,
 ) -> Result<PimdirChangeCursor> {
     let now = reader.change_cursor()?;
 
@@ -334,18 +445,26 @@ fn follow(
         || now.purges != cursor.purges
         || now.changed < cursor.changed;
 
-    let renamed = || -> Result<bool> {
+    let moved_collection = || -> Result<bool> {
         let changed = reader.collections_changed_since(cursor.changed, PAGE)?;
-        Ok(changed.iter().any(|collection| collection.id == calendar))
+        let watched = |id: &str| watched.iter().any(|w| w.id == id);
+        Ok(changed.iter().any(|collection| watched(&collection.id)))
     };
 
-    if reset || renamed()? {
-        debug!("pimdir store reset or calendar moved, listing it again");
-        return reread(reader, calendar, account, alarms, known);
+    if reset || moved_collection()? {
+        debug!("pimdir store reset or a collection moved, listing them again");
+        let cursor = reader.change_cursor()?;
+
+        for watched in watched.iter_mut() {
+            watched.check(reader, account)?;
+            reread(reader, watched, shared)?;
+        }
+
+        return Ok(cursor);
     }
 
     let blobs = reader.blobs();
-    let mut moved = Vec::new();
+    let mut moved: Vec<Vec<Moved>> = watched.iter().map(|_| Vec::new()).collect();
     let mut since = cursor.changed;
 
     loop {
@@ -358,19 +477,23 @@ fn follow(
         since = last.changed;
         let full = page.len() == PAGE;
 
-        for change in page.iter().filter(|change| change.collection == calendar) {
+        for change in &page {
+            let Some(at) = watched.iter().position(|w| w.id == change.collection) else {
+                continue;
+            };
+
             trace!("pimdir item {} moved", change.seq);
-            let key = change.seq.to_string();
+            let (collection, key) = (&watched[at], change.seq.to_string());
 
             if change.deleted || change.retained_at.is_some() {
-                moved.push(Moved::Gone(key));
+                moved[at].push(Moved::Gone(key));
                 continue;
             }
 
-            match reader.get_item(calendar, change.seq)? {
-                Some(item) if is_known(known, &key, &item) => (),
-                Some(item) => moved.push(body(&blobs, &item)),
-                None => moved.push(Moved::Gone(key)),
+            match reader.get_item(&collection.id, change.seq)? {
+                Some(item) if is_known(&collection.known, &key, &item) => (),
+                Some(item) => moved[at].push(body(&blobs, &item)),
+                None => moved[at].push(Moved::Gone(key)),
             }
         }
 
@@ -379,7 +502,9 @@ fn follow(
         }
     }
 
-    apply(alarms, known, moved);
+    for (watched, moved) in watched.iter_mut().zip(moved) {
+        watched.apply(shared, moved);
+    }
 
     Ok(now)
 }
@@ -412,13 +537,6 @@ fn body(blobs: &PimdirBlobs, item: &PimdirItem) -> Moved {
     }
 }
 
-/// Whether a collection kind is a calendar's, its parameters aside.
-fn is_calendar(kind: &str) -> bool {
-    kind.split(';')
-        .next()
-        .is_some_and(|kind| kind.trim().eq_ignore_ascii_case(CALENDAR_KIND))
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -438,18 +556,25 @@ mod tests {
         object::PimdirHash,
         placement::PimdirFlags,
     };
-    use jiff::Timestamp;
+    use jiff::{
+        Timestamp,
+        civil::{Date, Time},
+        tz::TimeZone,
+    };
     use tempfile::TempDir;
 
     use crate::{
-        alarm::{self, AlarmShared},
+        birthday::BirthdayRule,
         config::pimdir::PimdirConfig,
+        firing::{self, FiringBook, FiringShared},
         pimdir::*,
         poll,
     };
 
     /// The calendar collection of every case.
     const CAL: &str = "cal";
+    /// The addressbook collection of every case.
+    const BOOK: &str = "contacts";
 
     /// An instant written in UTC, in seconds.
     fn at(time: &str) -> i64 {
@@ -479,12 +604,14 @@ mod tests {
         std::fs::create_dir_all(root).unwrap();
         let store = PimdirStore::open(root).unwrap();
         store.ensure_collection(CAL, "text/calendar").unwrap();
+        store.ensure_collection(BOOK, "text/vcard").unwrap();
         store.ensure_collection("mail", "message/rfc822").unwrap();
     }
 
     fn config(dir: &Path, calendar: &str) -> PimdirConfig {
         PimdirConfig {
-            calendar: calendar.to_owned(),
+            calendar: Some(calendar.to_owned()),
+            addressbook: None,
             root: dir.to_path_buf(),
             account: None,
             watch: None,
@@ -531,6 +658,121 @@ mod tests {
             .unwrap()
     }
 
+    /// A card of `uid` born on `bday`.
+    fn card(uid: &str, bday: &str) -> String {
+        format!(
+            "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:{uid}\r\nFN:Jane Doe\r\nBDAY:{bday}\r\nEND:VCARD\r\n"
+        )
+    }
+
+    /// When `date` reaches 09:00 in the system's zone, in seconds.
+    fn nine(date: &str) -> i64 {
+        let date: Date = date.parse().unwrap();
+        let nine = date.to_datetime(Time::constant(9, 0, 0, 0));
+
+        TimeZone::system()
+            .to_ambiguous_timestamp(nine)
+            .compatible()
+            .unwrap()
+            .as_second()
+    }
+
+    /// A watch of the calendar and the addressbook of the store at `dir`.
+    fn both(dir: &Path) -> PimdirConfig {
+        PimdirConfig {
+            addressbook: Some(BOOK.to_owned()),
+            ..config(dir, CAL)
+        }
+    }
+
+    /// The firings an account shares, its dates firing at 09:00.
+    fn dated(timer: &CeichasTimer) -> FiringShared {
+        let mut book = FiringBook::new();
+        book.rule = Some(BirthdayRule {
+            at: Time::constant(9, 0, 0, 0),
+            days_before: 0,
+            late_days: 0,
+        });
+
+        FiringShared::new(timer.waker(), book)
+    }
+
+    #[test]
+    fn an_addressbook_is_read_then_followed_beside_a_calendar() {
+        let dir = scratch();
+        add(dir.path(), CAL, &event("standup", "090000"));
+        add(dir.path(), BOOK, &card("jane", "1990-03-10"));
+        add(dir.path(), "mail", &card("quoted", "1990-03-10"));
+
+        let reader = PimdirReader::open(dir.path()).unwrap();
+        let timer = CeichasTimer::new(Default::default()).unwrap();
+        let firings = dated(&timer);
+        let mut watched = Watched::of(&both(dir.path()));
+        let cursor = load(&reader, &mut watched, None, &firings).unwrap();
+
+        let jane = PimdirReader::open(dir.path())
+            .unwrap()
+            .seq_for_link(BOOK, "jane")
+            .unwrap()
+            .unwrap();
+        let march = || firings.triggers(nine("2027-03-01"), nine("2027-04-01"));
+        let standup = seq(dir.path(), "standup").to_string();
+
+        assert_eq!(vec![(jane.to_string(), nine("2027-03-10"))], march());
+        assert_eq!(
+            vec![(standup, at("08:45:00"))],
+            firings.triggers(at("00:00:00"), at("23:00:00"))
+        );
+
+        apply(dir.path(), BOOK, &card("jane", "1990-03-11"), |hash| {
+            PimdirAction::Update {
+                seq: jane,
+                object: hash,
+                if_match: None,
+                resolves: None,
+            }
+        });
+        let cursor = follow(&reader, &mut watched, None, cursor, &firings).unwrap();
+
+        assert_eq!(vec![(jane.to_string(), nine("2027-03-11"))], march());
+
+        let mut producer = PimdirProducer::open(dir.path(), "test").unwrap();
+        let remove = PimdirAction::Remove {
+            seq: jane,
+            if_match: None,
+            resolves: None,
+        };
+        producer.enqueue(BOOK, &remove, None).unwrap();
+        drop(producer);
+        drain(dir.path());
+        follow(&reader, &mut watched, None, cursor, &firings).unwrap();
+
+        assert!(march().is_empty(), "{:?}", march());
+    }
+
+    /// An addressbook the store does not hold is `addressbook-not-found`,
+    /// and a collection holding no cards is refused.
+    #[test]
+    fn an_addressbook_not_found_or_holding_no_cards_is_refused() {
+        use crate::error::{ErrorCode, code};
+
+        let dir = scratch();
+        let book = |id: &str| PimdirConfig {
+            calendar: None,
+            addressbook: Some(id.to_owned()),
+            ..config(dir.path(), CAL)
+        };
+
+        probe(&book(BOOK)).expect("an addressbook");
+        probe(&both(dir.path())).expect("a calendar and an addressbook");
+
+        let err = probe(&book("nowhere")).expect_err("no such addressbook");
+        assert_eq!(Some(ErrorCode::AddressbookNotFound), code(&err), "{err:#}");
+
+        let err = probe(&book(CAL)).expect_err("a calendar");
+        assert!(format!("{err:#}").contains("not contacts"), "{err:#}");
+    }
+
     #[test]
     fn a_store_its_owner_has_not_created_is_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -547,7 +789,7 @@ mod tests {
     fn a_watch_of_a_store_not_created_is_never_reported_open() {
         let dir = tempfile::tempdir().unwrap();
         let timer = CeichasTimer::new(Default::default()).unwrap();
-        let alarms = AlarmShared::new(timer.waker());
+        let alarms = FiringShared::new(timer.waker(), FiringBook::new());
         let shutdown = Arc::new(AtomicBool::new(false));
         let mut opened = false;
 
@@ -601,9 +843,9 @@ mod tests {
 
         let reader = PimdirReader::open(dir.path()).unwrap();
         let timer = CeichasTimer::new(Default::default()).unwrap();
-        let alarms = AlarmShared::new(timer.waker());
-        let mut known = Known::new();
-        let cursor = load(&reader, CAL, None, &alarms, &mut known).unwrap();
+        let alarms = FiringShared::new(timer.waker(), FiringBook::new());
+        let mut watched = Watched::of(&config(dir.path(), CAL));
+        let cursor = load(&reader, &mut watched, None, &alarms).unwrap();
         let id = seq(dir.path(), "standup").to_string();
 
         assert_eq!(
@@ -620,7 +862,7 @@ mod tests {
                 resolves: None,
             }
         });
-        let cursor = follow(&reader, CAL, None, cursor, &alarms, &mut known).unwrap();
+        let cursor = follow(&reader, &mut watched, None, cursor, &alarms).unwrap();
 
         assert_eq!(
             vec![(id, at("09:45:00"))],
@@ -641,7 +883,7 @@ mod tests {
             .unwrap();
         drop(producer);
         drain(dir.path());
-        follow(&reader, CAL, None, cursor, &alarms, &mut known).unwrap();
+        follow(&reader, &mut watched, None, cursor, &alarms).unwrap();
 
         assert!(alarms.triggers(at("00:00:00"), at("23:00:00")).is_empty());
     }
@@ -656,10 +898,10 @@ mod tests {
         add(dir.path(), "mail", &event("quoted", "090000"));
 
         let timer = CeichasTimer::new(Default::default()).unwrap();
-        let alarms = AlarmShared::new(timer.waker());
-        let mut known = Known::new();
+        let alarms = FiringShared::new(timer.waker(), FiringBook::new());
+        let mut watched = Watched::of(&config(dir.path(), CAL));
         let reader = PimdirReader::open(dir.path()).unwrap();
-        let cursor = load(&reader, CAL, None, &alarms, &mut known).unwrap();
+        let cursor = load(&reader, &mut watched, None, &alarms).unwrap();
         let id = seq(dir.path(), "standup").to_string();
         let alarmed = vec![(id, at("08:45:00"))];
         assert_eq!(alarmed, alarms.triggers(at("00:00:00"), at("23:00:00")));
@@ -687,7 +929,7 @@ mod tests {
 
         let reader = PimdirReader::open(dir.path()).unwrap();
         assert_ne!(cursor.purges, reader.change_cursor().unwrap().purges);
-        follow(&reader, CAL, None, cursor, &alarms, &mut known).unwrap();
+        follow(&reader, &mut watched, None, cursor, &alarms).unwrap();
 
         assert_eq!(alarmed, alarms.triggers(at("00:00:00"), at("23:00:00")));
     }
@@ -724,7 +966,7 @@ mod tests {
         }));
 
         let timer = CeichasTimer::new(Default::default()).unwrap();
-        let alarms = AlarmShared::new(timer.waker());
+        let alarms = FiringShared::new(timer.waker(), FiringBook::new());
         let shutdown = Arc::new(AtomicBool::new(false));
         let opened = AtomicBool::new(false);
         let has = |trigger: i64| {
@@ -781,7 +1023,7 @@ mod tests {
 
         let config = config(dir.path(), CAL);
         let timer = CeichasTimer::new(Default::default()).unwrap();
-        let alarms = AlarmShared::new(timer.waker());
+        let alarms = FiringShared::new(timer.waker(), FiringBook::new());
         let shutdown = Arc::new(AtomicBool::new(false));
         let mut fired = Vec::new();
 
@@ -796,7 +1038,8 @@ mod tests {
                 }
             });
 
-            alarm::run(&alarms, timer, &shutdown, |firing| {
+            firing::run(&alarms, timer, &shutdown, |firing| {
+                let firing = firing.alarm().unwrap();
                 fired.push((firing.uid.clone(), firing.trigger));
                 poll::stop(&shutdown);
                 alarms.update(|_| ());
@@ -829,7 +1072,7 @@ mod tests {
         }));
 
         let timer = CeichasTimer::new(Default::default()).unwrap();
-        let alarms = AlarmShared::new(timer.waker());
+        let alarms = FiringShared::new(timer.waker(), FiringBook::new());
         let shutdown = Arc::new(AtomicBool::new(false));
         let mut fired = Vec::new();
 
@@ -843,7 +1086,8 @@ mod tests {
                 }
             });
 
-            alarm::run(&alarms, timer, &shutdown, |firing| {
+            firing::run(&alarms, timer, &shutdown, |firing| {
+                let firing = firing.alarm().unwrap();
                 fired.push((firing.uid.clone(), firing.trigger));
 
                 if fired.len() == 1 {

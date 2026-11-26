@@ -60,6 +60,8 @@ use std::{
 #[cfg(any(dav, feature = "jmap"))]
 use anyhow::bail;
 use anyhow::{Context, Result};
+#[cfg(birthday)]
+use jiff::civil::Time;
 use pimalaya_config::{
     command::{CommandConfig, Timeout},
     notify::NotificationTemplate,
@@ -79,8 +81,13 @@ use serde::Deserialize;
     feature = "pimdir"
 )))]
 use serde::de;
+#[cfg(birthday)]
+use serde::{Deserializer, de::Error as _};
 #[cfg(any(dav, feature = "jmap"))]
 use url::{ParseError, Url};
+
+#[cfg(birthday)]
+use crate::birthday::BirthdayRule;
 
 /// Root configuration: a map of named accounts.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -399,7 +406,7 @@ impl AccountConfig {
 
         #[cfg(feature = "pimdir")]
         if let Some(pimdir) = &self.pimdir {
-            pimdir.hooks.validate()?;
+            pimdir.validate()?;
         }
 
         Ok(())
@@ -469,6 +476,65 @@ pub struct FlagHook {
     pub timeout: Option<Timeout>,
     #[serde(default)]
     pub flags: BTreeSet<String>,
+}
+
+/// Hook that fires for each birthday and anniversary of an addressbook,
+/// once a year, at a local time of day.
+///
+/// Its templates read `$name`, `$kind`, `$date`, `$age`, `$late` and
+/// `$uid` beside `$id` and the collection.
+#[cfg(birthday)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct BirthdayHook {
+    pub notify: Option<NotificationTemplate>,
+    /// A shell line, or a program and its arguments, run with the
+    /// variables in its environment.
+    ///
+    /// `cmd` is read as its alias, as everywhere a command is configured.
+    #[serde(alias = "cmd")]
+    pub command: Option<CommandConfig>,
+    /// How long the command may run before it is sent SIGTERM, and
+    /// SIGKILL once [`Timeout::GRACE`] has passed too.
+    pub timeout: Option<Timeout>,
+    /// The local time of day a date fires at, `HH:MM`, 09:00 unset.
+    #[serde(default = "nine", deserialize_with = "time_of_day")]
+    pub at: Time,
+    /// How many days before the date it fires, 0 unset.
+    #[serde(default)]
+    pub days_before: u16,
+    /// How many days after its day a date reached late, the machine
+    /// asleep, still fires, 0 unset: the same day only.
+    #[serde(default)]
+    pub late_days: u16,
+}
+
+#[cfg(birthday)]
+impl BirthdayHook {
+    /// When the dates this hook fires for fire.
+    pub fn rule(&self) -> BirthdayRule {
+        BirthdayRule {
+            at: self.at,
+            days_before: self.days_before,
+            late_days: self.late_days,
+        }
+    }
+}
+
+/// The time of day a birthday hook fires at, unset.
+#[cfg(birthday)]
+fn nine() -> Time {
+    Time::constant(9, 0, 0, 0)
+}
+
+/// Deserializes a local time of day written `HH:MM` or `HH:MM:SS`.
+#[cfg(birthday)]
+fn time_of_day<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Time, D::Error> {
+    let input = String::deserialize(deserializer)?;
+
+    input
+        .parse()
+        .map_err(|_| D::Error::custom(format!("invalid time of day `{input}`, expected HH:MM")))
 }
 
 /// Parses `input` into a URL, a host that is not ASCII refused with the
@@ -779,6 +845,93 @@ mod tests {
 
         let err = read(pimdir).expect_err("a pimdir account with nothing to fire");
         assert!(format!("{err:#}").contains("on-alarm-trigger"), "{err:#}");
+    }
+
+    #[cfg(all(
+        feature = "caldav",
+        feature = "carddav",
+        feature = "pimdir",
+        feature = "notify"
+    ))]
+    #[test]
+    fn a_birthday_hook_is_an_addressbook_s() {
+        use crate::birthday::BirthdayRule;
+
+        let read = |block: &str| -> Result<Config> {
+            let config: Config = toml::from_str(&format!("[accounts.perso]\n{block}"))?;
+            config.accounts["perso"].validate()?;
+            Ok(config)
+        };
+        let rule = |config: Config| {
+            let hooks = config.accounts["perso"].carddav.clone().unwrap().hooks;
+            hooks.on_birthday_trigger.unwrap().rule()
+        };
+        let carddav = "carddav.server = \"https://dav.example.org\"\n\
+                       carddav.addressbook = \"default\"\n";
+        let hook = "carddav.hooks.on-birthday-trigger";
+
+        let config = read(&format!(
+            "{carddav}{hook}.notify.summary = \"$name turns $age\"\n\
+             {hook}.notify.body = \"$kind $date, $late late ($uid, $id in $addressbook)\"\n"
+        ))
+        .expect("an addressbook fires its dates");
+        let nine = BirthdayRule {
+            at: Time::constant(9, 0, 0, 0),
+            days_before: 0,
+            late_days: 0,
+        };
+        assert_eq!(nine, rule(config));
+
+        let config = read(&format!(
+            "{carddav}{hook}.command = \"true\"\n\
+             {hook}.at = \"18:30\"\n\
+             {hook}.days-before = 1\n\
+             {hook}.late-days = 2\n"
+        ))
+        .expect("a date's time and days");
+        let evening = BirthdayRule {
+            at: Time::constant(18, 30, 0, 0),
+            days_before: 1,
+            late_days: 2,
+        };
+        assert_eq!(evening, rule(config));
+
+        let err = read(&format!("{carddav}{hook}.at = \"25:00\"\n")).expect_err("no such time");
+        assert!(format!("{err:#}").contains("`25:00`"), "{err:#}");
+
+        let err = read(&format!("{carddav}{hook}.notify.summary = \"$subject\"\n"))
+            .expect_err("a date has no subject");
+        assert!(format!("{err:#}").contains(hook), "{err:#}");
+
+        let err = read(
+            "caldav.server = \"https://dav.example.org\"\n\
+             caldav.calendar = \"work\"\n\
+             caldav.hooks.on-birthday-trigger.command = \"true\"\n",
+        )
+        .expect_err("a calendar holds no card");
+        assert!(format!("{err:#}").contains("on-alarm-trigger"), "{err:#}");
+
+        let root = "pimdir.root = \"/tmp/pimdir\"\n";
+        let birthday = "pimdir.hooks.on-birthday-trigger.command = \"true\"\n";
+        let alarm = "pimdir.hooks.on-alarm-trigger.command = \"true\"\n";
+        let book = "pimdir.addressbook = \"contacts\"\n";
+        let cal = "pimdir.calendar = \"cal\"\n";
+
+        read(&format!("{root}{book}{birthday}")).expect("a pimdir addressbook");
+        read(&format!("{root}{book}{birthday}{cal}{alarm}")).expect("both collections");
+
+        for (block, named) in [
+            (format!("{root}{book}"), "on-birthday-trigger"),
+            (
+                format!("{root}{cal}{alarm}{birthday}"),
+                "pimdir.addressbook",
+            ),
+            (format!("{root}{book}{birthday}{alarm}"), "pimdir.calendar"),
+            (root.to_owned(), "`addressbook`"),
+        ] {
+            let err = read(&block).expect_err(&block);
+            assert!(format!("{err:#}").contains(named), "{block}: {err:#}");
+        }
     }
 
     /// A template from before the camelCase variables and the shell's

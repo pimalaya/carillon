@@ -51,11 +51,13 @@
 //! built with either feature; reading the alarms of a calendar is the
 //! caldav feature's alone.
 //!
-//! alarm fires the alarms of a calendar: CalDAV and pimdir read the bodies
-//! of their members into its book, and a thread per account, living
-//! across sessions, fires `on-alarm-trigger` when the wall clock reaches
-//! a trigger. pimdir reads a local store and reports no change, its one
-//! hook being the alarm's.
+//! alarm resolves the alarms of a calendar, birthday the birthdays and
+//! anniversaries of an addressbook: CalDAV, CardDAV and pimdir read the
+//! bodies of their members into the book of firing, and a thread per
+//! account, living across sessions, fires `on-alarm-trigger` or
+//! `on-birthday-trigger` when the wall clock reaches one, each kind with
+//! its own late rule. pimdir reads a local store and reports no change,
+//! its hooks being these two.
 //!
 //! The hooks live under their backend rather than on the account, since
 //! which events exist and which variables a template can use are both the
@@ -76,12 +78,16 @@ mod account;
 #[cfg(alarm)]
 mod alarm;
 mod backend;
+#[cfg(birthday)]
+mod birthday;
 mod cli;
 mod config;
 #[cfg(dav)]
 mod dav;
 mod error;
 mod event;
+#[cfg(firing)]
+mod firing;
 #[cfg(feature = "gcal")]
 mod gcal;
 #[cfg(feature = "gmail")]

@@ -33,7 +33,7 @@ Watch stopped by a signal
 - **Mail, contacts and calendars** over IMAP, JMAP, Maildir, CalDAV, CardDAV, Microsoft Graph and the Google APIs
 - **Push where offered**: IMAP IDLE and the JMAP event stream, a poll everywhere else
 - **Hooks**: a command, a desktop notification or both on any change, the item given as variables
-- **Alarms** of events and tasks fired on time, from a CalDAV calendar or the pimdir store Neverest syncs
+- **Alarms** of events and tasks, **birthdays** and anniversaries of contacts, over CalDAV, CardDAV or pimdir
 - **Multi-account**: every account watched at once, each reconnecting on its own
 - **Account check** proving every backend connects and authenticates
 - **JSON output** of every event and result, described by `carillon json-schema`

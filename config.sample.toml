@@ -111,6 +111,10 @@ default = true	# the account commands run on without -a
 
 #carddav.hooks.on-card-add.notify.summary = "New contact"	# on-card-add, -change and -remove
 #carddav.hooks.on-card-change.command = "true"	# a card whose etag moved, never read
+#carddav.hooks.on-birthday-trigger.notify.summary = "$name turns $age"	# each BDAY and ANNIVERSARY once a year, $kind, $date, $late, $uid...
+#carddav.hooks.on-birthday-trigger.at = "09:00"		# the local time a date fires at
+#carddav.hooks.on-birthday-trigger.days-before = 0	# how many days early it fires
+#carddav.hooks.on-birthday-trigger.late-days = 0	# days after its own a date reached asleep still fires, its day alone otherwise
 
 # Microsoft Graph, delta queries and a calendar listing, at least one domain
 #msgraph.mailbox = "inbox"			# a mail folder by name, id or well-known name
@@ -148,11 +152,13 @@ default = true	# the account commands run on without -a
 
 #gpeople.hooks.on-card-remove.command = "true"	# a contact deleted or leaving the group
 
-# pimdir, the alarms of a calendar of a local store, read and never written
+# pimdir, the alarms of a calendar and the dates of an addressbook of a local store, read and never written
 #pimdir.root = "~/.local/state/neverest"	# the store neverest syncs, on Linux
 #pimdir.calendar = "personal"			# the calendar, its id as `pimdir collection list` prints it
+#pimdir.addressbook = "contacts"		# the addressbook, read as the calendar; at least one of the two
 #pimdir.account = "personal"			# the store account it is grouped under, any otherwise
 #pimdir.watch.poll.interval = 30		# how often the change cursor is read
 
-#pimdir.hooks.on-alarm-trigger.notify.summary = "$summary"	# the one hook, read as caldav's
+#pimdir.hooks.on-alarm-trigger.notify.summary = "$summary"	# the calendar's hook, read as caldav's
 #pimdir.hooks.on-alarm-trigger.command = 'echo "$uid at $trigger" >> ~/.local/state/carillon.log'	# its command
+#pimdir.hooks.on-birthday-trigger.notify.summary = "$name turns $age"	# the addressbook's hook, read as carddav's

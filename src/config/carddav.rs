@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::{
     config::{
-        Hook, ItemHook,
+        BirthdayHook, Hook, ItemHook,
         dav::{DavAuthConfig, DavServer, DavWatchConfig, ascii_url},
         proxy::ProxyConfig,
         tls::TlsConfig,
@@ -41,6 +41,8 @@ pub struct CarddavHookConfig {
     pub on_card_remove: Option<ItemHook>,
     /// Fires when a vCard is edited where it stands.
     pub on_card_change: Option<ItemHook>,
+    /// Fires once a year for each `BDAY` and `ANNIVERSARY` of a vCard.
+    pub on_birthday_trigger: Option<BirthdayHook>,
 }
 
 impl CarddavHookConfig {
@@ -72,6 +74,16 @@ impl CarddavHookConfig {
                 &format!("carddav.hooks.{name}"),
             )?;
         }
+
+        let notify = self
+            .on_birthday_trigger
+            .as_ref()
+            .and_then(|hook| hook.notify.as_ref());
+        hook::validate(
+            notify,
+            Vocabulary::birthday(CarddavConfig::COLLECTION),
+            "carddav.hooks.on-birthday-trigger",
+        )?;
 
         Ok(())
     }

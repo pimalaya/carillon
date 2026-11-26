@@ -26,6 +26,12 @@ A 0.x configuration is not carried over: the hooks are renamed, their notificati
 
   Nothing is stored: an alarm due while carillon was not running never fires, and one reached more than 15 minutes late is dropped with a log line. Cancelled events, completed tasks, acknowledged alarms and `EMAIL` alarms never fire.
 
+- Added `on-birthday-trigger` under `carddav.hooks` and `pimdir.hooks`, fired once a year for each `BDAY` and `ANNIVERSARY` of the watched addressbook, `pimdir.addressbook` naming a pimdir one beside or instead of `pimdir.calendar`.
+
+  A date fires at the hook's `at` local time (`"09:00"` unset), `days-before` days early (0 unset). A year-less date fires every year with `$age` empty, a 29 February on 28 February in a common year, and a date given as text never. The hook reads `$name`, `$kind` (`birthday` or `anniversary`), `$date`, `$age`, `$late` and `$uid`.
+
+  A date reached late, the machine asleep, fires on waking the same local day, or up to `late-days` days later (0 unset), `$late` counting the days. As for alarms, nothing due while carillon was not running fires. `watch` prints a `birthday-fired` event for each date that fires.
+
 - Added `msgraph.hooks.on-message-change`, fired when a draft is edited in place.
 - Added `$collection` to every hook, in notifications and command environments: the collection as the account configured it, whatever the backend calls it.
 - Added `timeout` to every hook (`"30s"`, `"5m"`, `90`, zero refused).

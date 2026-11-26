@@ -17,7 +17,7 @@
 //! only an href left to be recognised by.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     error,
     io::Write,
     mem,
@@ -31,6 +31,20 @@ use std::{
 use anyhow::{Context, Error, Result, anyhow, bail};
 use io_http::{
     client::HttpClientStd, rfc6750::bearer::HttpAuthBearer, rfc7617::basic::HttpAuthBasic,
+};
+#[cfg(feature = "caldav")]
+use io_webdav::rfc4791::item::{
+    CaldavItemEntry, join_path, list::CaldavItemList, multiget::CaldavItemMultiget,
+};
+use io_webdav::rfc4918::{id_from_location, typed::WebdavUnreadableEntry};
+#[cfg(feature = "carddav")]
+use io_webdav::rfc6352::{
+    card::{
+        CarddavCardEntry,
+        list::{CarddavCardList, CarddavCardListOptions},
+        multiget::CarddavCardMultiget,
+    },
+    filter::{CarddavFilter, CarddavFilterTest, CarddavPropCond, CarddavPropFilter},
 };
 use io_webdav::{
     client::WebdavClientStd,
@@ -49,13 +63,8 @@ use io_webdav::{
         WebdavSyncCollectionOptions, WebdavSyncDelta,
     },
 };
-#[cfg(feature = "caldav")]
-use io_webdav::{
-    rfc4791::item::{
-        CaldavItemEntry, join_path, list::CaldavItemList, multiget::CaldavItemMultiget,
-    },
-    rfc4918::{id_from_location, typed::WebdavUnreadableEntry},
-};
+#[cfg(feature = "carddav")]
+use jiff::tz::TimeZone;
 use log::{debug, trace, warn};
 use pimalaya_config::secret::SecretResolver;
 use pimalaya_stream::{
@@ -66,7 +75,9 @@ use secrecy::ExposeSecret;
 use url::Url;
 
 #[cfg(feature = "caldav")]
-use crate::alarm::{AlarmBook, AlarmShared};
+use crate::alarm::AlarmBook;
+#[cfg(feature = "carddav")]
+use crate::birthday::BirthdayBook;
 use crate::{
     config::{
         dav::{DavAuthConfig, DavServer},
@@ -75,6 +86,7 @@ use crate::{
     },
     error::ErrorCode,
     event::{ItemSummary, WatchDomain, WatchEvent},
+    firing::FiringShared,
     poll, read,
 };
 
@@ -85,9 +97,8 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60);
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
 /// Per-read scratch buffer.
 const READ_BUF: usize = 8 * 1024;
-/// How many members one `calendar-multiget` reading what a truncated query left
-/// out names.
-#[cfg(feature = "caldav")]
+/// How many members one `calendar-multiget` or `addressbook-multiget`
+/// reading what a truncated query left out names.
 const MULTIGET_PAGE: usize = 100;
 
 /// `DAV:getcontenttype` (RFC 4918 §15.5), which a CalDAV server spells
@@ -128,9 +139,9 @@ pub struct DavTarget<'a> {
     pub collection: &'a str,
     /// What it holds.
     pub kind: DavKind,
-    /// The alarms of a calendar, kept current when given.
-    #[cfg(feature = "caldav")]
-    pub alarms: Option<&'a AlarmShared>,
+    /// The firings of the collection, kept current when given: the
+    /// alarms of a calendar, the dates of an addressbook.
+    pub firings: Option<&'a FiringShared>,
 }
 
 /// The home set a collection named by its id is looked up under.
@@ -205,8 +216,8 @@ pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<Webd
 }
 
 /// Watches the configured collection until `shutdown` is set, calling
-/// `on_event` for every change, and keeping the target's `alarms` current
-/// when given.
+/// `on_event` for every change, and keeping the target's `firings`
+/// current when given.
 ///
 /// The first enumeration is the baseline, so it reports nothing.
 /// Everything after is read against that picture. A round that fails is
@@ -214,11 +225,11 @@ pub fn open(config: DavServer<'_>, resolver: &mut SecretResolver) -> Result<Webd
 /// the idle connection being one a server is free to close between two
 /// polls.
 ///
-/// Bodies are read only for `alarms`: every member holding an alarm once
-/// the baseline is taken, so an edit landing in between is reported and
-/// read again rather than lost, then the members each round reports
-/// added or changed. A body that cannot be read ends the session, the
-/// next one reading every alarm again.
+/// Bodies are read only for `firings`: every member holding an alarm, or
+/// every card stating a date, once the baseline is taken, so an edit
+/// landing in between is reported and read again rather than lost, then
+/// the members each round reports added or changed. A body that cannot
+/// be read ends the session, the next one reading every firing again.
 ///
 /// `on_open` is called once the session is up and its collection read,
 /// right before the first wait. A collection id naming no collection is
@@ -248,9 +259,9 @@ fn watch_collection(
     let DavTarget {
         collection,
         kind,
-        #[cfg(feature = "caldav")]
-        alarms,
+        firings,
     } = target;
+    let addressbook = matches!(kind, DavKind::Addressbook);
     check(kind.home(), collection)?;
     let mut client = open(config, &mut SecretResolver::new())?;
     let collection = locate(&mut client, config.home, kind.home(), collection, shutdown)?;
@@ -258,8 +269,15 @@ fn watch_collection(
     let mut watched = Watched::open(&mut client, collection, kind, shutdown)?;
 
     #[cfg(feature = "caldav")]
-    if let Some(alarms) = alarms {
-        alarms.replace(read_alarms(&mut client, &watched, shutdown)?);
+    if !addressbook && let Some(shared) = firings {
+        let alarms = read_alarms(&mut client, &watched, shutdown)?;
+        shared.update(|book| book.alarms = alarms);
+    }
+
+    #[cfg(feature = "carddav")]
+    if addressbook && let Some(shared) = firings {
+        let birthdays = read_birthdays(&mut client, &watched, shutdown)?;
+        shared.update(|book| book.birthdays = birthdays);
     }
 
     on_open();
@@ -269,11 +287,9 @@ fn watch_collection(
             break;
         }
 
-        #[cfg(feature = "caldav")]
         let mut moved = BTreeMap::new();
         let mut report = |event: WatchEvent, summary: Option<ItemSummary>| {
-            #[cfg(feature = "caldav")]
-            if alarms.is_some() {
+            if firings.is_some() {
                 let removed = matches!(event, WatchEvent::ItemRemoved { .. });
                 moved.insert(event.id().to_owned(), removed);
             }
@@ -289,10 +305,19 @@ fn watch_collection(
         )?;
 
         #[cfg(feature = "caldav")]
-        if let Some(alarms) = alarms
+        if !addressbook
+            && let Some(shared) = firings
             && !moved.is_empty()
         {
-            refresh_alarms(&mut client, &watched.collection, alarms, moved, shutdown)?;
+            refresh_alarms(&mut client, &watched.collection, shared, &moved, shutdown)?;
+        }
+
+        #[cfg(feature = "carddav")]
+        if addressbook
+            && let Some(shared) = firings
+            && !moved.is_empty()
+        {
+            refresh_birthdays(&mut client, &watched.collection, shared, &moved, shutdown)?;
         }
     }
 
@@ -336,8 +361,7 @@ fn read_alarms(
     }
 
     if truncated {
-        let read: std::collections::BTreeSet<&str> =
-            entries.iter().map(|entry| entry.id.as_str()).collect();
+        let read: BTreeSet<&str> = entries.iter().map(|entry| entry.id.as_str()).collect();
         let left: Vec<String> = watched
             .known
             .keys()
@@ -374,8 +398,8 @@ fn read_alarms(
 fn refresh_alarms(
     client: &mut WebdavClientStd,
     collection: &str,
-    alarms: &AlarmShared,
-    moved: BTreeMap<String, bool>,
+    shared: &FiringShared,
+    moved: &BTreeMap<String, bool>,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<()> {
     let named: Vec<(String, &str, bool)> = moved
@@ -394,15 +418,16 @@ fn refresh_alarms(
         false => multiget(client, collection, &wanted, shutdown)?,
     };
 
-    alarms.update(|book| {
+    shared.update(|book| {
         for (name, href, removed) in &named {
             let entry = entries.iter().find(|entry| entry.id == *name);
 
             match entry {
                 Some(entry) if !removed => {
-                    book.read(name, href, entry.etag.as_deref(), &entry.data)
+                    book.alarms
+                        .read(name, href, entry.etag.as_deref(), &entry.data)
                 }
-                _ => book.forget(name),
+                _ => book.alarms.forget(name),
             }
         }
     });
@@ -410,10 +435,167 @@ fn refresh_alarms(
     Ok(())
 }
 
+/// Reads every card stating a date, with its body, into a book.
+///
+/// One `addressbook-query` (RFC 6352 §8.6) asks for the cards holding a
+/// `BDAY` or an `ANNIVERSARY`; a server refusing the filter is asked for
+/// every card instead, the book keeping only those stating a date. A
+/// server truncating the query has the cards of the picture it left out
+/// read by `addressbook-multiget`, [`MULTIGET_PAGE`] at a time.
+#[cfg(feature = "carddav")]
+fn read_birthdays(
+    client: &mut WebdavClientStd,
+    watched: &Watched,
+    shutdown: &Arc<AtomicBool>,
+) -> Result<BirthdayBook> {
+    let collection = &watched.collection;
+    let dated = CarddavFilter {
+        test: CarddavFilterTest::AnyOf,
+        props: ["BDAY", "ANNIVERSARY"]
+            .into_iter()
+            .map(|name| CarddavPropFilter {
+                name: name.to_owned(),
+                test: CarddavFilterTest::AllOf,
+                cond: CarddavPropCond::Match {
+                    texts: Vec::new(),
+                    params: Vec::new(),
+                },
+            })
+            .collect(),
+    };
+
+    let (mut entries, truncated) = match card_query(client, collection, dated, shutdown) {
+        Ok(found) => found,
+        Err(err) => {
+            debug!("dav server refused a date filter, reading every card: {err:#}");
+            card_query(client, collection, CarddavFilter::default(), shutdown)?
+        }
+    };
+
+    if truncated {
+        let read: BTreeSet<&str> = entries.iter().map(|entry| entry.id.as_str()).collect();
+        let left: Vec<String> = watched
+            .known
+            .keys()
+            .map(|href| resource(href))
+            .filter(|name| !read.contains(name.as_str()))
+            .collect();
+
+        debug!(
+            "dav server truncated an addressbook query, reading {} cards",
+            left.len()
+        );
+
+        for page in left.chunks(MULTIGET_PAGE) {
+            let names: Vec<&str> = page.iter().map(String::as_str).collect();
+            entries.extend(card_multiget(client, collection, &names, shutdown)?);
+        }
+    }
+
+    let mut book = BirthdayBook::new(TimeZone::system());
+
+    for entry in entries {
+        book.read(&entry.id, &entry.href, &entry.data);
+    }
+
+    debug!("read {} cards stating a date", book.len());
+
+    Ok(book)
+}
+
+/// Reads again the cards a round reported added or changed, by href, and
+/// forgets the ones it reported removed.
+#[cfg(feature = "carddav")]
+fn refresh_birthdays(
+    client: &mut WebdavClientStd,
+    collection: &str,
+    shared: &FiringShared,
+    moved: &BTreeMap<String, bool>,
+    shutdown: &Arc<AtomicBool>,
+) -> Result<()> {
+    let named: Vec<(String, &str, bool)> = moved
+        .iter()
+        .map(|(href, removed)| (resource(href), href.as_str(), *removed))
+        .collect();
+
+    let wanted: Vec<&str> = named
+        .iter()
+        .filter(|(_, _, removed)| !removed)
+        .map(|(name, _, _)| name.as_str())
+        .collect();
+
+    let entries = match wanted.is_empty() {
+        true => Vec::new(),
+        false => card_multiget(client, collection, &wanted, shutdown)?,
+    };
+
+    shared.update(|book| {
+        for (name, href, removed) in &named {
+            let entry = entries.iter().find(|entry| entry.id == *name);
+
+            match entry {
+                Some(entry) if !removed => book.birthdays.read(name, href, &entry.data),
+                _ => book.birthdays.forget(name),
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// Runs one `addressbook-query` report for the cards `filter` matches,
+/// with their bodies (RFC 6352 §8.6), and says whether the server
+/// truncated it.
+#[cfg(feature = "carddav")]
+fn card_query(
+    client: &mut WebdavClientStd,
+    collection: &str,
+    filter: CarddavFilter,
+    shutdown: &Arc<AtomicBool>,
+) -> Result<(Vec<CarddavCardEntry>, bool)> {
+    let options = CarddavCardListOptions {
+        filter,
+        limit: None,
+    };
+    let mut coroutine = CarddavCardList::new(
+        &client.base_url,
+        client.auth(),
+        &client.user_agent,
+        collection,
+        &options,
+    );
+
+    let listing = pump(client, &mut coroutine, shutdown)?;
+
+    skip_unreadable(&listing.unreadable);
+    Ok((listing.cards.into_iter().collect(), listing.truncated))
+}
+
+/// Runs one `addressbook-multiget` report for the cards named, with their
+/// bodies (RFC 6352 §8.7).
+#[cfg(feature = "carddav")]
+fn card_multiget(
+    client: &mut WebdavClientStd,
+    collection: &str,
+    names: &[&str],
+    shutdown: &Arc<AtomicBool>,
+) -> Result<Vec<CarddavCardEntry>> {
+    let mut coroutine = CarddavCardMultiget::new(
+        &client.base_url,
+        client.auth(),
+        &client.user_agent,
+        collection,
+        names,
+    );
+
+    let found = pump(client, &mut coroutine, shutdown)?;
+    skip_unreadable(&found.unreadable);
+    Ok(found.cards)
+}
+
 /// The id of the member at `href`, which it is keyed by whichever report
 /// named it: its last segment read as io-webdav reads a listed one
 /// (`id_from_location`), decoded when the decoding encodes back to it.
-#[cfg(feature = "caldav")]
 fn resource(href: &str) -> String {
     id_from_location(href).unwrap_or_default()
 }
@@ -466,7 +648,6 @@ fn multiget(
 
 /// Warns of each member a report could not read, which the watch leaves
 /// out as it did before the server named them.
-#[cfg(feature = "caldav")]
 fn skip_unreadable(unreadable: &[WebdavUnreadableEntry]) {
     for entry in unreadable {
         let status = entry.status.map_or(String::new(), |s| format!(" ({s})"));
@@ -1430,12 +1611,15 @@ fn names_precondition(body: &str) -> bool {
 mod tests {
     use std::{io, sync::mpsc, thread};
 
-    #[cfg(feature = "caldav")]
     use ceichas::timer::CeichasTimer;
     #[cfg(feature = "caldav")]
     use jiff::Timestamp;
+    #[cfg(feature = "carddav")]
+    use jiff::civil::{Date, Time};
 
-    use crate::dav::*;
+    #[cfg(feature = "carddav")]
+    use crate::birthday::BirthdayRule;
+    use crate::{dav::*, firing::FiringBook};
 
     #[test]
     fn a_caldav_content_type_names_its_component() {
@@ -1629,8 +1813,7 @@ mod tests {
             let target = DavTarget {
                 collection: id,
                 kind: DavKind::Addressbook,
-                #[cfg(feature = "caldav")]
-                alarms: None,
+                firings: None,
             };
             let watched = watch(config, target, None, &shutdown, || (), |_, _| ());
             let err = watched.err().unwrap_or_else(|| panic!("{id:?} watched"));
@@ -1649,9 +1832,10 @@ mod tests {
     }
 
     /// Scripted DAV servers: one answering discovery, holding one calendar
-    /// at `/cal/alice/work`, implementing no `sync-collection` but serving
-    /// its members' bodies by `calendar-query` and `calendar-multiget`, and
-    /// one refusing every request.
+    /// at `/cal/alice/work` and one addressbook at `/book/alice/default`,
+    /// implementing no `sync-collection` but serving its members' bodies by
+    /// `calendar-query` and `calendar-multiget`, or `addressbook-query` and
+    /// `addressbook-multiget`, and one refusing every request.
     mod fake {
         use std::{
             collections::BTreeMap,
@@ -1668,8 +1852,9 @@ mod tests {
         /// The requests the server answered, as method and path.
         pub type Seen = Arc<Mutex<Vec<String>>>;
 
-        /// How many bodies a `calendar-query` answers, past which it is
-        /// truncated with a 507 row (RFC 6578 §3.6).
+        /// How many bodies a `calendar-query` or an `addressbook-query`
+        /// answers, past which it is truncated with a 507 row (RFC 6578
+        /// §3.6).
         const QUERY_CAP: usize = 2;
 
         /// Starts the server with no member body, returning its address.
@@ -1763,7 +1948,7 @@ mod tests {
             members: &Members,
             bodies: &Bodies,
         ) -> (&'static str, String) {
-            const OPEN: &str = r#"<?xml version="1.0" encoding="utf-8"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">"#;
+            const OPEN: &str = r#"<?xml version="1.0" encoding="utf-8"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:card="urn:ietf:params:xml:ns:carddav">"#;
             const CLOSE: &str = "</d:multistatus>";
 
             let one = |href: &str, prop: &str| {
@@ -1774,7 +1959,7 @@ mod tests {
 
             // NOTE: the filter of a query is not read, every member holding
             // a body matching it.
-            let read = |hrefs: Vec<String>| {
+            let read = |hrefs: Vec<String>, element: &str| {
                 let members = members.lock().unwrap();
                 let bodies = bodies.lock().unwrap();
                 let mut xml = String::from(OPEN);
@@ -1782,10 +1967,10 @@ mod tests {
                 for href in hrefs {
                     let etag = members.iter().find(|(member, _)| *member == href);
                     match (etag, bodies.get(&href)) {
-                        (Some((_, etag)), Some(data)) => {
-                            let data = data.replace('\r', "&#13;");
+                        (Some((_, etag)), Some(body)) => {
+                            let body = body.replace('\r', "&#13;");
                             xml.push_str(&format!(
-                                "<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:getetag>\"{etag}\"</d:getetag><c:calendar-data>{data}</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+                                "<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:getetag>\"{etag}\"</d:getetag><{element}>{body}</{element}></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
                             ));
                         }
                         _ => xml.push_str(&format!(
@@ -1798,10 +1983,18 @@ mod tests {
                 ("207 Multi-Status", xml)
             };
 
+            let element = match body.contains("addressbook-") {
+                true => "card:address-data",
+                false => "c:calendar-data",
+            };
+
             match method {
-                "REPORT" if body.contains("calendar-query") => {
+                "REPORT"
+                    if body.contains("calendar-query") || body.contains("addressbook-query") =>
+                {
                     let held: Vec<String> = bodies.lock().unwrap().keys().cloned().collect();
-                    let (status, mut xml) = read(held.iter().take(QUERY_CAP).cloned().collect());
+                    let (status, mut xml) =
+                        read(held.iter().take(QUERY_CAP).cloned().collect(), element);
 
                     if held.len() > QUERY_CAP {
                         xml.truncate(xml.len() - CLOSE.len());
@@ -1812,7 +2005,10 @@ mod tests {
 
                     (status, xml)
                 }
-                "REPORT" if body.contains("calendar-multiget") => {
+                "REPORT"
+                    if body.contains("calendar-multiget")
+                        || body.contains("addressbook-multiget") =>
+                {
                     let asked = body
                         .split("href>")
                         .skip(1)
@@ -1820,7 +2016,7 @@ mod tests {
                         .filter_map(|rest| rest.split_once('<'))
                         .map(|(href, _)| href.to_string())
                         .collect();
-                    read(asked)
+                    read(asked, element)
                 }
                 "REPORT" => ("501 Not Implemented", String::new()),
                 "PROPFIND" if body.contains("current-user-principal") => (
@@ -1844,9 +2040,12 @@ mod tests {
                         r#"<c:supported-calendar-component-set><c:comp name="VEVENT"/></c:supported-calendar-component-set>"#,
                     ),
                 ),
-                "PROPFIND" if path.trim_end_matches('/') == "/cal/alice/work" => {
+                "PROPFIND"
+                    if ["/cal/alice/work", "/book/alice/default"]
+                        .contains(&path.trim_end_matches('/')) =>
+                {
                     let mut xml = String::from(OPEN);
-                    xml.push_str("<d:response><d:href>/cal/alice/work/</d:href><d:propstat><d:prop><d:getetag/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>");
+                    xml.push_str(&format!("<d:response><d:href>{path}</d:href><d:propstat><d:prop><d:getetag/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"));
                     for (href, etag) in members.lock().unwrap().iter() {
                         xml.push_str(&format!(
                             "<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:getetag>\"{etag}\"</d:getetag></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
@@ -1959,7 +2158,7 @@ mod tests {
     fn follow(
         client: &mut WebdavClientStd,
         watched: &mut Watched,
-        alarms: &AlarmShared,
+        alarms: &FiringShared,
         shutdown: &Arc<AtomicBool>,
     ) -> Vec<WatchEvent> {
         let mut events = Vec::new();
@@ -1974,7 +2173,7 @@ mod tests {
                 (event.id().to_owned(), removed)
             })
             .collect();
-        refresh_alarms(client, &watched.collection, alarms, moved, shutdown).unwrap();
+        refresh_alarms(client, &watched.collection, alarms, &moved, shutdown).unwrap();
 
         events
     }
@@ -2001,7 +2200,7 @@ mod tests {
         let shutdown = Arc::new(AtomicBool::new(false));
         let mut client = client(&addr);
         let timer = CeichasTimer::new(Default::default()).unwrap();
-        let alarms = AlarmShared::new(timer.waker());
+        let alarms = FiringShared::new(timer.waker(), FiringBook::new());
         let day = || alarms.triggers(at("00:00:00"), at("23:00:00"));
 
         let collection = locate(&mut client, None, DavHome::Calendars, "work", &shutdown).unwrap();
@@ -2009,7 +2208,7 @@ mod tests {
         let domains = Domains::resolve(&mut client, &collection, kind, &shutdown).unwrap();
         let mut watched = Watched::arm(&mut client, collection, domains, &shutdown).unwrap();
         let book = read_alarms(&mut client, &watched, &shutdown).unwrap();
-        alarms.replace(book);
+        alarms.update(|firings| firings.alarms = book);
         assert_eq!(vec![(href.clone(), at("08:45:00"))], day());
 
         members.lock().unwrap()[0].1 = String::from("2");
@@ -2055,13 +2254,14 @@ mod tests {
         let shutdown = Arc::new(AtomicBool::new(false));
         let mut client = client(&addr);
         let timer = CeichasTimer::new(Default::default()).unwrap();
-        let alarms = AlarmShared::new(timer.waker());
+        let alarms = FiringShared::new(timer.waker(), FiringBook::new());
 
         let collection = locate(&mut client, None, DavHome::Calendars, "work", &shutdown).unwrap();
         let kind = DavKind::Calendar(vec![WatchDomain::Event]);
         let domains = Domains::resolve(&mut client, &collection, kind, &shutdown).unwrap();
         let watched = Watched::arm(&mut client, collection, domains, &shutdown).unwrap();
-        alarms.replace(read_alarms(&mut client, &watched, &shutdown).unwrap());
+        let book = read_alarms(&mut client, &watched, &shutdown).unwrap();
+        alarms.update(|firings| firings.alarms = book);
 
         let mut fired: Vec<i64> = alarms
             .triggers(at("00:00:00"), at("23:00:00"))
@@ -2070,6 +2270,160 @@ mod tests {
             .collect();
         fired.sort();
         assert_eq!(vec![at("08:45:00"), at("09:45:00"), at("10:45:00")], fired);
+    }
+
+    /// A card of `uid` born on `bday`.
+    #[cfg(feature = "carddav")]
+    fn born(uid: &str, bday: &str) -> String {
+        format!(
+            "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:{uid}\r\nFN:Jane Doe\r\nBDAY:{bday}\r\nEND:VCARD\r\n"
+        )
+    }
+
+    /// When `date` reaches 09:00 in the system's zone, in seconds.
+    #[cfg(feature = "carddav")]
+    fn nine(date: &str) -> i64 {
+        let date: Date = date.parse().unwrap();
+        let nine = date.to_datetime(Time::constant(9, 0, 0, 0));
+
+        TimeZone::system()
+            .to_ambiguous_timestamp(nine)
+            .compatible()
+            .unwrap()
+            .as_second()
+    }
+
+    /// The firings an account shares, its dates firing at 09:00.
+    #[cfg(feature = "carddav")]
+    fn dated(timer: &CeichasTimer) -> FiringShared {
+        let mut book = FiringBook::new();
+        book.rule = Some(BirthdayRule {
+            at: Time::constant(9, 0, 0, 0),
+            days_before: 0,
+            late_days: 0,
+        });
+
+        FiringShared::new(timer.waker(), book)
+    }
+
+    /// The addressbook of the scripted server, watched with its dates read.
+    #[cfg(feature = "carddav")]
+    fn watched_book(
+        client: &mut WebdavClientStd,
+        firings: &FiringShared,
+        shutdown: &Arc<AtomicBool>,
+    ) -> Watched {
+        let book = "/book/alice/default/";
+        let collection = locate(client, None, DavHome::Addressbooks, book, shutdown).unwrap();
+        let domains =
+            Domains::resolve(client, &collection, DavKind::Addressbook, shutdown).unwrap();
+        let watched = Watched::arm(client, collection, domains, shutdown).unwrap();
+
+        let birthdays = read_birthdays(client, &watched, shutdown).unwrap();
+        firings.update(|book| book.birthdays = birthdays);
+
+        watched
+    }
+
+    /// A card whose `BDAY` is edited fires on its new date and not its old
+    /// one, and a card removed fires no more.
+    #[cfg(feature = "carddav")]
+    #[test]
+    fn a_birthday_follows_a_card_edited_and_removed() {
+        let href = String::from("/book/alice/default/jane.vcf");
+        let members: fake::Members = Default::default();
+        let bodies: fake::Bodies = Default::default();
+        members
+            .lock()
+            .unwrap()
+            .push((href.clone(), String::from("1")));
+        bodies
+            .lock()
+            .unwrap()
+            .insert(href.clone(), born("jane", "1990-03-10"));
+        let addr = fake::holding(members.clone(), bodies.clone(), Default::default());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut client = client(&addr);
+        let timer = CeichasTimer::new(Default::default()).unwrap();
+        let firings = dated(&timer);
+        let march = || firings.triggers(nine("2027-03-01"), nine("2027-04-01"));
+
+        let mut watched = watched_book(&mut client, &firings, &shutdown);
+        assert_eq!(vec![(href.clone(), nine("2027-03-10"))], march());
+
+        members.lock().unwrap()[0].1 = String::from("2");
+        bodies
+            .lock()
+            .unwrap()
+            .insert(href.clone(), born("jane", "1990-03-11"));
+
+        let mut events = Vec::new();
+        watched
+            .round(&mut client, &shutdown, &mut |event, _| events.push(event))
+            .unwrap();
+        let changed = WatchEvent::ItemChanged {
+            domain: WatchDomain::Card,
+            id: href.clone(),
+        };
+        assert_eq!(vec![changed], events);
+
+        let moved = BTreeMap::from([(href.clone(), false)]);
+        refresh_birthdays(
+            &mut client,
+            &watched.collection,
+            &firings,
+            &moved,
+            &shutdown,
+        )
+        .unwrap();
+        assert_eq!(vec![(href.clone(), nine("2027-03-11"))], march());
+
+        members.lock().unwrap().clear();
+        bodies.lock().unwrap().clear();
+        let moved = BTreeMap::from([(href, true)]);
+        refresh_birthdays(
+            &mut client,
+            &watched.collection,
+            &firings,
+            &moved,
+            &shutdown,
+        )
+        .unwrap();
+        assert!(march().is_empty(), "{:?}", march());
+    }
+
+    #[cfg(feature = "carddav")]
+    #[test]
+    fn a_truncated_addressbook_query_reads_the_cards_it_left_out() {
+        let members: fake::Members = Default::default();
+        let bodies: fake::Bodies = Default::default();
+
+        for (name, bday) in [("a", "--0310"), ("b", "--0311"), ("c", "--0312")] {
+            let href = format!("/book/alice/default/{name}.vcf");
+            members
+                .lock()
+                .unwrap()
+                .push((href.clone(), String::from("1")));
+            bodies.lock().unwrap().insert(href, born(name, bday));
+        }
+
+        let addr = fake::holding(members, bodies, Default::default());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut client = client(&addr);
+        let timer = CeichasTimer::new(Default::default()).unwrap();
+        let firings = dated(&timer);
+
+        watched_book(&mut client, &firings, &shutdown);
+
+        let fired: Vec<i64> = firings
+            .triggers(nine("2027-03-01"), nine("2027-04-01"))
+            .into_iter()
+            .map(|(_, at)| at)
+            .collect();
+        assert_eq!(
+            vec![nine("2027-03-10"), nine("2027-03-11"), nine("2027-03-12")],
+            fired
+        );
     }
 
     /// A server reading every request and answering none, as a connection

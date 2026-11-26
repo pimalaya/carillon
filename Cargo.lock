@@ -199,6 +199,7 @@ dependencies = [
  "tempfile",
  "toml",
  "url",
+ "vcard-rs",
 ]
 
 [[package]]
@@ -2347,6 +2348,15 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "vcard-rs"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e0bf98fed3a46522c7893facb4f2b133945e829f4965a2afecb0207b255eaee"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

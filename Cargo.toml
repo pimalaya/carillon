@@ -20,13 +20,13 @@ imap = ["dep:io-imap", "dep:mime-rs", "io-imap/std", "io-imap/scram"]
 jmap = ["dep:base64", "dep:io-jmap", "io-jmap/std"]
 maildir = ["dep:io-maildir", "io-maildir/client", "io-maildir/parser"]
 caldav = ["dep:ceichas", "dep:ical-rs", "dep:io-http", "dep:io-webdav", "dep:jiff", "io-http/std", "io-webdav/std"]
-carddav = ["dep:io-http", "dep:io-webdav", "io-http/std", "io-webdav/std"]
+carddav = ["dep:ceichas", "dep:io-http", "dep:io-webdav", "dep:jiff", "dep:vcard-rs", "io-http/std", "io-webdav/std"]
 msgraph = ["dep:io-msgraph", "io-msgraph/std"]
 gmail = ["dep:io-gmail", "dep:mime-rs", "io-gmail/std"]
 gcal = ["dep:io-gcal", "io-gcal/std"]
 gpeople = ["dep:io-gpeople", "io-gpeople/std"]
 notify = ["pimalaya-config/notify"]
-pimdir = ["dep:ceichas", "dep:ical-rs", "dep:io-pimdir", "dep:jiff", "io-pimdir/client"]
+pimdir = ["dep:ceichas", "dep:ical-rs", "dep:io-pimdir", "dep:jiff", "dep:vcard-rs", "io-pimdir/client"]
 vendored = ["pimalaya-stream/vendored", "io-http?/vendored", "io-pimdir?/vendored", "pimalaya-config/vendored"]
 
 [profile.release]
@@ -74,6 +74,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 simd-cpu = { version = "0.1", default-features = false, features = ["std"] }
 url = { version = "2.2", features = ["serde"] }
+vcard-rs = { version = "0.6.1", default-features = false, features = ["parser"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

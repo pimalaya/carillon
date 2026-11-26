@@ -32,21 +32,27 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(alarm)]
+#[cfg(firing)]
 use std::sync::{Mutex, PoisonError};
 
 use anyhow::{Result, bail};
-#[cfg(alarm)]
+#[cfg(firing)]
 use ceichas::{timer::CeichasTimer, waker::CeichasWaker};
 use clap::Parser;
 #[cfg(feature = "imap")]
 use io_imap::watch::ImapMailboxWatchState;
-#[cfg(any(alarm, feature = "imap"))]
+#[cfg(birthday)]
+use jiff::{Timestamp, tz::TimeZone};
+#[cfg(any(firing, feature = "imap"))]
 use log::warn;
 use log::{debug, error, info};
 use pimalaya_cli::{printer::Printer, signal::Shutdown};
 use pimalaya_config::toml::TomlConfig;
 
+#[cfg(birthday)]
+use crate::config::BirthdayHook;
+#[cfg(alarm)]
+use crate::config::ItemHook;
 #[cfg(api)]
 use crate::config::api::ApiWatchConfig;
 #[cfg(feature = "gcal")]
@@ -59,12 +65,6 @@ use crate::gpeople;
 use crate::msgraph;
 #[cfg(feature = "pimdir")]
 use crate::pimdir;
-#[cfg(alarm)]
-use crate::{
-    alarm::{self, AlarmShared},
-    config::ItemHook,
-    hook::{self, HookCollection},
-};
 use crate::{
     backend::Backend,
     config::{AccountConfig, Config},
@@ -91,6 +91,11 @@ use crate::{
 };
 #[cfg(feature = "maildir")]
 use crate::{config::maildir::MaildirWatchConfig, maildir};
+#[cfg(firing)]
+use crate::{
+    firing::{self, Firing, FiringBook, FiringShared},
+    hook::{self, HookCollection},
+};
 
 /// Reconnect backoff floor.
 const INITIAL_BACKOFF: Duration = Duration::from_secs(2);
@@ -126,8 +131,8 @@ impl WatchCommand {
 
         let signal = Shutdown::install()?;
         let shutdown = Arc::new(AtomicBool::new(false));
-        #[cfg(alarm)]
-        let wakers = AlarmWakers::default();
+        #[cfg(firing)]
+        let wakers = FiringWakers::default();
         let commands = HookCommands::start()?;
         let (sender, receiver) = mpsc::channel();
         let mut handles = Vec::with_capacity(selected.len());
@@ -135,7 +140,7 @@ impl WatchCommand {
         for (name, account) in selected {
             let shutdown = shutdown.clone();
             let events = WatchEvents::new(name.clone(), sender.clone(), commands.clone());
-            #[cfg(alarm)]
+            #[cfg(firing)]
             let wakers = wakers.clone();
 
             let handle = thread::Builder::new().name(name.clone()).spawn(move || {
@@ -145,7 +150,7 @@ impl WatchCommand {
                     backend,
                     shutdown,
                     &events,
-                    #[cfg(alarm)]
+                    #[cfg(firing)]
                     wakers,
                 )
             })?;
@@ -177,10 +182,10 @@ impl WatchCommand {
 
                 // NOTE: rung after the flag is set, so a woken alarm
                 // thread reads it and stops.
-                #[cfg(alarm)]
+                #[cfg(firing)]
                 for waker in wakers.lock().unwrap_or_else(PoisonError::into_inner).iter() {
                     if let Err(err) = waker.wake() {
-                        warn!("cannot wake an alarm thread: {err}");
+                        warn!("cannot wake a firing thread: {err}");
                     }
                 }
 
@@ -245,12 +250,12 @@ fn watch_account(
     backend: Backend,
     shutdown: Arc<AtomicBool>,
     events: &WatchEvents,
-    #[cfg(alarm)] wakers: AlarmWakers,
+    #[cfg(firing)] wakers: FiringWakers,
 ) -> Result<()> {
     let mut stopped = Ok(());
     let mut backoff = INITIAL_BACKOFF;
-    #[cfg(alarm)]
-    let mut alarms = AlarmRunner::new(wakers);
+    #[cfg(firing)]
+    let mut firings = FiringRunner::new(wakers);
     #[cfg(any(feature = "imap", feature = "gmail"))]
     let mut resume = Resume::default();
 
@@ -263,8 +268,8 @@ fn watch_account(
             backend,
             &shutdown,
             events,
-            #[cfg(alarm)]
-            &mut alarms,
+            #[cfg(firing)]
+            &mut firings,
             #[cfg(any(feature = "imap", feature = "gmail"))]
             &mut resume,
         );
@@ -308,8 +313,8 @@ fn watch_account(
         }
     }
 
-    #[cfg(alarm)]
-    alarms.join(account);
+    #[cfg(firing)]
+    firings.join(account);
 
     stopped
 }
@@ -326,7 +331,7 @@ fn watch_session(
     backend: Backend,
     shutdown: &Arc<AtomicBool>,
     events: &WatchEvents,
-    #[cfg(alarm)] alarms: &mut AlarmRunner,
+    #[cfg(firing)] firings: &mut FiringRunner,
     #[cfg(any(feature = "imap", feature = "gmail"))] resume: &mut Resume,
 ) -> Result<()> {
     #[cfg(feature = "imap")]
@@ -476,7 +481,10 @@ fn watch_session(
                 events.react(hook, &event, caldav_config.collection(), None);
             };
             let shared = match &caldav_config.hooks.on_alarm_trigger {
-                Some(hook) => Some(alarms.ensure(account, hook, collection, shutdown, events)?),
+                Some(hook) => {
+                    let hooks = FiringHooks::alarm(hook, collection);
+                    Some(firings.ensure(account, hooks, shutdown, events)?)
+                }
                 None => None,
             };
             return dav::watch(
@@ -484,7 +492,7 @@ fn watch_session(
                 DavTarget {
                     collection: collection.value,
                     kind: DavKind::Calendar(caldav_config.hooks.domains()),
-                    alarms: shared,
+                    firings: shared,
                 },
                 dav_interval(&caldav_config.watch),
                 shutdown,
@@ -511,13 +519,19 @@ fn watch_session(
                 let hook = carddav_config.hooks.get(&event);
                 events.react(hook, &event, carddav_config.collection(), None);
             };
+            let shared = match &carddav_config.hooks.on_birthday_trigger {
+                Some(hook) => {
+                    let hooks = FiringHooks::birthday(hook, collection);
+                    Some(firings.ensure(account, hooks, shutdown, events)?)
+                }
+                None => None,
+            };
             return dav::watch(
                 carddav_config.server(),
                 DavTarget {
                     collection: collection.value,
                     kind: DavKind::Addressbook,
-                    #[cfg(feature = "caldav")]
-                    alarms: None,
+                    firings: shared,
                 },
                 dav_interval(&carddav_config.watch),
                 shutdown,
@@ -665,13 +679,25 @@ fn watch_session(
     #[cfg(feature = "pimdir")]
     if backend.allows_pimdir() {
         if let Some(pimdir_config) = &config.pimdir {
-            let collection = pimdir_config.collection();
-            let Some(hook) = &pimdir_config.hooks.on_alarm_trigger else {
-                bail!("Account has no `pimdir.hooks.on-alarm-trigger`, so nothing to watch for");
+            let hooks = &pimdir_config.hooks;
+            let hooks = FiringHooks {
+                alarm: hooks
+                    .on_alarm_trigger
+                    .as_ref()
+                    .zip(pimdir_config.calendar()),
+                birthday: hooks
+                    .on_birthday_trigger
+                    .as_ref()
+                    .zip(pimdir_config.addressbook()),
             };
 
-            let shared = alarms.ensure(account, hook, collection, shutdown, events)?;
-            let on_open = || events.opened("pimdir", WatchMethod::Poll, vec![collection]);
+            if hooks.alarm.is_none() && hooks.birthday.is_none() {
+                bail!("Account has no `pimdir` hook with its collection, so nothing to watch for");
+            }
+
+            let shared = firings.ensure(account, hooks, shutdown, events)?;
+            let collections = pimdir_config.collections();
+            let on_open = || events.opened("pimdir", WatchMethod::Poll, collections);
             return pimdir::watch(pimdir_config, shutdown, shared, on_open);
         }
 
@@ -705,52 +731,85 @@ struct Resume {
     gmail: Option<String>,
 }
 
-/// The thread firing an account's alarms, beside its watch.
+/// The thread firing an account's alarms and dates, beside its watch.
 ///
 /// It lives as long as the account, not the session: a session lost to
-/// a dropped connection leaves the alarms it read firing on time while
+/// a dropped connection leaves the firings it read firing on time while
 /// the next one connects, and that one replaces them with what it reads.
-#[cfg(alarm)]
-struct AlarmRunner {
+#[cfg(firing)]
+struct FiringRunner {
     /// Where the thread's waker is left for a shutdown to ring.
-    wakers: AlarmWakers,
-    started: Option<(Arc<AlarmShared>, thread::JoinHandle<()>)>,
+    wakers: FiringWakers,
+    started: Option<(Arc<FiringShared>, thread::JoinHandle<()>)>,
 }
 
-/// The waker of every alarm thread, which a shutdown rings once its flag
+/// The waker of every firing thread, which a shutdown rings once its flag
 /// is set: a thread blocks until its next firing, which may be hours
 /// away, and would otherwise not notice.
-#[cfg(alarm)]
-type AlarmWakers = Arc<Mutex<Vec<CeichasWaker>>>;
+#[cfg(firing)]
+type FiringWakers = Arc<Mutex<Vec<CeichasWaker>>>;
 
-#[cfg(alarm)]
-impl AlarmRunner {
+/// The hooks a firing thread fires, each with the collection it is
+/// about.
+#[cfg(firing)]
+struct FiringHooks<'a> {
+    /// `on-alarm-trigger`, for the alarms of a calendar.
+    #[cfg(alarm)]
+    alarm: Option<(&'a ItemHook, HookCollection<'a>)>,
+    /// `on-birthday-trigger`, for the dates of an addressbook.
+    #[cfg(birthday)]
+    birthday: Option<(&'a BirthdayHook, HookCollection<'a>)>,
+}
+
+#[cfg(firing)]
+impl<'a> FiringHooks<'a> {
+    /// The alarm hook alone.
+    #[cfg(feature = "caldav")]
+    fn alarm(hook: &'a ItemHook, collection: HookCollection<'a>) -> Self {
+        Self {
+            alarm: Some((hook, collection)),
+            #[cfg(birthday)]
+            birthday: None,
+        }
+    }
+
+    /// The birthday hook alone.
+    #[cfg(feature = "carddav")]
+    fn birthday(hook: &'a BirthdayHook, collection: HookCollection<'a>) -> Self {
+        Self {
+            #[cfg(alarm)]
+            alarm: None,
+            birthday: Some((hook, collection)),
+        }
+    }
+}
+
+#[cfg(firing)]
+impl FiringRunner {
     /// No thread yet, its waker to be left in `wakers`.
-    fn new(wakers: AlarmWakers) -> Self {
+    fn new(wakers: FiringWakers) -> Self {
         Self {
             wakers,
             started: None,
         }
     }
 
-    /// The alarms of this account, starting its thread on the first
-    /// session to fire `hook` for the alarms of `collection`, each firing
-    /// reported to `events`.
+    /// The firings of this account, starting its thread on the first
+    /// session to fire `hooks`, each firing reported to `events`.
     fn ensure(
         &mut self,
         account: &str,
-        hook: &ItemHook,
-        collection: HookCollection<'_>,
+        hooks: FiringHooks<'_>,
         shutdown: &Arc<AtomicBool>,
         events: &WatchEvents,
-    ) -> Result<&AlarmShared> {
+    ) -> Result<&FiringShared> {
         if let Some(started) = self.started.take() {
             let (shared, _) = self.started.insert(started);
             return Ok(shared);
         }
 
         let timer = CeichasTimer::new(Default::default())?;
-        debug!("[{account}] alarms wait on {:?}", timer.backend());
+        debug!("[{account}] firings wait on {:?}", timer.backend());
 
         // NOTE: left before the thread first reads the flag, so a
         // shutdown racing the start either stops it before its first
@@ -760,25 +819,58 @@ impl AlarmRunner {
             .unwrap_or_else(PoisonError::into_inner)
             .push(timer.waker());
 
-        let shared = Arc::new(AlarmShared::new(timer.waker()));
-        let hook = hook.clone();
-        let name = collection.name;
-        let value = collection.value.to_owned();
+        let book = FiringBook::new();
+        #[cfg(birthday)]
+        let book = FiringBook {
+            rule: hooks.birthday.map(|(hook, _)| hook.rule()),
+            ..book
+        };
+
+        #[cfg(alarm)]
+        let alarm = hooks
+            .alarm
+            .map(|(hook, collection)| (hook.clone(), collection.name, collection.value.to_owned()));
+        #[cfg(birthday)]
+        let birthday = hooks
+            .birthday
+            .map(|(hook, collection)| (hook.clone(), collection.name, collection.value.to_owned()));
+
+        let shared = Arc::new(FiringShared::new(timer.waker(), book));
         let thread_shared = shared.clone();
         let thread_shutdown = shutdown.clone();
         let events = events.clone();
 
         let handle = thread::Builder::new()
-            .name(format!("{account}-alarms"))
+            .name(format!("{account}-firings"))
             .spawn(move || {
-                alarm::run(&thread_shared, timer, &thread_shutdown, |firing| {
-                    let collection = HookCollection {
-                        name,
-                        value: &value,
-                    };
-                    let fired = hook::run_alarm(&hook, collection, firing);
-                    events.alarm(collection, firing, fired);
-                })
+                firing::run(
+                    &thread_shared,
+                    timer,
+                    &thread_shutdown,
+                    |firing| match firing {
+                        #[cfg(alarm)]
+                        Firing::Alarm(firing) => {
+                            let Some((hook, name, value)) = &alarm else {
+                                return;
+                            };
+                            let collection = HookCollection { name, value };
+                            let fired = hook::run_alarm(hook, collection, firing);
+                            events.alarm(collection, firing, fired);
+                        }
+                        #[cfg(birthday)]
+                        Firing::Birthday(firing) => {
+                            let Some((hook, name, value)) = &birthday else {
+                                return;
+                            };
+                            let collection = HookCollection { name, value };
+                            let today = Timestamp::now()
+                                .to_zoned_datetime(TimeZone::system())
+                                .date();
+                            let fired = hook::run_birthday(hook, collection, firing, today);
+                            events.birthday(collection, firing, today, fired);
+                        }
+                    },
+                )
             })?;
 
         let (shared, _) = self.started.insert((shared, handle));
@@ -790,7 +882,7 @@ impl AlarmRunner {
         if let Some((_, handle)) = self.started
             && handle.join().is_err()
         {
-            warn!("[{account}] alarm thread panicked");
+            warn!("[{account}] firing thread panicked");
         }
     }
 }

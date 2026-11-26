@@ -2,30 +2,15 @@
 //!
 //! The alarms of a watched calendar: the `VALARM`s of its events and
 //! tasks (RFC 5545 3.6.6), resolved by ical-rs into firings over a
-//! rolling horizon, and the thread firing `on-alarm-trigger` when the
-//! wall clock reaches one.
+//! rolling horizon, which the firing thread ([`crate::firing`]) fires as
+//! `on-alarm-trigger` when the wall clock reaches one.
 //!
 //! A calendar backend reads the bodies of its members into an
-//! [`AlarmBook`], keyed by its own item id, and shares it with the alarm
-//! thread through [`AlarmShared`]. [`AlarmQueue`] decides what is due;
-//! [`run`] waits for it. Nothing is stored between runs: a watch starting
-//! fires nothing whose trigger is already past.
+//! [`AlarmBook`], keyed by its own item id. A firing reached late fires
+//! within the grace window only.
 
-use std::{
-    collections::BTreeMap,
-    str,
-    sync::{
-        Mutex, PoisonError,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::BTreeMap, str};
 
-use ceichas::{
-    timer::{CeichasTimer, CeichasWait},
-    waker::CeichasWaker,
-};
 use ical::{
     alarm::IcalAlarms,
     component::{IcalComponent, IcalComponentKind, IcalComponentName},
@@ -36,15 +21,10 @@ use ical::{
     value::IcalValue,
 };
 use jiff::{Timestamp, tz::TimeZone};
-use log::{debug, info, trace, warn};
+use log::{debug, trace, warn};
 
-/// How far ahead firings are resolved.
-const HORIZON: i64 = 48 * 3_600;
 /// How late a firing may be reached and still fire.
-const GRACE: i64 = 15 * 60;
-/// How long the alarm thread waits before trying again a timer that
-/// failed, rather than spinning on it.
-const RETRY: Duration = Duration::from_secs(1);
+pub const GRACE: i64 = 15 * 60;
 /// A day, in seconds.
 const DAY: i64 = 86_400;
 /// How many years past the current one the bundled zones are exact to.
@@ -91,7 +71,7 @@ impl AlarmFiring {
     /// The backend's item id is left out, a store synced anew numbering
     /// its items again: two items of one calendar holding the same `UID`
     /// fire one firing of an alarm instant once.
-    fn key(&self) -> String {
+    pub fn key(&self) -> String {
         let over = self.over.as_deref().unwrap_or_default();
         let occurrence = self.occurrence.as_deref().unwrap_or_default();
 
@@ -99,6 +79,11 @@ impl AlarmFiring {
             "{}/{over}/{}/{occurrence}/{}@{}",
             self.uid, self.alarm, self.repeat, self.trigger
         )
+    }
+
+    /// Whether, reached at `now`, it is within the grace window.
+    pub fn fires_at(&self, now: i64) -> bool {
+        now - self.trigger <= GRACE
     }
 }
 
@@ -257,7 +242,7 @@ impl AlarmBook {
     /// fire left out: an alarm of a cancelled component or a completed
     /// task, one acknowledged at or after its trigger, and one neither
     /// `DISPLAY` nor `AUDIO`.
-    fn firings(&self, from: i64, until: i64) -> Vec<AlarmFiring> {
+    pub fn firings(&self, from: i64, until: i64) -> Vec<AlarmFiring> {
         let mut firings = Vec::new();
 
         for item in self.items.values() {
@@ -460,201 +445,6 @@ impl AlarmSeries {
     }
 }
 
-/// What a pass found due.
-#[derive(Debug, Default)]
-pub struct AlarmPass {
-    /// The firings to fire now.
-    pub due: Vec<AlarmFiring>,
-    /// The firings reached beyond the grace window, dropped.
-    pub late: Vec<AlarmFiring>,
-    /// When the next pass is wanted, in seconds since the Unix epoch.
-    pub wake: i64,
-}
-
-/// The firings still to come over the horizon, and the ones already
-/// fired, so that a rebuild never fires one twice.
-pub struct AlarmQueue {
-    /// When the watch started: nothing earlier ever fires.
-    started: i64,
-    queue: Vec<AlarmFiring>,
-    /// The firings fired, by key, with their trigger.
-    fired: BTreeMap<String, i64>,
-    built_at: Option<i64>,
-}
-
-impl AlarmQueue {
-    /// A queue for a watch starting at `now`.
-    pub fn new(now: i64) -> Self {
-        Self {
-            started: now,
-            queue: Vec::new(),
-            fired: BTreeMap::new(),
-            built_at: None,
-        }
-    }
-
-    /// Sorts what is due at `now`, building the queue again from `book`
-    /// when its firings `moved` or half the horizon has passed.
-    ///
-    /// What the previous queue held is sorted first, so a firing a
-    /// suspend made late is dropped and logged rather than vanishing in
-    /// the rebuild. The window starts at the later of the watch's start
-    /// and the grace window before now, so a late change still brings a
-    /// firing within the grace window.
-    pub fn pass(&mut self, book: &AlarmBook, moved: bool, now: i64) -> AlarmPass {
-        let mut pass = AlarmPass::default();
-        self.sort_due(now, &mut pass);
-
-        let stale = self.built_at.is_none_or(|at| now - at >= HORIZON / 2);
-
-        if moved || stale {
-            let from = self.started.max(now - GRACE);
-            let until = now + HORIZON;
-
-            self.fired.retain(|_, trigger| *trigger >= from);
-            self.queue = book
-                .firings(from, until)
-                .into_iter()
-                .filter(|firing| !self.fired.contains_key(&firing.key()))
-                .collect();
-            self.built_at = Some(now);
-
-            debug!("queued {} alarm firings until {until}", self.queue.len());
-            self.sort_due(now, &mut pass);
-        }
-
-        let rebuild = self.built_at.unwrap_or(now) + HORIZON / 2;
-        pass.wake = self
-            .queue
-            .first()
-            .map_or(rebuild, |firing| firing.trigger.min(rebuild));
-
-        pass
-    }
-
-    /// Moves the firings due at `now` out of the queue, into what fires
-    /// and what is too late to.
-    fn sort_due(&mut self, now: i64, pass: &mut AlarmPass) {
-        let due = self.queue.partition_point(|firing| firing.trigger <= now);
-
-        for firing in self.queue.drain(..due) {
-            self.fired.insert(firing.key(), firing.trigger);
-
-            if now - firing.trigger <= GRACE {
-                pass.due.push(firing);
-            } else {
-                pass.late.push(firing);
-            }
-        }
-    }
-}
-
-/// The alarms an account's watch and its alarm thread share.
-pub struct AlarmShared {
-    book: Mutex<AlarmBook>,
-    /// Ends the alarm thread's wait, its firings having moved.
-    waker: CeichasWaker,
-}
-
-impl AlarmShared {
-    /// Nothing held yet, `waker` ending the wait of the alarm thread's
-    /// timer.
-    pub fn new(waker: CeichasWaker) -> Self {
-        Self {
-            book: Mutex::new(AlarmBook::new()),
-            waker,
-        }
-    }
-
-    /// Replaces every alarm held, as a session that read the calendar
-    /// again does, and wakes the alarm thread.
-    pub fn replace(&self, book: AlarmBook) {
-        *self.book.lock().unwrap_or_else(PoisonError::into_inner) = book;
-        self.wake();
-    }
-
-    /// Changes the alarms held, and wakes the alarm thread.
-    pub fn update(&self, change: impl FnOnce(&mut AlarmBook)) {
-        change(&mut self.book.lock().unwrap_or_else(PoisonError::into_inner));
-        self.wake();
-    }
-
-    /// Ends the alarm thread's wait, so it reads its firings again.
-    fn wake(&self) {
-        if let Err(err) = self.waker.wake() {
-            warn!("cannot wake the alarm thread: {err}");
-        }
-    }
-
-    /// The item and the trigger of every firing over `[from, until)`.
-    #[cfg(test)]
-    pub fn triggers(&self, from: i64, until: i64) -> Vec<(String, i64)> {
-        let book = self.book.lock().unwrap_or_else(PoisonError::into_inner);
-
-        book.firings(from, until)
-            .into_iter()
-            .map(|firing| (firing.id, firing.trigger))
-            .collect()
-    }
-}
-
-/// Fires the alarms `shared` holds until `shutdown` is set, calling
-/// `fire` for every firing due.
-///
-/// `timer` waits on the wall clock (ceichas), so a suspend counts and a
-/// clock change is followed; its waker, the one `shared` holds, ends the
-/// wait when the firings move, and the caller wakes it once `shutdown` is
-/// set.
-pub fn run(
-    shared: &AlarmShared,
-    mut timer: CeichasTimer,
-    shutdown: &AtomicBool,
-    mut fire: impl FnMut(&AlarmFiring),
-) {
-    let mut queue = AlarmQueue::new(now());
-    let mut moved = true;
-
-    while !shutdown.load(Ordering::SeqCst) {
-        let at = now();
-        let pass = {
-            let book = shared.book.lock().unwrap_or_else(PoisonError::into_inner);
-            queue.pass(&book, moved, at)
-        };
-
-        for firing in &pass.late {
-            info!(
-                "drop alarm of {} at {}, reached {}s late",
-                firing.id,
-                firing.trigger,
-                at - firing.trigger
-            );
-        }
-
-        for firing in &pass.due {
-            info!("fire alarm of {} at {}", firing.id, firing.trigger);
-            fire(firing);
-        }
-
-        let deadline = UNIX_EPOCH + Duration::from_secs(pass.wake.max(0) as u64);
-        moved = match timer.wait_until(deadline) {
-            Ok(CeichasWait::Reached) => false,
-            Ok(CeichasWait::Woken) => true,
-            Err(err) => {
-                warn!("cannot wait for the next alarm, retrying: {err}");
-                thread::sleep(RETRY);
-                true
-            }
-        };
-    }
-}
-
-/// Now, in seconds since the Unix epoch.
-fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |now| now.as_secs() as i64)
-}
-
 /// The kind of item a component is, `None` for one holding no alarm
 /// that fires.
 fn kind_of(component: &IcalComponent<'_>) -> Option<AlarmKind> {
@@ -691,11 +481,12 @@ fn civil(id: IcalRecurDateTime) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
-
     use jiff::Timestamp;
 
-    use crate::alarm::*;
+    use crate::{
+        alarm::*,
+        firing::{Firing, FiringBook, FiringQueue},
+    };
 
     /// An instant written in UTC, in seconds.
     fn at(time: &str) -> i64 {
@@ -738,13 +529,28 @@ mod tests {
         book
     }
 
+    /// What an account holding the alarms of `book` fires.
+    fn firing(book: AlarmBook) -> FiringBook {
+        let mut firing = FiringBook::new();
+        firing.alarms = book;
+        firing
+    }
+
+    /// The `UID` of each alarm firing.
+    fn uids(firings: &[Firing]) -> Vec<&str> {
+        firings
+            .iter()
+            .filter_map(|firing| Some(firing.alarm()?.uid.as_str()))
+            .collect()
+    }
+
     #[test]
     fn a_firing_fires_at_its_trigger() {
-        let book = book(&[(
+        let book = firing(book(&[(
             "a",
             &event("standup", "090000", "", &[("DISPLAY", "-PT15M")]),
-        )]);
-        let mut queue = AlarmQueue::new(at("08:00:00"));
+        )]));
+        let mut queue = FiringQueue::new(at("08:00:00"));
 
         let pass = queue.pass(&book, true, at("08:00:00"));
         assert!(pass.due.is_empty());
@@ -754,6 +560,7 @@ mod tests {
         let [firing] = pass.due.as_slice() else {
             panic!("one firing expected, got {:?}", pass.due);
         };
+        let firing = firing.alarm().unwrap();
 
         assert_eq!("standup", firing.uid);
         assert_eq!(Some("Standup"), firing.summary.as_deref());
@@ -796,11 +603,11 @@ mod tests {
 
     #[test]
     fn a_restart_fires_nothing_before_its_start() {
-        let book = book(&[(
+        let book = firing(book(&[(
             "a",
             &event("standup", "090000", "", &[("DISPLAY", "-PT15M")]),
-        )]);
-        let mut queue = AlarmQueue::new(at("08:50:00"));
+        )]));
+        let mut queue = FiringQueue::new(at("08:50:00"));
 
         let pass = queue.pass(&book, true, at("08:50:00"));
 
@@ -813,47 +620,41 @@ mod tests {
         let body = calendar(
             "BEGIN:VEVENT\r\nUID:far\r\nDTSTAMP:20261101T000000Z\r\nDTSTART:20261108T090000Z\r\nDURATION:PT30M\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:x\r\nTRIGGER:-PT15M\r\nEND:VALARM\r\nEND:VEVENT\r\n",
         );
-        let book = book(&[("far", &body)]);
-        let mut queue = AlarmQueue::new(at("08:00:00"));
+        let book = firing(book(&[("far", &body)]));
+        let mut queue = FiringQueue::new(at("08:00:00"));
 
         queue.pass(&book, true, at("08:00:00"));
-        assert!(queue.queue.is_empty());
+        assert_eq!(0, queue.len());
 
         // NOTE: two days on, the half-horizon rebuild reaches it.
         queue.pass(&book, false, at("08:00:00") + 2 * DAY);
-        assert_eq!(1, queue.queue.len());
+        assert_eq!(1, queue.len());
     }
 
     #[test]
     fn a_late_firing_fires_within_the_grace_window_only() {
-        let book = book(&[
+        let book = firing(book(&[
             ("a", &event("near", "090000", "", &[("DISPLAY", "-PT15M")])),
             ("b", &event("early", "021000", "", &[("DISPLAY", "-PT10M")])),
-        ]);
+        ]));
 
-        let mut queue = AlarmQueue::new(at("00:00:00"));
+        let mut queue = FiringQueue::new(at("00:00:00"));
         queue.pass(&book, true, at("00:00:00"));
 
         // NOTE: asleep from 01:00 to 08:55, the queue built before.
         let pass = queue.pass(&book, false, at("08:55:00"));
 
-        assert_eq!(
-            vec!["near"],
-            pass.due.iter().map(|f| f.uid.as_str()).collect::<Vec<_>>()
-        );
-        assert_eq!(
-            vec!["early"],
-            pass.late.iter().map(|f| f.uid.as_str()).collect::<Vec<_>>()
-        );
+        assert_eq!(vec!["near"], uids(&pass.due));
+        assert_eq!(vec!["early"], uids(&pass.late));
     }
 
     #[test]
     fn a_firing_never_fires_twice() {
-        let book = book(&[(
+        let book = firing(book(&[(
             "a",
             &event("standup", "090000", "", &[("DISPLAY", "-PT15M")]),
-        )]);
-        let mut queue = AlarmQueue::new(at("08:00:00"));
+        )]));
+        let mut queue = FiringQueue::new(at("08:00:00"));
 
         queue.pass(&book, true, at("08:00:00"));
         assert_eq!(1, queue.pass(&book, false, at("08:45:00")).due.len());
@@ -865,40 +666,36 @@ mod tests {
     #[test]
     fn a_firing_read_again_under_another_key_never_fires_twice() {
         let body = event("standup", "090000", "", &[("DISPLAY", "-PT15M")]);
-        let mut queue = AlarmQueue::new(at("08:00:00"));
+        let mut queue = FiringQueue::new(at("08:00:00"));
 
-        queue.pass(&book(&[("1", &body)]), true, at("08:00:00"));
-        assert_eq!(
-            1,
-            queue
-                .pass(&book(&[("1", &body)]), false, at("08:45:00"))
-                .due
-                .len()
-        );
+        let one = firing(book(&[("1", &body)]));
+        queue.pass(&one, true, at("08:00:00"));
+        assert_eq!(1, queue.pass(&one, false, at("08:45:00")).due.len());
 
-        let pass = queue.pass(&book(&[("2", &body)]), true, at("08:46:00"));
+        let two = firing(book(&[("2", &body)]));
+        let pass = queue.pass(&two, true, at("08:46:00"));
         assert!(pass.due.is_empty(), "{:?}", pass.due);
     }
 
     #[test]
     fn an_edit_moves_its_alarm_and_a_removal_drops_it() {
-        let mut book = book(&[(
+        let mut book = firing(book(&[(
             "a",
             &event("standup", "090000", "", &[("DISPLAY", "-PT15M")]),
-        )]);
-        let mut queue = AlarmQueue::new(at("08:00:00"));
+        )]));
+        let mut queue = FiringQueue::new(at("08:00:00"));
         queue.pass(&book, true, at("08:00:00"));
 
         let moved = event("standup", "100000", "", &[("DISPLAY", "-PT15M")]);
-        book.read("a", "a", None, moved.as_bytes());
+        book.alarms.read("a", "a", None, moved.as_bytes());
         queue.pass(&book, true, at("08:01:00"));
 
         assert!(queue.pass(&book, false, at("08:45:00")).due.is_empty());
         assert_eq!(1, queue.pass(&book, false, at("09:45:00")).due.len());
 
         let added = event("other", "110000", "", &[("AUDIO", "-PT15M")]);
-        book.read("b", "b", None, added.as_bytes());
-        book.forget("b");
+        book.alarms.read("b", "b", None, added.as_bytes());
+        book.alarms.forget("b");
         queue.pass(&book, true, at("09:46:00"));
 
         assert!(queue.pass(&book, false, at("10:45:00")).due.is_empty());
@@ -927,18 +724,5 @@ mod tests {
         let book = book(&[("a", &format!("\n      {body}    "))]);
 
         assert_eq!(1, book.len());
-    }
-
-    #[test]
-    fn a_change_ends_the_alarm_thread_s_wait() {
-        let mut timer = CeichasTimer::new(Default::default()).expect("a timer");
-        let shared = AlarmShared::new(timer.waker());
-        let later = SystemTime::now() + Duration::from_secs(3_600);
-
-        shared.update(|book| book.forget("nothing"));
-        assert_eq!(CeichasWait::Woken, timer.wait_until(later).expect("a wait"));
-
-        shared.replace(AlarmBook::new());
-        assert_eq!(CeichasWait::Woken, timer.wait_until(later).expect("a wait"));
     }
 }

@@ -98,6 +98,7 @@ mod tests {
             "changed",
             "hook-failed",
             "alarm-fired",
+            "birthday-fired",
             "item-added",
             "flag-removed",
         ] {

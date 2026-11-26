@@ -9,14 +9,18 @@
 use std::{fmt, sync::mpsc::Sender};
 
 use anyhow::Error;
-#[cfg(alarm)]
+#[cfg(firing)]
 use jiff::Timestamp;
+#[cfg(birthday)]
+use jiff::civil::Date;
 use pimalaya_cli::sanitize;
 use schemars::JsonSchema;
 use serde::Serialize;
 
 #[cfg(alarm)]
 use crate::alarm::AlarmFiring;
+#[cfg(birthday)]
+use crate::birthday::BirthdayFiring;
 use crate::{
     config::Hook,
     error::{self, ErrorCode},
@@ -178,6 +182,32 @@ pub enum WatchStreamEvent {
         /// When it fired, RFC 3339 in UTC.
         trigger: String,
     },
+    /// A birthday or an anniversary of a card of a watched addressbook
+    /// reached its time, and its hook fired.
+    #[serde(rename_all = "camelCase")]
+    BirthdayFired {
+        /// The account.
+        account: String,
+        /// The addressbook holding the card.
+        collection: CollectionOutput,
+        /// The backend's id of the card.
+        id: String,
+        /// The `UID` of the card, `null` when it has none.
+        uid: Option<String>,
+        /// `birthday` or `anniversary`.
+        kind: &'static str,
+        /// The `FN` of the card, `null` when it has none.
+        name: Option<String>,
+        /// The date as the card states it, `1990-11-27`, or `--11-27` with
+        /// no year.
+        date: String,
+        /// The years the date completes, `null` with no year.
+        age: Option<i16>,
+        /// How many days late it fired, 0 on its own day.
+        late: i32,
+        /// When it was due to fire, RFC 3339 in UTC.
+        fired: String,
+    },
 }
 
 impl fmt::Display for WatchStreamEvent {
@@ -256,6 +286,31 @@ impl fmt::Display for WatchStreamEvent {
                     "[{account}] {collection}: alarm of {kind} {what} at {trigger}"
                 )
             }
+            Self::BirthdayFired {
+                account,
+                collection,
+                id,
+                uid,
+                kind,
+                name,
+                date,
+                late,
+                fired,
+                ..
+            } => {
+                let account = sanitize::text(account);
+                let what = name.as_deref().or(uid.as_deref()).unwrap_or(id);
+                let what = sanitize::text(what);
+                write!(
+                    f,
+                    "[{account}] {collection}: {kind} of {what} on {date} at {fired}"
+                )?;
+                match late {
+                    0 => writeln!(f),
+                    1 => writeln!(f, ", 1 day late"),
+                    late => writeln!(f, ", {late} days late"),
+                }
+            }
         }
     }
 }
@@ -269,6 +324,15 @@ fn chain(error: &str, sources: &[String]) -> String {
         line.push_str(&sanitize::text(source));
     }
     line
+}
+
+/// An instant as RFC 3339 in UTC, `Z` ending it, empty when it is out of
+/// range.
+#[cfg(firing)]
+fn utc(instant: i64) -> String {
+    Timestamp::from_second(instant)
+        .map(|at| at.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .unwrap_or_default()
 }
 
 /// The code, the message and the causes of `err`.
@@ -360,10 +424,6 @@ impl WatchEvents {
     /// `fired`.
     #[cfg(alarm)]
     pub fn alarm(&self, collection: HookCollection<'_>, firing: &AlarmFiring, fired: HookFired) {
-        let trigger = Timestamp::from_second(firing.trigger)
-            .map(|at| at.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
-            .unwrap_or_default();
-
         self.send(WatchStreamEvent::AlarmFired {
             account: self.account.clone(),
             collection: collection.into(),
@@ -372,10 +432,36 @@ impl WatchEvents {
             kind: firing.kind.as_str(),
             summary: firing.summary.clone(),
             action: firing.action.as_str(),
-            trigger,
+            trigger: utc(firing.trigger),
         });
 
         self.fired(String::from("on-alarm-trigger"), &firing.id, fired);
+    }
+
+    /// Reports the date `firing` of `collection`, reached on the local day
+    /// `today`, then what its hook `fired`.
+    #[cfg(birthday)]
+    pub fn birthday(
+        &self,
+        collection: HookCollection<'_>,
+        firing: &BirthdayFiring,
+        today: Date,
+        fired: HookFired,
+    ) {
+        self.send(WatchStreamEvent::BirthdayFired {
+            account: self.account.clone(),
+            collection: collection.into(),
+            id: firing.id.clone(),
+            uid: Some(firing.uid.clone()).filter(|uid| !uid.is_empty()),
+            kind: firing.kind.as_str(),
+            name: firing.name.clone(),
+            date: firing.date.clone(),
+            age: firing.age,
+            late: firing.late(today),
+            fired: utc(firing.trigger),
+        });
+
+        self.fired(String::from("on-birthday-trigger"), &firing.id, fired);
     }
 
     /// Reports the reactions the hook `hook` fired for the item `id` failed
@@ -478,6 +564,78 @@ mod tests {
         };
         assert_eq!(hook, "on-alarm-trigger");
         assert_eq!(id, "a.ics");
+    }
+
+    /// A date prints when it was due as an instant in UTC, its days late
+    /// and a card without `UID` as `null`, and a hook failing for it names
+    /// the hook and the card.
+    #[cfg(birthday)]
+    #[test]
+    fn a_birthday_fires_with_its_date_age_and_days_late() {
+        use std::sync::mpsc::channel;
+
+        use jiff::civil::Date;
+        use serde_json::json;
+
+        use crate::{
+            birthday::{BirthdayFiring, BirthdayKind},
+            hook::{HookCollection, HookFailure, HookFired, HookReaction, command::HookCommands},
+        };
+
+        let (sender, receiver) = channel();
+        let events = WatchEvents::new("perso", sender, HookCommands::start().unwrap());
+        let collection = HookCollection {
+            name: "addressbook",
+            value: "default",
+        };
+        let firing = BirthdayFiring {
+            id: String::from("/books/jane.vcf"),
+            uid: String::new(),
+            name: Some(String::from("Jane\x1b Doe")),
+            kind: BirthdayKind::Birthday,
+            date: String::from("1990-11-27"),
+            age: Some(36),
+            day: Date::constant(2026, 11, 27),
+            trigger: 1_795_766_400,
+            deadline: 0,
+        };
+        let fired = HookFired {
+            failures: vec![HookFailure {
+                reaction: HookReaction::Notify,
+                error: anyhow::anyhow!("No notification daemon"),
+            }],
+            command: None,
+        };
+
+        events.birthday(collection, &firing, Date::constant(2026, 11, 28), fired);
+
+        let event = receiver.recv().unwrap();
+        assert_eq!(
+            json!({
+                "event": "birthday-fired",
+                "account": "perso",
+                "collection": {"name": "addressbook", "value": "default"},
+                "id": "/books/jane.vcf",
+                "uid": null,
+                "kind": "birthday",
+                "name": "Jane\u{1b} Doe",
+                "date": "1990-11-27",
+                "age": 36,
+                "late": 1,
+                "fired": "2026-11-27T08:00:00Z",
+            }),
+            serde_json::to_value(&event).unwrap()
+        );
+        assert_eq!(
+            "[perso] addressbook `default`: birthday of Jane\u{fffd} Doe on 1990-11-27 at 2026-11-27T08:00:00Z, 1 day late\n",
+            event.to_string()
+        );
+
+        let WatchStreamEvent::HookFailed { hook, id, .. } = receiver.recv().unwrap() else {
+            panic!("expected hook-failed");
+        };
+        assert_eq!(hook, "on-birthday-trigger");
+        assert_eq!(id, "/books/jane.vcf");
     }
 
     /// What a server or a store sent cannot drive the terminal nor break

@@ -1,7 +1,7 @@
 ---
 cairn: change
 id: birthday-alarms
-status: active
+status: landed
 created: 2026-11-26
 ---
 
